@@ -1,0 +1,3 @@
+[submodule "third_party/tg-ws-proxy"]
+	path = third_party/tg-ws-proxy
+	url = https://github.com/Flowseal/tg-ws-proxy.git
