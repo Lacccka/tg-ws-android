@@ -14,7 +14,7 @@ function names below.
 | `utils/tray_common.py` | `apply_proxy_config`, config-to-runtime coercion | future `app/src/main/java/com/flowseal/tgwsandroid/config/ConfigRepository.kt` and `proxy/ProxyRuntimeConfig.kt` | Pending. |
 | `proxy/tg_ws_proxy.py` | `_try_handshake`, `_generate_relay_init`, `_read_client_init`, `_build_crypto_ctx`, `_handle_client`, `_run`, `run_proxy` | `app/src/main/java/com/flowseal/tgwsandroid/proxy/MtprotoHandshake.kt`, `app/src/main/java/com/flowseal/tgwsandroid/proxy/RelayInit.kt`, `app/src/main/java/com/flowseal/tgwsandroid/proxy/CryptoContext.kt`, future `proxy/TgWsProxy.kt`, Android service entrypoint | `_try_handshake`, `_generate_relay_init`, and `_build_crypto_ctx` ported and covered by generated parity vectors; networking code pending. |
 | `proxy/bridge.py` | `CryptoCtx`, `MsgSplitter`, fallback functions, TCP/WebSocket re-encryption bridge | `app/src/main/java/com/flowseal/tgwsandroid/proxy/CryptoContext.kt`, `app/src/main/java/com/flowseal/tgwsandroid/proxy/MsgSplitter.kt`, future `proxy/bridge/Bridge.kt`, `proxy/fallback/*` | `CryptoCtx` Kotlin equivalent and `MsgSplitter` ported and parity-tested; bridge and fallback networking pending. |
-| `proxy/raw_websocket.py` | `RawWebSocket`, `_xor_mask`, socket option setup, handshake errors | `app/src/main/java/com/flowseal/tgwsandroid/proxy/RawWebSocketCodec.kt`, future live `proxy/ws/RawWebSocket.kt` | Offline frame codec, masking, HTTP Upgrade request format, and practical handshake response status/header parsing are ported and parity-tested. Live TLS/network connect, socket options, TCP server integration, and bridge usage are not ported yet. |
+| `proxy/raw_websocket.py` | `RawWebSocket`, `_xor_mask`, socket option setup, handshake errors | `app/src/main/java/com/flowseal/tgwsandroid/proxy/RawWebSocketCodec.kt`, `app/src/main/java/com/flowseal/tgwsandroid/proxy/RawWebSocket.kt` | Offline frame codec, masking, HTTP Upgrade request/response parsing, and the live RawWebSocket TLS connection/send/recv/close layer are ported and unit-tested with fake transports. Real Telegram/Cloudflare integration, TCP server integration, connection pool, and bridge usage are not tested or ported yet. |
 | `proxy/fake_tls.py` | `verify_client_hello`, `build_server_hello`, `wrap_tls_record`, `FakeTlsStream`, masking-domain proxy | future `proxy/tls/FakeTls.kt`, `proxy/tls/FakeTlsStream.kt` | Pending. |
 | `proxy/utils.py` | `ws_domains`, `human_bytes`, `get_link_host`, GitHub opener helper | future `proxy/TelegramDcDomains.kt`, `util/Format.kt`, `util/LinkHost.kt` | Pending. |
 | `proxy/pool.py` | `_WsPool`, `_CfWorkerPool` | future `proxy/pool/WebSocketPool.kt`, `proxy/pool/CfWorkerPool.kt` | Pending. |
@@ -35,5 +35,5 @@ context changes. Splitter vectors in
 or transport-constant changes. WebSocket vectors in
 `app/src/test/resources/websocket_vectors.json` must be regenerated with
 `tools/generate_websocket_vectors.py` after relevant upstream
-`proxy/raw_websocket.py` frame, mask, HTTP Upgrade request, or handshake response
-parsing changes.
+`proxy/raw_websocket.py` frame, mask, HTTP Upgrade request, handshake response
+parsing, or live RawWebSocket connection behavior changes.
