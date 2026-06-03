@@ -18,12 +18,13 @@
 
 The Android structure now includes runtime configuration plus parity
 ports for MTProto handshake, relay init, crypto context, MsgSplitter, the
-RawWebSocket frame/request/response codec, and the live RawWebSocket
-TLS connection/send/recv/close layer. TCP server wiring, socket bridge, fake TLS,
-pooling, foreground service integration, UI, and balancing code remain
-intentionally unimplemented until their own parity or integration test scopes
-exist. Real RawWebSocket integration against Telegram/Cloudflare has not been
-tested yet.
+RawWebSocket frame/request/response codec, the live RawWebSocket
+TLS connection/send/recv/close layer, and the reusable BridgeSession layer
+equivalent to upstream `bridge_ws_reencrypt`. TCP proxy server wiring, fake TLS,
+connection pools, cfproxy refresh, foreground service integration, UI, balancing
+code, app lifecycle, and Telegram routing remain intentionally unimplemented
+until their own parity or integration test scopes exist. Real RawWebSocket
+integration against Telegram/Cloudflare has not been tested yet.
 
 ## Parity-test workflow
 
@@ -93,12 +94,32 @@ client frames, supports sendBatch, receives binary and text payload frames,
 responds to ping with pong, ignores pong, acknowledges close frames, and closes
 best-effort like upstream. Unit tests use fake in-memory transports only; real
 Telegram/Cloudflare integration is not tested yet. TCP proxy server integration,
-connection pool, bridge logic, foreground services, Android UI, balancer,
-cfproxy refresh, and Telegram-specific routing are intentionally left for
-separate milestones.
+connection pool, foreground services, Android UI, balancer, cfproxy refresh, app
+lifecycle, and Telegram-specific routing are intentionally left for separate
+milestones.
 
 The default Kotlin TLS transport deliberately mirrors upstream
 `ssl.CERT_NONE`: certificate verification and hostname verification are disabled
 behind the clearly named `TrustAllTlsTransportFactory`, while SNI is still set to
 the requested domain where practical. Callers that require Android/platform TLS
 verification should inject a different `RawWebSocket.TransportFactory`.
+
+
+## BridgeSession
+
+`app/src/main/java/com/flowseal/tgwsandroid/proxy/BridgeSession.kt` ports the
+reusable bidirectional re-encryption behavior from upstream
+`proxy/bridge.py::bridge_ws_reencrypt`. It defines small `ClientByteStream` and
+`WebSocketBinaryStream` abstractions so tests and future Android runtime code can
+use the bridge without depending on real sockets. The bridge runs one blocking
+worker for client-to-WebSocket data and one blocking worker for
+WebSocket-to-client data, preserves the supplied `CryptoContext` AES-CTR state
+across chunks, optionally applies `MsgSplitter`, flushes the splitter tail on
+client EOF using the upstream first-tail-part behavior, records local byte and
+packet counters, and closes both sides best-effort when either direction ends.
+
+The milestone intentionally does not port the TCP proxy server, Android
+ForegroundService/UI, connection pool, balancer, cfproxy refresh, app lifecycle,
+or Telegram routing. Production code should inject a `RawWebSocketBinaryStream`
+adapter when using a live `RawWebSocket`; unit tests should continue to use fake
+streams.
