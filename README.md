@@ -33,7 +33,11 @@ configuration for the first device smoke test:
 - Android 15 edge-to-edge safe areas: the native UI applies system bar and
   display cutout insets so the title, buttons, and logs are not hidden behind
   the status or navigation bars.
-- DC redirects: `2:149.154.167.220`, `4:149.154.167.220`
+- DC redirects: `2:149.154.167.220`, `3:149.154.167.220`, `4:149.154.167.220`
+- Android currently uses this minimal direct WebSocket redirect mapping instead
+  of the full upstream `DC_DEFAULT_IPS` list. DC3 is included because Telegram
+  may select DC3 on mobile networks; direct WebSocket attempts to other
+  official DC IPs may timeout and are intentionally not enabled yet.
 - Buffer: `256 KiB`
 - Pool size setting: `4` (reserved; pooling is not implemented yet)
 - Cloudflare-proxy setting: enabled in config (fallback is not implemented yet)
@@ -59,11 +63,11 @@ Smoke-test steps:
 
 Current runtime limitations:
 
-- No cfproxy fallback or refresh yet.
+- No cfproxy fallback or refresh yet; CF-proxy fallback is not implemented.
 - No ws_pool / connection pooling yet.
 - No fake TLS yet.
 - No autostart yet.
-- No settings editor yet.
+- No settings editor or editable DC mapping UI yet.
 - The UI is intentionally minimal: start, stop, Connect in Telegram, status,
   fixed config summary, and recent in-memory service logs only.
 - The local endpoint uses `127.0.0.1`, which works only inside the same Android

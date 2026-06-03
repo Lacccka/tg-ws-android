@@ -1,6 +1,7 @@
 package com.flowseal.tgwsandroid.service
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -12,10 +13,30 @@ class ProxyRuntimeConfigTest {
         assertEquals("127.0.0.1", config.host)
         assertEquals(1443, config.port)
         assertEquals("4014e15dd34e4b05c42413eab68c3da8", config.secretHex)
-        assertEquals(mapOf(2 to "149.154.167.220", 4 to "149.154.167.220"), config.dcRedirects)
+        assertEquals(
+            mapOf(
+                2 to "149.154.167.220",
+                3 to "149.154.167.220",
+                4 to "149.154.167.220",
+            ),
+            config.dcRedirects,
+        )
         assertEquals(256 * 1024, config.bufferSizeBytes)
         assertEquals(4, config.poolSize)
         assertTrue(config.cfproxyEnabled)
+    }
+
+    @Test
+    fun dcRedirectsKeepDc2Dc3Dc4OnKnownWorkingTarget() {
+        val redirects = ProxyRuntimeConfig.proxyServerConfig().dcRedirects
+
+        assertEquals("149.154.167.220", redirects[2])
+        assertEquals("149.154.167.220", redirects[3])
+        assertEquals("149.154.167.220", redirects[4])
+        assertNotEquals("149.154.167.51", redirects[2])
+        assertNotEquals("149.154.167.91", redirects[2])
+        assertNotEquals("149.154.167.51", redirects[4])
+        assertNotEquals("149.154.167.91", redirects[4])
     }
 
     @Test

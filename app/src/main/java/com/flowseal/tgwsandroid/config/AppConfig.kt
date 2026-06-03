@@ -31,7 +31,7 @@ data class AppConfig(
         const val DEFAULT_BUF_KB = 256
         const val DEFAULT_POOL_SIZE = 4
         const val DEFAULT_LOG_MAX_MB = 5.0
-        val DEFAULT_DC_IP = listOf("2:149.154.167.220", "4:149.154.167.220")
+        val DEFAULT_DC_IP = listOf("2:149.154.167.220", "3:149.154.167.220", "4:149.154.167.220")
 
         fun fromJson(json: JSONObject): AppConfig =
             AppConfig(

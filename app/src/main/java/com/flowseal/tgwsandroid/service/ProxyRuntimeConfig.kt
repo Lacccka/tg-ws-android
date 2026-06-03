@@ -14,7 +14,7 @@ object ProxyRuntimeConfig {
     const val CFPROXY_ENABLED = true
     const val VERBOSE = true
 
-    val dcIp: List<String> = listOf("2:149.154.167.220", "4:149.154.167.220")
+    val dcIp: List<String> = listOf("2:149.154.167.220", "3:149.154.167.220", "4:149.154.167.220")
 
     fun appConfig(): AppConfig =
         AppConfig(

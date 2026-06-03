@@ -177,6 +177,14 @@ each attempted `wss://` domain via the target IP, per-domain failure details,
 and the first successful domain through `ProxyLogger` so Android service recent
 logs can surface the path without proxy-core using Android logging APIs.
 
+The Android smoke/runtime config deliberately keeps a minimal direct WebSocket
+redirect mapping: DC2, DC3, and DC4 all route to `149.154.167.220`. DC3 was
+added because Telegram may select DC3 on mobile networks, while DC2/DC4 were
+already known to work with this target. The full upstream `DC_DEFAULT_IPS` list
+is not used yet because direct WebSocket connections to those official DC IPs
+may timeout. Unsupported DCs still log and close without fallback. CF-proxy
+fallback and a settings UI for editable DC mapping remain unimplemented.
+
 Still not ported in this milestone: ws_pool/connection pooling, cfproxy fallback
 or refresh, fake TLS, proxy_protocol, balancer, Android ForegroundService/UI, app
 lifecycle, autostart, and production Cloudflare/Telegram integration testing.

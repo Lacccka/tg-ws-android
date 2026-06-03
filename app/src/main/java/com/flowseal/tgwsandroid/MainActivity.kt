@@ -83,6 +83,7 @@ class MainActivity : Activity() {
             text = buildString {
                 appendLine("Endpoint: ${ProxyRuntimeConfig.endpointSummary()}")
                 appendLine("Secret: ${ProxyRuntimeConfig.partialTelegramSecret()}")
+                appendLine("DCs: 2,3,4 via 149.154.167.220")
                 appendLine("Hint: tap Start proxy before connecting Telegram.")
             }
             setPadding(0, 0, 0, smallPadding)
