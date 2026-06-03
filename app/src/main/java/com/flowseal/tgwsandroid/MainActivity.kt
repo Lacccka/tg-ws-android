@@ -2,8 +2,13 @@ package com.flowseal.tgwsandroid
 
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -14,6 +19,11 @@ import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.updatePadding
 import com.flowseal.tgwsandroid.service.ProxyForegroundService
 import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
 
@@ -23,6 +33,8 @@ class MainActivity : Activity() {
     private lateinit var logsText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var connectTelegramButton: Button
+    private lateinit var copyProxyLinkButton: Button
 
     private val refreshRunnable = object : Runnable {
         override fun run() {
@@ -33,6 +45,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(buildContentView())
         startButton.setOnClickListener {
             requestNotificationPermissionIfNeeded()
@@ -40,6 +53,13 @@ class MainActivity : Activity() {
         }
         stopButton.setOnClickListener {
             startService(ProxyForegroundService.stopIntent(this))
+        }
+        connectTelegramButton.setOnClickListener {
+            openTelegramProxyLink()
+        }
+        copyProxyLinkButton.setOnClickListener {
+            copyProxyLink()
+            Toast.makeText(this, "Proxy link copied", Toast.LENGTH_SHORT).show()
         }
         refreshState()
     }
@@ -66,16 +86,17 @@ class MainActivity : Activity() {
 
         val configText = TextView(this).apply {
             text = buildString {
-                appendLine("Config")
                 appendLine("Endpoint: ${ProxyRuntimeConfig.endpointSummary()}")
-                appendLine("Secret: ${ProxyRuntimeConfig.partialSecret()}")
-                appendLine("DCs: ${ProxyRuntimeConfig.dcIp.joinToString()}")
+                appendLine("Secret: ${ProxyRuntimeConfig.partialTelegramSecret()}")
+                appendLine("Hint: tap Start proxy before connecting Telegram.")
             }
             setPadding(0, 0, 0, smallPadding)
         }
 
         startButton = Button(this).apply { text = "Start proxy" }
         stopButton = Button(this).apply { text = "Stop proxy" }
+        connectTelegramButton = Button(this).apply { text = "Connect in Telegram" }
+        copyProxyLinkButton = Button(this).apply { text = "Copy proxy link" }
 
         logsText = TextView(this).apply {
             text = "No logs yet"
@@ -98,17 +119,40 @@ class MainActivity : Activity() {
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(padding, padding, padding, padding)
+            applySystemInsetsPadding(basePadding = padding)
+            addView(TextView(this@MainActivity).apply {
+                text = "TG WS Android"
+                textSize = 22f
+                setPadding(0, 0, 0, smallPadding)
+            }, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(statusText, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(configText, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(startButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(stopButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            addView(connectTelegramButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            addView(copyProxyLinkButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(TextView(this@MainActivity).apply {
                 text = "Recent logs"
                 textSize = 16f
                 setPadding(0, smallPadding, 0, smallPadding)
             })
             addView(logsScroll)
+        }
+    }
+
+    private fun LinearLayout.applySystemInsetsPadding(basePadding: Int) {
+        setPadding(basePadding, basePadding, basePadding, basePadding)
+        ViewCompat.setOnApplyWindowInsetsListener(this) { view, insets ->
+            val systemInsets = insets.getInsets(
+                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
+            )
+            view.updatePadding(
+                left = basePadding + systemInsets.left,
+                top = basePadding + systemInsets.top,
+                right = basePadding + systemInsets.right,
+                bottom = basePadding + systemInsets.bottom,
+            )
+            insets
         }
     }
 
@@ -121,11 +165,36 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun openTelegramProxyLink() {
+        val telegramIntent = Intent(Intent.ACTION_VIEW, Uri.parse(ProxyRuntimeConfig.telegramProxyUri()))
+        if (tryStartActivity(telegramIntent)) return
+
+        val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse(ProxyRuntimeConfig.telegramProxyUrl()))
+        if (tryStartActivity(fallbackIntent)) return
+
+        copyProxyLink()
+        Toast.makeText(this, "No app can open the proxy link; copied instead", Toast.LENGTH_LONG).show()
+    }
+
+    private fun tryStartActivity(intent: Intent): Boolean = try {
+        startActivity(intent)
+        true
+    } catch (_: ActivityNotFoundException) {
+        false
+    }
+
+    private fun copyProxyLink() {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("Telegram proxy link", ProxyRuntimeConfig.telegramProxyUrl()))
+    }
+
     private fun refreshState() {
         val running = ProxyForegroundService.State.running
         statusText.text = "Status: ${ProxyForegroundService.State.lastStatus}"
         startButton.isEnabled = !running
         stopButton.isEnabled = running
+        connectTelegramButton.isEnabled = true
+        copyProxyLinkButton.isEnabled = true
         logsText.text = ProxyForegroundService.State.recentLogs().takeIf { it.isNotEmpty() }?.joinToString("\n") ?: "No logs yet"
     }
 

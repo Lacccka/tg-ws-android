@@ -30,6 +30,9 @@ configuration for the first device smoke test:
 - Local endpoint: `127.0.0.1:1443`
 - Core secret: `4014e15dd34e4b05c42413eab68c3da8`
 - Telegram MTProto secret: `dd4014e15dd34e4b05c42413eab68c3da8`
+- Android 15 edge-to-edge safe areas: the native UI applies system bar and
+  display cutout insets so the title, buttons, and logs are not hidden behind
+  the status or navigation bars.
 - DC redirects: `2:149.154.167.220`, `4:149.154.167.220`
 - Buffer: `256 KiB`
 - Pool size setting: `4` (reserved; pooling is not implemented yet)
@@ -44,11 +47,15 @@ Smoke-test steps:
 3. Open **TG WS Android**.
 4. Tap **Start proxy** and grant notification permission on Android 13+ if
    prompted.
-5. In Telegram, add an MTProto proxy with:
+5. Tap **Connect in Telegram** to open the Telegram proxy deep link. If
+   Telegram cannot handle the direct `tg://` link, the app falls back to the
+   `https://t.me/proxy` link; **Copy proxy link** copies the fallback link for
+   manual sharing.
+6. If needed, manually add an MTProto proxy in Telegram with:
    - Server: `127.0.0.1`
    - Port: `1443`
    - Secret: `dd4014e15dd34e4b05c42413eab68c3da8`
-6. Tap **Stop proxy** in the app or the foreground notification when finished.
+7. Tap **Stop proxy** in the app or the foreground notification when finished.
 
 Current runtime limitations:
 
@@ -57,5 +64,5 @@ Current runtime limitations:
 - No fake TLS yet.
 - No autostart yet.
 - No settings editor yet.
-- The UI is intentionally minimal: start, stop, status, fixed config summary,
-  and recent in-memory service logs only.
+- The UI is intentionally minimal: start, stop, Connect in Telegram, Copy proxy link,
+  status, fixed config summary, and recent in-memory service logs only.

@@ -33,4 +33,12 @@ object ProxyRuntimeConfig {
     fun endpointSummary(): String = "$HOST:$PORT"
 
     fun partialSecret(): String = "${SECRET_HEX.take(4)}...${SECRET_HEX.takeLast(4)}"
+
+    fun partialTelegramSecret(): String = "${TELEGRAM_SECRET_HEX.take(4)}...${TELEGRAM_SECRET_HEX.takeLast(4)}"
+
+    fun telegramProxyUri(): String =
+        "tg://proxy?server=$HOST&port=$PORT&secret=$TELEGRAM_SECRET_HEX"
+
+    fun telegramProxyUrl(): String =
+        "https://t.me/proxy?server=$HOST&port=$PORT&secret=$TELEGRAM_SECRET_HEX"
 }

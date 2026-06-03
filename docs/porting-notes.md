@@ -14,6 +14,22 @@
    before editing Kotlin code and record any required porting work in the commit
    or PR summary.
 
+## Android UI polish milestone
+
+The native `MainActivity` now opts out of decor fitting and applies AndroidX
+Core system bar plus display cutout insets to its root content while preserving
+the base 16dp padding. This fixes Android 15 edge-to-edge safe-area overlap so
+the title/status text and bottom logs/buttons are not hidden behind the status
+or navigation bars.
+
+The UI also exposes **Connect in Telegram**, which opens the fixed local MTProto
+proxy link and falls back from `tg://proxy` to `https://t.me/proxy`. Manual
+fallback values remain:
+
+- Server: `127.0.0.1`
+- Port: `1443`
+- Secret: `dd4014e15dd34e4b05c42413eab68c3da8`
+
 ## Current scope
 
 The Android structure now includes runtime configuration plus parity
