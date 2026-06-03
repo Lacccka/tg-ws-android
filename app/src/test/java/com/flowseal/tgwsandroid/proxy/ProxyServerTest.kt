@@ -61,7 +61,8 @@ class ProxyServerTest {
         val client = FakeTcpClientTransport(invalid.getString("handshake_hex").hexToBytes())
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
-        val proxy = newProxy(server, logger = ProxyLogger { logs.add(it) })
+        val config = baseConfig().copy(secretHex = invalid.getString("secret_hex"))
+        val proxy = newProxy(server, config = config, logger = ProxyLogger { logs.add(it) })
 
         proxy.start()
         server.enqueue(client)
