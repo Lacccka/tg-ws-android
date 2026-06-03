@@ -63,11 +63,17 @@ Smoke-test steps:
 
 Current runtime limitations:
 
-- No cfproxy fallback or refresh yet; CF-proxy fallback is not implemented.
-- No ws_pool / connection pooling yet.
+- Bundled CF-proxy fallback is now supported when a direct WebSocket route fails
+  or a selected DC has no direct redirect configured. Remote CF domain refresh
+  is not implemented yet; only bundled/default or configured domains are used.
+- CF worker fallback is not implemented yet.
+- No ws_pool / connection pooling or warmup yet, so initial latency and ping may
+  still be worse than the PC upstream app.
 - No fake TLS yet.
 - No autostart yet.
-- No settings editor or editable DC mapping UI yet.
+- No settings editor or editable DC mapping UI yet. Direct runtime DC mapping
+  remains minimal: DC2/DC3/DC4 -> `149.154.167.220`; missing or failing direct
+  DCs can use CF fallback when enabled.
 - The UI is intentionally minimal: start, stop, Connect in Telegram, status,
   fixed config summary, and recent in-memory service logs only.
 - The local endpoint uses `127.0.0.1`, which works only inside the same Android

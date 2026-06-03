@@ -27,8 +27,10 @@ data class ProxyServerConfig(
     val bufferSizeBytes: Int = BridgeSession.DEFAULT_BUFFER_SIZE,
     /** Reserved for a future WebSocket pool port; pooling is intentionally not implemented yet. */
     val poolSize: Int = 0,
-    /** Reserved for future Cloudflare-proxy fallback; fallback is intentionally not implemented yet. */
+    /** Enables bundled Cloudflare-proxy fallback when direct WebSocket routing is unavailable. */
     val cfproxyEnabled: Boolean = false,
+    /** Bundled or caller-provided CF proxy base domains. Remote refresh is intentionally not ported yet. */
+    val cfProxyDomains: List<String> = CfProxyDomains.defaults,
 ) {
     companion object {
         fun fromAppConfig(appConfig: AppConfig): ProxyServerConfig = ProxyServerConfig(
@@ -39,6 +41,7 @@ data class ProxyServerConfig(
             bufferSizeBytes = appConfig.bufKb * 1024,
             poolSize = appConfig.poolSize,
             cfproxyEnabled = appConfig.cfproxy,
+            cfProxyDomains = appConfig.cfproxyUserDomain.ifEmpty { CfProxyDomains.defaults },
         )
 
         private fun List<String>.toDcRedirects(): Map<Int, String> = buildMap {
@@ -59,6 +62,8 @@ data class ProxyServerStats(
     val connectionsActive: Int,
     val connectionsBad: Long,
     val wsConnectErrors: Long,
+    val cfProxyConnections: Long,
+    val cfProxyErrors: Long,
     val bytesUp: Long,
     val bytesDown: Long,
 )
@@ -108,7 +113,7 @@ fun interface ProxyBridgeRunner {
  * `proxy/bridge.py::bridge_ws_reencrypt`.
  *
  * Future work intentionally excluded from this milestone: WebSocket pooling,
- * Cloudflare fallback/refresh, fake TLS, proxy_protocol, balancer, Android
+ * CF remote refresh, CF worker/TCP fallback, fake TLS, proxy_protocol, Android
  * ForegroundService/UI/lifecycle, and autostart.
  */
 class ProxyServer(
@@ -120,6 +125,7 @@ class ProxyServer(
     private val bridgeRunner: ProxyBridgeRunner = ProxyBridgeRunner { client, webSocket, cryptoContext, splitter, counters ->
         BridgeSession(client, webSocket, cryptoContext, splitter, counters, config.bufferSizeBytes).runBlocking()
     },
+    private val cfProxyBalancer: CfProxyBalancer = CfProxyBalancer(config.cfProxyDomains),
     private val randomBytes: RelayInit.RandomBytes = RelayInit.SecureRandomBytes,
     private val logger: ProxyLogger = ProxyLogger {},
 ) {
@@ -129,6 +135,8 @@ class ProxyServer(
     private val connectionsActive = AtomicInteger(0)
     private val connectionsBad = AtomicLong(0)
     private val wsConnectErrors = AtomicLong(0)
+    private val cfProxyConnections = AtomicLong(0)
+    private val cfProxyErrors = AtomicLong(0)
     private val bytesUp = AtomicLong(0)
     private val bytesDown = AtomicLong(0)
     private var acceptThread: Thread? = null
@@ -164,6 +172,8 @@ class ProxyServer(
         connectionsActive = connectionsActive.get(),
         connectionsBad = connectionsBad.get(),
         wsConnectErrors = wsConnectErrors.get(),
+        cfProxyConnections = cfProxyConnections.get(),
+        cfProxyErrors = cfProxyErrors.get(),
         bytesUp = bytesUp.get(),
         bytesDown = bytesDown.get(),
     )
@@ -221,10 +231,6 @@ class ProxyServer(
         }
 
         val targetHost = config.dcRedirects[parsed.dcId]
-        if (targetHost == null) {
-            markBad("Unsupported DC ${parsed.dcId} from ${client.remoteLabel}; no redirect configured")
-            return
-        }
 
         val protoInt = protoIntForProtoTag(parsed.protoTag)
         logger.log(
@@ -242,22 +248,29 @@ class ProxyServer(
         val splitter = MsgSplitter(relayInit, protoInt)
         val counters = BridgeSessionCounters()
 
-        val webSocket = connectWebSocket(parsed, targetHost) ?: return
-
-        try {
-            webSocket.send(relayInit)
-            bridgeRunner.run(client, webSocket, cryptoContext, splitter, counters)
-        } finally {
-            bytesUp.addAndGet(counters.bytesUp)
-            bytesDown.addAndGet(counters.bytesDown)
-            try {
-                webSocket.close()
-            } catch (_: Throwable) {
-                // Best-effort close.
+        if (targetHost == null) {
+            if (config.cfproxyEnabled) {
+                logger.log("DC${parsed.dcId} has no direct redirect configured; trying CF fallback")
             }
+            if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter, counters)) {
+                return
+            }
+            markBad("Unsupported DC ${parsed.dcId} from ${client.remoteLabel}; no direct redirect or CF proxy route available")
+            return
         }
-    }
 
+        val directWebSocket = connectWebSocket(parsed, targetHost)
+        if (directWebSocket != null) {
+            runWebSocketRoute(client, directWebSocket, relayInit, cryptoContext, splitter, counters)
+            return
+        }
+
+        if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter, counters)) {
+            return
+        }
+
+        logger.log("DC${parsed.dcId} no route available after direct WebSocket attempts")
+    }
 
     private fun connectWebSocket(
         parsed: MtprotoHandshake.Result,
@@ -281,6 +294,70 @@ class ProxyServer(
         }
         logger.log("DC${parsed.dcId} WebSocket connect failed after attempts: ${failures.joinToString()}")
         return null
+    }
+
+
+    private fun tryCfProxyFallback(
+        client: TcpClientTransport,
+        parsed: MtprotoHandshake.Result,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+        counters: BridgeSessionCounters,
+    ): Boolean {
+        var attempted = false
+        for (baseDomain in cfProxyBalancer.getDomainsForDc(parsed.dcId)) {
+            attempted = true
+            val domain = "kws${parsed.dcId}.$baseDomain"
+            logger.log("DC${parsed.dcId} -> trying CF proxy wss://$domain$DEFAULT_WS_PATH")
+            val webSocket = try {
+                webSocketConnector.connect(domain, domain, DEFAULT_WS_PATH)
+            } catch (error: Throwable) {
+                cfProxyErrors.incrementAndGet()
+                val detail = websocketFailureDetail(error)
+                logger.log("DC${parsed.dcId} CF proxy failed via $baseDomain: $detail")
+                null
+            } ?: continue
+
+            try {
+                cfProxyConnections.incrementAndGet()
+                logger.log("DC${parsed.dcId} CF proxy connected via $domain")
+                cfProxyBalancer.updateDomainForDc(parsed.dcId, baseDomain)
+                runWebSocketRoute(client, webSocket, relayInit, cryptoContext, splitter, counters)
+                return true
+            } catch (error: Throwable) {
+                cfProxyErrors.incrementAndGet()
+                logger.log("DC${parsed.dcId} CF proxy failed via $baseDomain: ${websocketFailureDetail(error)}")
+            }
+        }
+        if (!attempted) {
+            logger.log("DC${parsed.dcId} CF proxy has no bundled base domains configured")
+        } else {
+            logger.log("DC${parsed.dcId} CF proxy connect failed after all attempts")
+        }
+        return false
+    }
+
+    private fun runWebSocketRoute(
+        client: TcpClientTransport,
+        webSocket: WebSocketBinaryStream,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+        counters: BridgeSessionCounters,
+    ) {
+        try {
+            webSocket.send(relayInit)
+            bridgeRunner.run(client, webSocket, cryptoContext, splitter, counters)
+        } finally {
+            bytesUp.addAndGet(counters.bytesUp)
+            bytesDown.addAndGet(counters.bytesDown)
+            try {
+                webSocket.close()
+            } catch (_: Throwable) {
+                // Best-effort close.
+            }
+        }
     }
 
     private fun markBad(message: String) {

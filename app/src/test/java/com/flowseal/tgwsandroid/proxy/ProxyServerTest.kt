@@ -7,6 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -79,7 +80,7 @@ class ProxyServerTest {
         val client = FakeTcpClientTransport(vector.getString("handshake_hex").hexToBytes())
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
-        val config = baseConfig().copy(dcRedirects = mapOf(4 to "203.0.113.4"))
+        val config = baseConfig().copy(dcRedirects = mapOf(4 to "203.0.113.4"), cfproxyEnabled = false)
         val proxy = newProxy(server, config = config, logger = ProxyLogger { logs.add(it) })
 
         proxy.start()
@@ -148,6 +149,7 @@ class ProxyServerTest {
             newProxy(
                 server = server,
                 connector = RawWebSocketConnector { _, _, _ -> throw IOException("ws boom") },
+                config = baseConfig().copy(cfproxyEnabled = false),
             )
 
         proxy.start()
@@ -245,7 +247,12 @@ class ProxyServerTest {
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
         val connector = RawWebSocketConnector { _, domain, _ -> throw IOException("boom for $domain") }
-        val proxy = newProxy(server = server, connector = connector, logger = ProxyLogger { logs.add(it) })
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(cfproxyEnabled = false),
+            logger = ProxyLogger { logs.add(it) },
+        )
 
         proxy.start()
         server.enqueue(client)
@@ -258,6 +265,132 @@ class ProxyServerTest {
         assertTrue(logs.any { it.contains("wss://kws2-1.web.telegram.org/apiws via 203.0.113.2") })
         assertTrue(logs.any { it.contains("IOException: boom for kws2.web.telegram.org") })
         assertTrue(logs.any { it.contains("connect failed after attempts") })
+    }
+
+
+    @Test
+    fun missingDirectRedirectWithCfEnabledAttemptsCfProxyDomain() {
+        val client = FakeTcpClientTransport(buildClientHandshake(dcIdx = 5, protoTag = RelayInit.PROTO_TAG_ABRIDGED))
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(dcRedirects = emptyMap(), cfProxyDomains = listOf("cf.example")),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("kws5.cf.example"), connector.targetHosts)
+        assertEquals(listOf("kws5.cf.example"), connector.domains)
+        assertEquals(listOf(ProxyServer.DEFAULT_WS_PATH), connector.paths)
+        assertEquals(1L, proxy.stats().cfProxyConnections)
+        assertTrue(logs.any { it.contains("DC5 has no direct redirect configured; trying CF fallback") })
+        assertTrue(logs.any { it.contains("DC5 -> trying CF proxy wss://kws5.cf.example/apiws") })
+        assertTrue(logs.any { it.contains("DC5 CF proxy connected via kws5.cf.example") })
+    }
+
+    @Test
+    fun directWebSocketFailureFallsBackToCfProxyAndStartsBridge() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = FailingDirectThenCfConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(cfProxyDomains = listOf("cf.example")),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("kws2.web.telegram.org", "kws2-1.web.telegram.org", "kws2.cf.example"), connector.domains)
+        assertEquals("kws2.cf.example", connector.targetHosts.last())
+        assertEquals(2L, proxy.stats().wsConnectErrors)
+        assertEquals(1L, proxy.stats().cfProxyConnections)
+        assertTrue(logs.any { it.contains("DC2 -> trying CF proxy wss://kws2.cf.example/apiws") })
+    }
+
+    @Test
+    fun directWebSocketSuccessDoesNotAttemptCfFallback() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(cfProxyDomains = listOf("cf.example")),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("kws2.web.telegram.org"), connector.domains)
+        assertEquals(0L, proxy.stats().cfProxyConnections)
+    }
+
+    @Test
+    fun cfDisabledAndMissingDirectRedirectKeepsUnsupportedDcCloseBehavior() {
+        val client = FakeTcpClientTransport(buildClientHandshake(dcIdx = 5, protoTag = RelayInit.PROTO_TAG_ABRIDGED))
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(dcRedirects = emptyMap(), cfproxyEnabled = false, cfProxyDomains = listOf("cf.example")),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertTrue(connector.domains.isEmpty())
+        assertEquals(1L, proxy.stats().connectionsBad)
+        assertTrue(logs.any { it.contains("Unsupported DC 5") })
+    }
+
+    @Test
+    fun allCfDomainsFailClosesClientAndLogsCfFailure() {
+        val client = FakeTcpClientTransport(buildClientHandshake(dcIdx = 5, protoTag = RelayInit.PROTO_TAG_ABRIDGED))
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RawWebSocketConnector { _, domain, _ -> throw IOException("cf boom for $domain") }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(dcRedirects = emptyMap(), cfProxyDomains = listOf("one.example", "two.example")),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(2L, proxy.stats().cfProxyErrors)
+        assertEquals(1L, proxy.stats().connectionsBad)
+        assertTrue(logs.any { it.contains("DC5 CF proxy failed via one.example: IOException: cf boom for kws5.one.example") })
+        assertTrue(logs.any { it.contains("DC5 CF proxy connect failed after all attempts") })
     }
 
     @Test
@@ -338,6 +471,37 @@ class ProxyServerTest {
             IvParameterSpec(relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN + 32, MtprotoHandshake.SKIP_LEN + 32 + 16)),
         )
         return cipher.doFinal(relayInit).copyOfRange(MtprotoHandshake.PROTO_TAG_POS, MtprotoHandshake.HANDSHAKE_LEN)
+    }
+
+
+    private fun buildClientHandshake(
+        dcIdx: Int,
+        protoTag: ByteArray,
+        secret: ByteArray = "0123456789abcdeffedcba9876543210".hexToBytes(),
+    ): ByteArray {
+        val handshake = ByteArray(MtprotoHandshake.HANDSHAKE_LEN) { index -> (index * 17 + 3).toByte() }
+        handshake[0] = 0x11
+        val decPrekey = handshake.copyOfRange(MtprotoHandshake.SKIP_LEN, MtprotoHandshake.SKIP_LEN + MtprotoHandshake.PREKEY_LEN)
+        val decIv = handshake.copyOfRange(
+            MtprotoHandshake.SKIP_LEN + MtprotoHandshake.PREKEY_LEN,
+            MtprotoHandshake.SKIP_LEN + MtprotoHandshake.PREKEY_LEN + MtprotoHandshake.IV_LEN,
+        )
+        val decKey = MessageDigest.getInstance("SHA-256").digest(decPrekey + secret)
+        val stream = aesCtr(decKey, decIv, handshake).mapIndexed { index, byte ->
+            (byte.toInt() xor handshake[index].toInt()).toByte()
+        }.toByteArray()
+        val tailPlain = protoTag + byteArrayOf((dcIdx and 0xff).toByte(), ((dcIdx shr 8) and 0xff).toByte(), 0x55, 0x66)
+        for (offset in tailPlain.indices) {
+            handshake[MtprotoHandshake.PROTO_TAG_POS + offset] =
+                (tailPlain[offset].toInt() xor stream[MtprotoHandshake.PROTO_TAG_POS + offset].toInt()).toByte()
+        }
+        return handshake
+    }
+
+    private fun aesCtr(key: ByteArray, iv: ByteArray, input: ByteArray): ByteArray {
+        val cipher = Cipher.getInstance("AES/CTR/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
+        return cipher.doFinal(input)
     }
 
     private fun waitUntil(predicate: () -> Boolean) {
@@ -443,6 +607,25 @@ class ProxyServerTest {
             attempts += 1
             domains.add(domain)
             if (attempts <= failCount) throw IOException("planned failure $attempts")
+            return webSocket
+        }
+    }
+
+
+    private class FailingDirectThenCfConnector(
+        private val webSocket: FakeWebSocketBinaryStream,
+    ) : RawWebSocketConnector {
+        val targetHosts = mutableListOf<String>()
+        val domains = mutableListOf<String>()
+
+        override fun connect(
+            targetHost: String,
+            domain: String,
+            path: String,
+        ): WebSocketBinaryStream {
+            targetHosts.add(targetHost)
+            domains.add(domain)
+            if (domain.endsWith(".web.telegram.org")) throw IOException("direct down for $domain")
             return webSocket
         }
     }

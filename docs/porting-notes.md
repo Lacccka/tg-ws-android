@@ -46,12 +46,15 @@ TCP clients, reads the non-fake-TLS 64-byte MTProto handshake, selects a
 configured DC TCP target, derives the upstream-compatible Telegram WebSocket
 web domains for TLS SNI/HTTP Host, creates relay init/crypto/splitter state,
 opens an injectable direct RawWebSocket connection, sends relay init as the first
-binary frame, and invokes `BridgeSession`. ws_pool/connection pools, cfproxy fallback
-and refresh, fake TLS, proxy_protocol, foreground service integration, UI,
-balancing code, app lifecycle, autostart, and richer Telegram routing remain
-intentionally unimplemented until their own parity or integration test scopes
-exist. Real RawWebSocket integration against Telegram/Cloudflare has not been
-tested yet.
+binary frame, and invokes `BridgeSession`. If direct WebSocket connection fails,
+or if the parsed DC has no direct redirect configured, `ProxyServer` can use the
+bundled CF-proxy fallback path (`kws{dc}.{baseDomain}` over `/apiws`) with
+Android-independent default-domain decoding and per-DC active-domain memory.
+Remote CF domain refresh, CF worker fallback, TCP fallback, ws_pool/connection
+pools and warmup, fake TLS, proxy_protocol, foreground service integration, UI,
+app lifecycle, autostart, and richer Telegram routing remain intentionally
+unimplemented until their own parity or integration test scopes exist. Real
+RawWebSocket integration against Telegram/Cloudflare has not been tested yet.
 
 ## Parity-test workflow
 
@@ -117,10 +120,11 @@ codec-built Upgrade request, parses the response with the codec, sends masked
 client frames, supports sendBatch, receives binary and text payload frames,
 responds to ping with pong, ignores pong, acknowledges close frames, and closes
 best-effort like upstream. Unit tests use fake in-memory transports only; real
-Telegram/Cloudflare integration is not tested yet. Minimal TCP proxy server integration now exists in `ProxyServer`; connection
-pool/ws_pool, foreground services, Android UI, balancer, cfproxy refresh and
-fallback, fake TLS, proxy_protocol, app lifecycle, autostart, and richer
-Telegram-specific routing are intentionally left for separate milestones.
+Telegram/Cloudflare integration is not tested yet. Minimal TCP proxy server integration now exists in `ProxyServer`; normal bundled
+CF-proxy fallback is ported, while connection pool/ws_pool, foreground services,
+Android UI, CF remote refresh, CF worker/TCP fallback, fake TLS, proxy_protocol,
+app lifecycle, autostart, and richer Telegram-specific routing are intentionally
+left for separate milestones.
 
 The default Kotlin TLS transport deliberately mirrors upstream
 `ssl.CERT_NONE`: certificate verification and hostname verification are disabled
@@ -144,8 +148,8 @@ packet counters, and closes both sides best-effort when either direction ends.
 The reusable bridge milestone intentionally did not port server ownership; the
 next milestone added `ProxyServer` as the minimal local owner of accepted TCP
 clients and bridge sessions. Android ForegroundService/UI, connection pool,
-balancer, cfproxy refresh/fallback, fake TLS, proxy_protocol, app lifecycle,
-autostart, and richer Telegram routing remain out of scope. Production code can
+CF remote refresh, CF worker/TCP fallback, fake TLS, proxy_protocol, app
+lifecycle, autostart, and richer Telegram routing remain out of scope. Production code can
 use the default `RawWebSocketBinaryStream` adapter when using a live
 `RawWebSocket`; unit tests should continue to use fake streams.
 
@@ -163,8 +167,8 @@ one background accept loop, one worker thread per accepted client, exact 64-byte
 handshake reads, configured DC redirect lookup, relay init generation, crypto
 context construction, proto-tag-to-`MsgSplitter` mapping, first-frame relay init
 send, bridge invocation, best-effort close handling, callback logging, and local
-stats for total/active/bad connections, WebSocket connect failures, and surfaced
-bridge byte counters.
+stats for total/active/bad connections, WebSocket connect failures, CF-proxy
+connections/errors, and surfaced bridge byte counters.
 
 The direct WebSocket path now matches upstream domain selection. The TCP target
 remains the configured DC IP from `dcRedirects` (for example
@@ -182,9 +186,27 @@ redirect mapping: DC2, DC3, and DC4 all route to `149.154.167.220`. DC3 was
 added because Telegram may select DC3 on mobile networks, while DC2/DC4 were
 already known to work with this target. The full upstream `DC_DEFAULT_IPS` list
 is not used yet because direct WebSocket connections to those official DC IPs
-may timeout. Unsupported DCs still log and close without fallback. CF-proxy
-fallback and a settings UI for editable DC mapping remain unimplemented.
+may timeout. Unsupported or failing direct DCs can now route through bundled
+CF-proxy fallback when it is enabled; a settings UI for editable DC mapping
+remains unimplemented.
 
-Still not ported in this milestone: ws_pool/connection pooling, cfproxy fallback
-or refresh, fake TLS, proxy_protocol, balancer, Android ForegroundService/UI, app
-lifecycle, autostart, and production Cloudflare/Telegram integration testing.
+Still not ported in this milestone: ws_pool/connection pooling/warmup, CF remote
+refresh, CF worker fallback, TCP fallback, fake TLS, proxy_protocol, Android
+ForegroundService/UI, app lifecycle, autostart, and production
+Cloudflare/Telegram integration testing.
+
+## CF-proxy fallback status
+
+Android proxy-core now includes bundled CF-proxy fallback compatible with the
+normal upstream CF proxy path: direct routes still connect to the configured DC
+IP with Telegram WebSocket domains, while missing or failing direct routes can
+try `kws{dc}.{baseDomain}` on `/apiws`, send the same relay init, and reuse the
+same re-encryption bridge state. The bundled domain list mirrors upstream
+`config.py` defaults and is deterministic for JVM tests.
+
+Not implemented yet: remote CF domain refresh from GitHub, CF Worker fallback,
+TCP fallback, fake TLS, settings UI, and ws_pool/warmup. Because ws_pool/warmup
+is still absent, first-connection latency and ping can still be worse than the
+PC upstream app. Runtime direct DC mapping remains intentionally minimal
+(DC2/DC3/DC4 -> `149.154.167.220`), so missing or failing direct DCs rely on CF
+fallback when enabled.
