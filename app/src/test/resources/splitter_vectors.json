@@ -1,0 +1,165 @@
+{
+  "metadata": {
+    "seed": 6003382181116003666,
+    "upstream": "third_party/tg-ws-proxy/proxy/bridge.py::MsgSplitter",
+    "utils": "third_party/tg-ws-proxy/proxy/utils.py"
+  },
+  "vectors": [
+    {
+      "chunks_hex": [
+        "4c49244993a55d32bb59d772ed"
+      ],
+      "expected_flush_parts_hex": [],
+      "expected_parts_per_chunk_hex": [
+        [
+          "4c49244993a55d32bb59d772ed"
+        ]
+      ],
+      "name": "abridged_single_complete_packet",
+      "proto_int": 4025479151,
+      "relay_init_hex": "23a8f17663c05493c18ce05f1f57d57bfb76c8e4767d926f8df45c411f47434f9a2d11e3d64de2c3db07e9ca9ce091be81873316d2054412efefefef91cef354"
+    },
+    {
+      "chunks_hex": [
+        "17475eb1f20311f678b8c2c97c4dc26a3a59be534b27e100e6ac4e0c987219001fd4666489a84fbea4f88240afa812060a96e4125a052d3ce83a83a0227e0563a33558447376c2ec58bea6e4af95ab82d9503e5137e5fc1a02bacadf9d480e6c5aa470cdd306484a23763551d435da4846311e9d252b2ddaea6a44e66cbe76b1b334be4a701c08ea84f2492009145abf1578f99e851b31dd03aaf6d32a4691b13337902c34c96a46b76ccc5b47db51178fa37a230c9c8054d52a03a730f463b802761cbb833891d39ad1761c158b8bdaeb8bb009d9f132c473d5dc472d51b194eea9c622b762c995aeb3b9df7d823e398562c724b5a4ec2052b21af7d4452956f72aeb9c701775c6f1fbee7f9af7d1b78737d1ff67332c8681e0ac62aafd98fb1a42746e518a47bc9da37f3c2d80fe98cb237de4bfbf979015252ff54a7ffcbe0102fc8760286a239f82afca9e1ead51a07f007e9eca63b5359890b7f8e132ee7bb31de4f79851208eb5de8e4c912080e1fb4790401816e2b6832dfda6df34d728720e7fa406b87fc1a6a9127e510252a016f2e900ccdbb91303d8e8aef0f78f2f10054a6c99f4a0d835db43474cf138a9aeed4dd162a37d0c32fdf025aeef7e1d37c0c32f0d8dee71183ed7de5518982f9fefd23fd738001ac7b8c0b0cb211a6200f8a2a7f7644964a321379bd8d81bfb45d2072b82789bf439b58228ba2f58a0792bbf230ea56c69f00359e33b457edafd8d629eddf0ac4f2f"
+      ],
+      "expected_flush_parts_hex": [],
+      "expected_parts_per_chunk_hex": [
+        [
+          "17475eb1f20311f678b8c2c97c",
+          "4dc26a3a59be534b27",
+          "e100e6ac4e0c987219001fd4666489a84fbea4f88240afa812060a96e4125a052d3ce83a83a0227e0563a33558447376c2ec58bea6e4af95ab82d9503e5137e5fc1a02bacadf9d480e6c5aa470cdd306484a23763551d435da4846311e9d252b2ddaea6a44e66cbe76b1b334be4a701c08ea84f2492009145abf1578f99e851b31dd03aaf6d32a4691b13337902c34c96a46b76ccc5b47db51178fa37a230c9c8054d52a03a730f463b802761cbb833891d39ad1761c158b8bdaeb8bb009d9f132c473d5dc472d51b194eea9c622b762c995aeb3b9df7d823e398562c724b5a4ec2052b21af7d4452956f72aeb9c701775c6f1fbee7f9af7d1b78737d1ff67332c8681e0ac62aafd98fb1a42746e518a47bc9da37f3c2d80fe98cb237de4bfbf979015252ff54a7ffcbe0102fc8760286a239f82afca9e1ead51a07f007e9eca63b5359890b7f8e132ee7bb31de4f79851208eb5de8e4c912080e1fb4790401816e2b6832dfda6df34d728720e7fa406b87fc1a6a9127e510252a016f2e900ccdbb91303d8e8aef0f78f2f10054a6c99f4a0d835db43474cf138a9aeed4dd162a37d0c32fdf025aeef7e1d37c0c32f0d8dee71183ed7de5518982f9fefd23fd738001ac7b8c0b0cb211a6200f8a2a7f7644964a321379bd8d81bfb45d2072b82789bf439b58228ba2f58a0792bbf230ea56c69f00359e33b457edafd8d629eddf0ac4f2f"
+        ]
+      ],
+      "name": "abridged_multiple_packets_one_chunk",
+      "proto_int": 4025479151,
+      "relay_init_hex": "5597446514115399718d6a64615b95fd1ca50fc44c1b919c5bdae286577672250f34b3c1a8a3dcf73734889961d621a10be240d44046056defefefefa9e2a195"
+    },
+    {
+      "chunks_hex": [
+        "9d",
+        "e5f4fa",
+        "2f3a92706b",
+        "027ab461e81a8bc2"
+      ],
+      "expected_flush_parts_hex": [],
+      "expected_parts_per_chunk_hex": [
+        [],
+        [],
+        [],
+        [
+          "9de5f4fa2f3a92706b027ab461e81a8bc2"
+        ]
+      ],
+      "name": "abridged_packet_split_across_chunks",
+      "proto_int": 4025479151,
+      "relay_init_hex": "4205b09627e8a688f4213f40ccf6d8b413086b37a2fb2ac4fd34e3bd0efb63e78e51ddc5757a336b0d1c65bd6f4332ab0e7f95ab88dc99dcefefefefd476336c"
+    },
+    {
+      "chunks_hex": [
+        "11e8",
+        "1c9d90be46b091d0279d59"
+      ],
+      "expected_flush_parts_hex": [
+        "11e81c9d90be46b091d0279d59"
+      ],
+      "expected_parts_per_chunk_hex": [
+        [],
+        []
+      ],
+      "name": "abridged_flush_trailing_incomplete_packet",
+      "proto_int": 4025479151,
+      "relay_init_hex": "6b49a454b0924e542ec3bbe611f61303d5f1e368bf2ee743d49d83587ed75ff80266f862585a8d27508a6246fb65ee62f0dfd35911e4a422efefefef5a508427"
+    },
+    {
+      "chunks_hex": [
+        "5555b095bfa5701858fab0d76be1ac"
+      ],
+      "expected_flush_parts_hex": [],
+      "expected_parts_per_chunk_hex": [
+        [
+          "5555b095bfa5701858fab0d76be1ac"
+        ]
+      ],
+      "name": "intermediate_single_complete_packet",
+      "proto_int": 4008636142,
+      "relay_init_hex": "20548b6f9113ccd9018cd34110b6006ba1a45c7e32c13aa5644c6fe7bcc7217635fd92453ec7b17e6211a0b1fd0c4f3a790061d0a6c4a2faeeeeeeee31ce220d"
+    },
+    {
+      "chunks_hex": [
+        "e22b0407b6489eab6b76efd49701b49a31c63e96016377b274f87afe545ea1e88af3b563643e"
+      ],
+      "expected_flush_parts_hex": [],
+      "expected_parts_per_chunk_hex": [
+        [
+          "e22b0407b6489eab6b76efd49701b4",
+          "9a31c63e96016377b274f87afe545ea1e88af3b563643e"
+        ]
+      ],
+      "name": "intermediate_multiple_packets_one_chunk",
+      "proto_int": 4008636142,
+      "relay_init_hex": "da45ba5477bd2248bfd99b931a6a51bf77a259fe92763a9059f055fed39bc52af3d11714e9a53f891bf8521f166b0033b785d1a9cf1e01f4eeeeeeee4b891a9b"
+    },
+    {
+      "chunks_hex": [
+        "588d",
+        "ac237417",
+        "96b420",
+        "9314"
+      ],
+      "expected_flush_parts_hex": [],
+      "expected_parts_per_chunk_hex": [
+        [],
+        [],
+        [],
+        [
+          "588dac23741796b4209314"
+        ]
+      ],
+      "name": "intermediate_packet_split_across_chunks",
+      "proto_int": 4008636142,
+      "relay_init_hex": "e7adef21c735c007288601c000f8e65d9262c81fdf344b6c38a4a9e6e44941d51bc47377c1398c288a77ece5a796ed87c2e8bdb940fe10a3eeeeeeee78b6abd6"
+    },
+    {
+      "chunks_hex": [
+        "0cb3e4",
+        "6b6f6d7fa0d6",
+        "3090f292bdf75f2eb096a939603f79df47e41c9bb25b345ea36a22"
+      ],
+      "expected_flush_parts_hex": [],
+      "expected_parts_per_chunk_hex": [
+        [],
+        [],
+        [
+          "0cb3e46b6f6d7fa0d63090f292bdf75f2eb096a939603f79df47e4",
+          "1c9bb25b345ea36a22"
+        ]
+      ],
+      "name": "padded_intermediate_secure_packets",
+      "proto_int": 3722304989,
+      "relay_init_hex": "93ba0f5380aab412857ec0b35b86760d78ad3ab1f37f32e08b5e1e049b952c65aca75b6b168179a8d82908cd3bd36e503fd74c52f8f496bcdddddddd5611de5e"
+    },
+    {
+      "chunks_hex": [
+        "13d0ca3405",
+        "a5c9e704126420",
+        "1b97c811bd8a783dee479a"
+      ],
+      "expected_flush_parts_hex": [],
+      "expected_parts_per_chunk_hex": [
+        [
+          "13d0ca3405"
+        ],
+        [
+          "a5c9e704126420"
+        ],
+        [
+          "1b97c811bd8a783dee479a"
+        ]
+      ],
+      "name": "unknown_proto_disabled_fallback",
+      "proto_int": 305419896,
+      "relay_init_hex": "42dd72c7d6be86eb54ba3d501e3af76b0119840cd03e4b53f56372ec3008c3c6d2cc2ebec3bec2f8d5706829f082c19c0a6aa3f68988fcde7856341236f449d0"
+    }
+  ]
+}

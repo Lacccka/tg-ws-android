@@ -13,7 +13,7 @@ function names below.
 | `utils/default_config.py` | `default_tray_config` | `app/src/main/java/com/flowseal/tgwsandroid/config/AppConfig.kt`, future Android preferences/default config repository | `AppConfig` defaults started. |
 | `utils/tray_common.py` | `apply_proxy_config`, config-to-runtime coercion | future `app/src/main/java/com/flowseal/tgwsandroid/config/ConfigRepository.kt` and `proxy/ProxyRuntimeConfig.kt` | Pending. |
 | `proxy/tg_ws_proxy.py` | `_try_handshake`, `_generate_relay_init`, `_read_client_init`, `_build_crypto_ctx`, `_handle_client`, `_run`, `run_proxy` | `app/src/main/java/com/flowseal/tgwsandroid/proxy/MtprotoHandshake.kt`, `app/src/main/java/com/flowseal/tgwsandroid/proxy/RelayInit.kt`, `app/src/main/java/com/flowseal/tgwsandroid/proxy/CryptoContext.kt`, future `proxy/TgWsProxy.kt`, Android service entrypoint | `_try_handshake`, `_generate_relay_init`, and `_build_crypto_ctx` ported and covered by generated parity vectors; networking code pending. |
-| `proxy/bridge.py` | `CryptoCtx`, `MsgSplitter`, fallback functions, TCP/WebSocket re-encryption bridge | `app/src/main/java/com/flowseal/tgwsandroid/proxy/CryptoContext.kt`, future `proxy/bridge/MessageSplitter.kt`, `proxy/bridge/Bridge.kt`, `proxy/fallback/*` | `CryptoCtx` Kotlin equivalent added and parity-tested for stream re-encryption; bridge, splitter, and fallback networking pending. |
+| `proxy/bridge.py` | `CryptoCtx`, `MsgSplitter`, fallback functions, TCP/WebSocket re-encryption bridge | `app/src/main/java/com/flowseal/tgwsandroid/proxy/CryptoContext.kt`, `app/src/main/java/com/flowseal/tgwsandroid/proxy/MsgSplitter.kt`, future `proxy/bridge/Bridge.kt`, `proxy/fallback/*` | `CryptoCtx` Kotlin equivalent and `MsgSplitter` ported and parity-tested; bridge and fallback networking pending. |
 | `proxy/raw_websocket.py` | `RawWebSocket`, `_xor_mask`, socket option setup, handshake errors | future `proxy/ws/RawWebSocket.kt`, `proxy/ws/WebSocketMask.kt` | Pending. |
 | `proxy/fake_tls.py` | `verify_client_hello`, `build_server_hello`, `wrap_tls_record`, `FakeTlsStream`, masking-domain proxy | future `proxy/tls/FakeTls.kt`, `proxy/tls/FakeTlsStream.kt` | Pending. |
 | `proxy/utils.py` | `ws_domains`, `human_bytes`, `get_link_host`, GitHub opener helper | future `proxy/TelegramDcDomains.kt`, `util/Format.kt`, `util/LinkHost.kt` | Pending. |
@@ -29,4 +29,7 @@ parity. This makes future submodule updates inspectable with
 `tools/check_upstream.py` before porting code changes. Crypto vectors in
 `app/src/test/resources/crypto_vectors.json` must be regenerated with
 `tools/generate_crypto_vectors.py` after relevant upstream relay-init or crypto
-context changes.
+context changes. Splitter vectors in
+`app/src/test/resources/splitter_vectors.json` must be regenerated with
+`tools/generate_splitter_vectors.py` after relevant upstream `bridge.MsgSplitter`
+or transport-constant changes.
