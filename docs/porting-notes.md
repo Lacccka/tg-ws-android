@@ -19,12 +19,18 @@
 The Android structure now includes runtime configuration plus parity
 ports for MTProto handshake, relay init, crypto context, MsgSplitter, the
 RawWebSocket frame/request/response codec, the live RawWebSocket
-TLS connection/send/recv/close layer, and the reusable BridgeSession layer
-equivalent to upstream `bridge_ws_reencrypt`. TCP proxy server wiring, fake TLS,
-connection pools, cfproxy refresh, foreground service integration, UI, balancing
-code, app lifecycle, and Telegram routing remain intentionally unimplemented
-until their own parity or integration test scopes exist. Real RawWebSocket
-integration against Telegram/Cloudflare has not been tested yet.
+TLS connection/send/recv/close layer, the reusable BridgeSession layer
+equivalent to upstream `bridge_ws_reencrypt`, and a minimal blocking local
+`ProxyServer` runtime without Android Service/UI. The `ProxyServer` accepts local
+TCP clients, reads the non-fake-TLS 64-byte MTProto handshake, selects a
+configured DC target, creates relay init/crypto/splitter state, opens an
+injectable direct RawWebSocket connection, sends relay init as the first binary
+frame, and invokes `BridgeSession`. ws_pool/connection pools, cfproxy fallback
+and refresh, fake TLS, proxy_protocol, foreground service integration, UI,
+balancing code, app lifecycle, autostart, and richer Telegram routing remain
+intentionally unimplemented until their own parity or integration test scopes
+exist. Real RawWebSocket integration against Telegram/Cloudflare has not been
+tested yet.
 
 ## Parity-test workflow
 
@@ -93,10 +99,10 @@ codec-built Upgrade request, parses the response with the codec, sends masked
 client frames, supports sendBatch, receives binary and text payload frames,
 responds to ping with pong, ignores pong, acknowledges close frames, and closes
 best-effort like upstream. Unit tests use fake in-memory transports only; real
-Telegram/Cloudflare integration is not tested yet. TCP proxy server integration,
-connection pool, foreground services, Android UI, balancer, cfproxy refresh, app
-lifecycle, and Telegram-specific routing are intentionally left for separate
-milestones.
+Telegram/Cloudflare integration is not tested yet. Minimal TCP proxy server integration now exists in `ProxyServer`; connection
+pool/ws_pool, foreground services, Android UI, balancer, cfproxy refresh and
+fallback, fake TLS, proxy_protocol, app lifecycle, autostart, and richer
+Telegram-specific routing are intentionally left for separate milestones.
 
 The default Kotlin TLS transport deliberately mirrors upstream
 `ssl.CERT_NONE`: certificate verification and hostname verification are disabled
@@ -118,8 +124,32 @@ across chunks, optionally applies `MsgSplitter`, flushes the splitter tail on
 client EOF using the upstream first-tail-part behavior, records local byte and
 packet counters, and closes both sides best-effort when either direction ends.
 
-The milestone intentionally does not port the TCP proxy server, Android
-ForegroundService/UI, connection pool, balancer, cfproxy refresh, app lifecycle,
-or Telegram routing. Production code should inject a `RawWebSocketBinaryStream`
-adapter when using a live `RawWebSocket`; unit tests should continue to use fake
-streams.
+The reusable bridge milestone intentionally did not port server ownership; the
+next milestone added `ProxyServer` as the minimal local owner of accepted TCP
+clients and bridge sessions. Android ForegroundService/UI, connection pool,
+balancer, cfproxy refresh/fallback, fake TLS, proxy_protocol, app lifecycle,
+autostart, and richer Telegram routing remain out of scope. Production code can
+use the default `RawWebSocketBinaryStream` adapter when using a live
+`RawWebSocket`; unit tests should continue to use fake streams.
+
+
+## Minimal ProxyServer runtime
+
+`app/src/main/java/com/flowseal/tgwsandroid/proxy/ProxyServer.kt` ports the
+minimal local blocking runtime slice of upstream
+`proxy/tg_ws_proxy.py::_handle_client`, `_read_client_init` on the non-fake-TLS
+path, `_try_handshake`, `_generate_relay_init`, `_build_crypto_ctx`, and direct
+`RawWebSocket.connect` usage. It is Android-independent and uses injectable
+`TcpServerTransport`, `TcpClientTransport`, `RawWebSocketConnector`, and
+`ProxyBridgeRunner` abstractions so JVM unit tests do not require internet, an
+emulator, or an Android Service. The implemented path is deliberately narrow:
+one background accept loop, one worker thread per accepted client, exact 64-byte
+handshake reads, configured DC redirect lookup, relay init generation, crypto
+context construction, proto-tag-to-`MsgSplitter` mapping, first-frame relay init
+send, bridge invocation, best-effort close handling, callback logging, and local
+stats for total/active/bad connections, WebSocket connect failures, and surfaced
+bridge byte counters.
+
+Not ported in this milestone: ws_pool/connection pooling, cfproxy fallback or
+refresh, fake TLS, proxy_protocol, balancer, Android ForegroundService/UI, app
+lifecycle, autostart, and production Cloudflare/Telegram integration testing.

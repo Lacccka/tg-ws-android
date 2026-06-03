@@ -42,12 +42,12 @@ class BridgeSessionCounters {
     val packetsUp: Long get() = packetsUpAtomic.get()
     val packetsDown: Long get() = packetsDownAtomic.get()
 
-    internal fun recordUp(bytes: Int) {
+    fun recordUp(bytes: Int) {
         bytesUpAtomic.addAndGet(bytes.toLong())
         packetsUpAtomic.incrementAndGet()
     }
 
-    internal fun recordDown(bytes: Int) {
+    fun recordDown(bytes: Int) {
         bytesDownAtomic.addAndGet(bytes.toLong())
         packetsDownAtomic.incrementAndGet()
     }
@@ -70,6 +70,7 @@ class BridgeSession(
     private val cryptoContext: CryptoContext,
     private val splitter: MsgSplitter? = null,
     val counters: BridgeSessionCounters = BridgeSessionCounters(),
+    private val bufferSize: Int = DEFAULT_BUFFER_SIZE,
 ) {
     private val closed = AtomicBoolean(false)
 
@@ -108,7 +109,7 @@ class BridgeSession(
     private fun clientToWebSocketLoop() {
         try {
             while (!closed.get()) {
-                val chunk = client.read(DEFAULT_BUFFER_SIZE)
+                val chunk = client.read(bufferSize)
                 if (chunk == null || chunk.isEmpty()) {
                     flushSplitterTail()
                     break
