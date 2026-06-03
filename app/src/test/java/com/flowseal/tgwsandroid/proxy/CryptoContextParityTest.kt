@@ -24,19 +24,22 @@ class CryptoContextParityTest {
     fun matchesUpstreamStreamTransformationsForChunkedBuffers() {
         for (vector in loadCryptoVectors()) {
             val ctx = buildContext(vector)
-            val chunkSizes = vector.getJSONArray("chunk_sizes").let { sizes ->
-                List(sizes.length()) { index -> sizes.getInt(index) }
-            }
+            val chunkSizes =
+                vector.getJSONArray("chunk_sizes").let { sizes ->
+                    List(sizes.length()) { index -> sizes.getInt(index) }
+                }
 
-            val plainFromClient = updateInChunks(
-                vector.getString("sample_client_ciphertext_hex").hexToBytes(),
-                chunkSizes,
-            ) { ctx.decryptFromClient(it) }
+            val plainFromClient =
+                updateInChunks(
+                    vector.getString("sample_client_ciphertext_hex").hexToBytes(),
+                    chunkSizes,
+                ) { ctx.decryptFromClient(it) }
             val telegramCiphertext = updateInChunks(plainFromClient, chunkSizes) { ctx.encryptToTelegram(it) }
-            val plainFromTelegram = updateInChunks(
-                vector.getString("sample_telegram_ciphertext_hex").hexToBytes(),
-                chunkSizes,
-            ) { ctx.decryptFromTelegram(it) }
+            val plainFromTelegram =
+                updateInChunks(
+                    vector.getString("sample_telegram_ciphertext_hex").hexToBytes(),
+                    chunkSizes,
+                ) { ctx.decryptFromTelegram(it) }
             val clientCiphertext = updateInChunks(plainFromTelegram, chunkSizes) { ctx.encryptToClient(it) }
 
             assertEquals(vector.getString("name"), vector.getString("expected_plain_from_client_hex"), plainFromClient.toHex())
@@ -46,13 +49,18 @@ class CryptoContextParityTest {
         }
     }
 
-    private fun buildContext(vector: org.json.JSONObject): CryptoContext = CryptoContext.build(
-        clientDecPrekeyIv = vector.getString("client_dec_prekey_iv_hex").hexToBytes(),
-        secret = vector.getString("secret_hex").hexToBytes(),
-        relayInit = vector.getString("relay_init_hex").hexToBytes(),
-    )
+    private fun buildContext(vector: org.json.JSONObject): CryptoContext =
+        CryptoContext.build(
+            clientDecPrekeyIv = vector.getString("client_dec_prekey_iv_hex").hexToBytes(),
+            secret = vector.getString("secret_hex").hexToBytes(),
+            relayInit = vector.getString("relay_init_hex").hexToBytes(),
+        )
 
-    private fun updateInChunks(input: ByteArray, chunkSizes: List<Int>, transform: (ByteArray) -> ByteArray): ByteArray {
+    private fun updateInChunks(
+        input: ByteArray,
+        chunkSizes: List<Int>,
+        transform: (ByteArray) -> ByteArray,
+    ): ByteArray {
         val output = ArrayList<Byte>()
         var offset = 0
         for (size in chunkSizes) {

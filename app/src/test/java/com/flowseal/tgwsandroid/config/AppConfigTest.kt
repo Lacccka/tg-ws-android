@@ -11,28 +11,29 @@ import org.junit.Test
 class AppConfigTest {
     @Test
     fun parsesRuntimeConfigKeys() {
-        val config = AppConfig.fromJson(
-            JSONObject(
-                """
-                {
-                  "host": "127.0.0.1",
-                  "port": 1443,
-                  "secret": "0123456789abcdef0123456789abcdef",
-                  "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
-                  "verbose": true,
-                  "autostart": true,
-                  "buf_kb": 512,
-                  "pool_size": 8,
-                  "log_max_mb": 6.5,
-                  "check_updates": false,
-                  "cfproxy": false,
-                  "cfproxy_user_domain": "one.example, two.example",
-                  "cfproxy_worker_domain": ["worker.example"],
-                  "appearance": "dark"
-                }
-                """.trimIndent(),
-            ),
-        )
+        val config =
+            AppConfig.fromJson(
+                JSONObject(
+                    """
+                    {
+                      "host": "127.0.0.1",
+                      "port": 1443,
+                      "secret": "0123456789abcdef0123456789abcdef",
+                      "dc_ip": ["2:149.154.167.220", "4:149.154.167.220"],
+                      "verbose": true,
+                      "autostart": true,
+                      "buf_kb": 512,
+                      "pool_size": 8,
+                      "log_max_mb": 6.5,
+                      "check_updates": false,
+                      "cfproxy": false,
+                      "cfproxy_user_domain": "one.example, two.example",
+                      "cfproxy_worker_domain": ["worker.example"],
+                      "appearance": "dark"
+                    }
+                    """.trimIndent(),
+                ),
+            )
 
         assertEquals("127.0.0.1", config.host)
         assertEquals(1443, config.port)

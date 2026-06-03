@@ -15,7 +15,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM_ROOT = REPO_ROOT / "third_party" / "tg-ws-proxy"
 OUTPUT_PATH = REPO_ROOT / "app" / "src" / "test" / "resources" / "splitter_vectors.json"
@@ -78,12 +77,16 @@ def _relay_init(rng: random.Random, proto_int: int) -> bytes:
 
 
 def _encrypt_for_splitter(relay_init: bytes, plain: bytes) -> bytes:
-    stream = Cipher(algorithms.AES(relay_init[8:40]), modes.CTR(relay_init[40:56])).encryptor()
+    stream = Cipher(
+        algorithms.AES(relay_init[8:40]), modes.CTR(relay_init[40:56])
+    ).encryptor()
     stream.update(ZERO_64)
     return stream.update(plain)
 
 
-def _run_upstream(relay_init: bytes, proto_int: int, chunks: list[bytes]) -> tuple[list[list[bytes]], list[bytes]]:
+def _run_upstream(
+    relay_init: bytes, proto_int: int, chunks: list[bytes]
+) -> tuple[list[list[bytes]], list[bytes]]:
     splitter = MsgSplitter(relay_init, proto_int)
     per_chunk = [splitter.split(chunk) for chunk in chunks]
     flush_parts = splitter.flush()
@@ -91,7 +94,7 @@ def _run_upstream(relay_init: bytes, proto_int: int, chunks: list[bytes]) -> tup
 
 
 def _payload(label: str, length: int) -> bytes:
-    base = (label.encode("utf-8") + b"|")
+    base = label.encode("utf-8") + b"|"
     return bytes((base[index % len(base)] + index) & 0xFF for index in range(length))
 
 
@@ -115,7 +118,9 @@ def _vector(
         "relay_init_hex": relay_init.hex(),
         "proto_int": proto_int,
         "chunks_hex": [chunk.hex() for chunk in chunks],
-        "expected_parts_per_chunk_hex": [[part.hex() for part in parts] for parts in expected_per_chunk],
+        "expected_parts_per_chunk_hex": [
+            [part.hex() for part in parts] for parts in expected_per_chunk
+        ],
         "expected_flush_parts_hex": [part.hex() for part in expected_flush],
     }
 
@@ -127,11 +132,37 @@ def generate_vectors() -> dict[str, Any]:
     abridged_a = _abridged_packet(_payload("abridged-a", 12))
     abridged_b = _abridged_packet(_payload("abridged-b", 8))
     abridged_c = _abridged_packet(_payload("abridged-c", 16))
-    abridged_ext = _abridged_packet(_payload("abridged-extended", 128 * 4), extended=True)
+    abridged_ext = _abridged_packet(
+        _payload("abridged-extended", 128 * 4), extended=True
+    )
 
-    vectors.append(_vector(rng, "abridged_single_complete_packet", PROTO_ABRIDGED_INT, [abridged_a], [len(abridged_a)]))
-    vectors.append(_vector(rng, "abridged_multiple_packets_one_chunk", PROTO_ABRIDGED_INT, [abridged_a, abridged_b, abridged_ext], [len(abridged_a) + len(abridged_b) + len(abridged_ext)]))
-    vectors.append(_vector(rng, "abridged_packet_split_across_chunks", PROTO_ABRIDGED_INT, [abridged_c], [1, 3, 5]))
+    vectors.append(
+        _vector(
+            rng,
+            "abridged_single_complete_packet",
+            PROTO_ABRIDGED_INT,
+            [abridged_a],
+            [len(abridged_a)],
+        )
+    )
+    vectors.append(
+        _vector(
+            rng,
+            "abridged_multiple_packets_one_chunk",
+            PROTO_ABRIDGED_INT,
+            [abridged_a, abridged_b, abridged_ext],
+            [len(abridged_a) + len(abridged_b) + len(abridged_ext)],
+        )
+    )
+    vectors.append(
+        _vector(
+            rng,
+            "abridged_packet_split_across_chunks",
+            PROTO_ABRIDGED_INT,
+            [abridged_c],
+            [1, 3, 5],
+        )
+    )
     vectors.append(
         _vector(
             rng,
@@ -147,17 +178,57 @@ def generate_vectors() -> dict[str, Any]:
     intermediate_b = _intermediate_packet(_payload("intermediate-b", 19))
     intermediate_c = _intermediate_packet(_payload("intermediate-c", 7))
 
-    vectors.append(_vector(rng, "intermediate_single_complete_packet", PROTO_INTERMEDIATE_INT, [intermediate_a], [len(intermediate_a)]))
-    vectors.append(_vector(rng, "intermediate_multiple_packets_one_chunk", PROTO_INTERMEDIATE_INT, [intermediate_a, intermediate_b], [len(intermediate_a) + len(intermediate_b)]))
-    vectors.append(_vector(rng, "intermediate_packet_split_across_chunks", PROTO_INTERMEDIATE_INT, [intermediate_c], [2, 4, 3]))
+    vectors.append(
+        _vector(
+            rng,
+            "intermediate_single_complete_packet",
+            PROTO_INTERMEDIATE_INT,
+            [intermediate_a],
+            [len(intermediate_a)],
+        )
+    )
+    vectors.append(
+        _vector(
+            rng,
+            "intermediate_multiple_packets_one_chunk",
+            PROTO_INTERMEDIATE_INT,
+            [intermediate_a, intermediate_b],
+            [len(intermediate_a) + len(intermediate_b)],
+        )
+    )
+    vectors.append(
+        _vector(
+            rng,
+            "intermediate_packet_split_across_chunks",
+            PROTO_INTERMEDIATE_INT,
+            [intermediate_c],
+            [2, 4, 3],
+        )
+    )
 
     secure_a = _intermediate_packet(_payload("secure-a", 23), padded_flag=True)
     secure_b = _intermediate_packet(_payload("secure-b", 5))
-    vectors.append(_vector(rng, "padded_intermediate_secure_packets", PROTO_PADDED_INTERMEDIATE_INT, [secure_a, secure_b], [3, 6, 99]))
+    vectors.append(
+        _vector(
+            rng,
+            "padded_intermediate_secure_packets",
+            PROTO_PADDED_INTERMEDIATE_INT,
+            [secure_a, secure_b],
+            [3, 6, 99],
+        )
+    )
 
     unknown_a = _intermediate_packet(_payload("unknown-a", 9))
     unknown_b = _intermediate_packet(_payload("unknown-b", 6))
-    vectors.append(_vector(rng, "unknown_proto_disabled_fallback", 0x12345678, [unknown_a, unknown_b], [5, 7, 99]))
+    vectors.append(
+        _vector(
+            rng,
+            "unknown_proto_disabled_fallback",
+            0x12345678,
+            [unknown_a, unknown_b],
+            [5, 7, 99],
+        )
+    )
 
     return {
         "metadata": {
@@ -175,7 +246,9 @@ def main() -> int:
     with OUTPUT_PATH.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2, sort_keys=True)
         handle.write("\n")
-    print(f"wrote {len(data['vectors'])} vectors to {OUTPUT_PATH.relative_to(REPO_ROOT)}")
+    print(
+        f"wrote {len(data['vectors'])} vectors to {OUTPUT_PATH.relative_to(REPO_ROOT)}"
+    )
     return 0
 
 

@@ -7,20 +7,27 @@ import java.util.concurrent.atomic.AtomicLong
 /** Blocking client byte stream used by [BridgeSession]. */
 interface ClientByteStream {
     fun read(bufferSize: Int = BridgeSession.DEFAULT_BUFFER_SIZE): ByteArray?
+
     fun write(data: ByteArray)
+
     fun close()
 }
 
 /** Blocking binary WebSocket stream used by [BridgeSession]. */
 interface WebSocketBinaryStream {
     fun send(data: ByteArray)
+
     fun sendBatch(parts: List<ByteArray>)
+
     fun recv(): ByteArray?
+
     fun close()
 }
 
 /** Adapter that lets the bridge use the live RawWebSocket implementation without coupling tests to sockets. */
-class RawWebSocketBinaryStream(private val rawWebSocket: RawWebSocket) : WebSocketBinaryStream {
+class RawWebSocketBinaryStream(
+    private val rawWebSocket: RawWebSocket,
+) : WebSocketBinaryStream {
     override fun send(data: ByteArray) = rawWebSocket.send(data)
 
     override fun sendBatch(parts: List<ByteArray>) = rawWebSocket.sendBatch(parts)
@@ -77,20 +84,22 @@ class BridgeSession(
     /** Starts both bridge directions and blocks until either direction finishes, then closes both sides. */
     fun runBlocking() {
         val finished = CountDownLatch(1)
-        val clientToWebSocket = Thread({
-            try {
-                clientToWebSocketLoop()
-            } finally {
-                finished.countDown()
-            }
-        }, "BridgeSession-client-to-websocket")
-        val webSocketToClient = Thread({
-            try {
-                webSocketToClientLoop()
-            } finally {
-                finished.countDown()
-            }
-        }, "BridgeSession-websocket-to-client")
+        val clientToWebSocket =
+            Thread({
+                try {
+                    clientToWebSocketLoop()
+                } finally {
+                    finished.countDown()
+                }
+            }, "BridgeSession-client-to-websocket")
+        val webSocketToClient =
+            Thread({
+                try {
+                    webSocketToClientLoop()
+                } finally {
+                    finished.countDown()
+                }
+            }, "BridgeSession-websocket-to-client")
 
         clientToWebSocket.isDaemon = true
         webSocketToClient.isDaemon = true

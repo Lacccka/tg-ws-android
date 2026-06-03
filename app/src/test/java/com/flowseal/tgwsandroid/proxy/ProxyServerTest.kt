@@ -1,5 +1,11 @@
 package com.flowseal.tgwsandroid.proxy
 
+import org.json.JSONObject
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
 import java.io.IOException
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
@@ -9,12 +15,6 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
-import org.json.JSONObject
-import org.junit.Assert.assertArrayEquals
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
 
 class ProxyServerTest {
     @Test
@@ -25,13 +25,14 @@ class ProxyServerTest {
         val events = CopyOnWriteArrayList<String>()
         val webSocket = FakeWebSocketBinaryStream(events)
         val connector = RecordingConnector(webSocket)
-        val runner = ProxyBridgeRunner { _, _, cryptoContext, splitter, counters ->
-            assertTrue(cryptoContext.decryptFromClient(ByteArray(0)).isEmpty())
-            assertTrue(splitter.split(ByteArray(0)).isEmpty())
-            counters.recordUp(7)
-            counters.recordDown(11)
-            events.add("bridge")
-        }
+        val runner =
+            ProxyBridgeRunner { _, _, cryptoContext, splitter, counters ->
+                assertTrue(cryptoContext.decryptFromClient(ByteArray(0)).isEmpty())
+                assertTrue(splitter.split(ByteArray(0)).isEmpty())
+                counters.recordUp(7)
+                counters.recordDown(11)
+                events.add("bridge")
+            }
         val proxy = newProxy(server, connector, runner)
 
         proxy.start()
@@ -94,13 +95,15 @@ class ProxyServerTest {
         val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
         val server = FakeTcpServerTransport()
         val connector = RecordingConnector(FakeWebSocketBinaryStream())
-        val proxy = newProxy(
-            server = server,
-            connector = connector,
-            runner = ProxyBridgeRunner { bridgeClient, _, _, _, _ ->
-                while (!bridgeClient.closed) Thread.sleep(10)
-            },
-        )
+        val proxy =
+            newProxy(
+                server = server,
+                connector = connector,
+                runner =
+                    ProxyBridgeRunner { _, _, _, _, _ ->
+                        while (!client.closed) Thread.sleep(10)
+                    },
+            )
 
         proxy.start()
         server.enqueue(client)
@@ -118,11 +121,12 @@ class ProxyServerTest {
         val vector = handshakeVector("abridged_dc2")
         val server = FakeTcpServerTransport()
         val bridgeCount = AtomicInteger(0)
-        val proxy = newProxy(
-            server = server,
-            connector = RecordingConnector(FakeWebSocketBinaryStream()),
-            runner = ProxyBridgeRunner { _, _, _, _, _ -> bridgeCount.incrementAndGet() },
-        )
+        val proxy =
+            newProxy(
+                server = server,
+                connector = RecordingConnector(FakeWebSocketBinaryStream()),
+                runner = ProxyBridgeRunner { _, _, _, _, _ -> bridgeCount.incrementAndGet() },
+            )
 
         proxy.start()
         server.enqueue(FakeTcpClientTransport(vector.getString("handshake_hex").hexToBytes()))
@@ -139,10 +143,11 @@ class ProxyServerTest {
     fun websocketConnectFailureIncrementsCounterAndClosesClient() {
         val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
         val server = FakeTcpServerTransport()
-        val proxy = newProxy(
-            server = server,
-            connector = RawWebSocketConnector { _, _, _ -> throw IOException("ws boom") },
-        )
+        val proxy =
+            newProxy(
+                server = server,
+                connector = RawWebSocketConnector { _, _, _ -> throw IOException("ws boom") },
+            )
 
         proxy.start()
         server.enqueue(client)
@@ -159,14 +164,16 @@ class ProxyServerTest {
         val server = FakeTcpServerTransport()
         val sawCrypto = AtomicBoolean(false)
         val sawSplitter = AtomicBoolean(false)
-        val proxy = newProxy(
-            server = server,
-            connector = RecordingConnector(FakeWebSocketBinaryStream()),
-            runner = ProxyBridgeRunner { _, _, cryptoContext, splitter, _ ->
-                sawCrypto.set(cryptoContext.encryptToTelegram(ByteArray(0)).isEmpty())
-                sawSplitter.set(splitter.flush().isEmpty())
-            },
-        )
+        val proxy =
+            newProxy(
+                server = server,
+                connector = RecordingConnector(FakeWebSocketBinaryStream()),
+                runner =
+                    ProxyBridgeRunner { _, _, cryptoContext, splitter, _ ->
+                        sawCrypto.set(cryptoContext.encryptToTelegram(ByteArray(0)).isEmpty())
+                        sawSplitter.set(splitter.flush().isEmpty())
+                    },
+            )
 
         proxy.start()
         server.enqueue(client)
@@ -190,24 +197,26 @@ class ProxyServerTest {
         runner: ProxyBridgeRunner = ProxyBridgeRunner { _, _, _, _, _ -> },
         config: ProxyServerConfig = baseConfig(),
         logger: ProxyLogger = ProxyLogger {},
-    ): ProxyServer = ProxyServer(
-        config = config,
-        serverTransport = server,
-        webSocketConnector = connector,
-        bridgeRunner = runner,
-        randomBytes = DeterministicRandomBytes,
-        logger = logger,
-    )
+    ): ProxyServer =
+        ProxyServer(
+            config = config,
+            serverTransport = server,
+            webSocketConnector = connector,
+            bridgeRunner = runner,
+            randomBytes = DeterministicRandomBytes,
+            logger = logger,
+        )
 
-    private fun baseConfig(): ProxyServerConfig = ProxyServerConfig(
-        host = "127.0.0.1",
-        port = 1443,
-        secretHex = "0123456789abcdeffedcba9876543210",
-        dcRedirects = mapOf(2 to "203.0.113.2", 4 to "203.0.113.4"),
-        bufferSizeBytes = 4096,
-        poolSize = 4,
-        cfproxyEnabled = true,
-    )
+    private fun baseConfig(): ProxyServerConfig =
+        ProxyServerConfig(
+            host = "127.0.0.1",
+            port = 1443,
+            secretHex = "0123456789abcdeffedcba9876543210",
+            dcRedirects = mapOf(2 to "203.0.113.2", 4 to "203.0.113.4"),
+            bufferSizeBytes = 4096,
+            poolSize = 4,
+            cfproxyEnabled = true,
+        )
 
     private fun handshakeVector(name: String): JSONObject {
         val stream = javaClass.classLoader!!.getResourceAsStream("handshake_vectors.json")
@@ -244,11 +253,15 @@ class ProxyServerTest {
 
     private class FakeTcpServerTransport : TcpServerTransport {
         private val queue = LinkedBlockingQueue<TcpClientTransport>()
+
         @Volatile var closed: Boolean = false
         var boundHost: String? = null
         var boundPort: Int? = null
 
-        override fun bind(host: String, port: Int) {
+        override fun bind(
+            host: String,
+            port: Int,
+        ) {
             boundHost = host
             boundPort = port
         }
@@ -264,9 +277,12 @@ class ProxyServerTest {
         }
     }
 
-    private class FakeTcpClientTransport(private val input: ByteArray) : TcpClientTransport {
+    private class FakeTcpClientTransport(
+        private val input: ByteArray,
+    ) : TcpClientTransport {
         private var offset = 0
         val writes = mutableListOf<ByteArray>()
+
         @Volatile var closed: Boolean = false
         override val remoteLabel: String = "fake-client"
 
@@ -286,7 +302,9 @@ class ProxyServerTest {
         }
     }
 
-    private class FakeWebSocketBinaryStream(private val events: MutableList<String> = CopyOnWriteArrayList()) : WebSocketBinaryStream {
+    private class FakeWebSocketBinaryStream(
+        private val events: MutableList<String> = CopyOnWriteArrayList(),
+    ) : WebSocketBinaryStream {
         val sent = mutableListOf<ByteArray>()
         var closed = false
 
@@ -308,12 +326,18 @@ class ProxyServerTest {
         }
     }
 
-    private class RecordingConnector(private val webSocket: FakeWebSocketBinaryStream) : RawWebSocketConnector {
+    private class RecordingConnector(
+        private val webSocket: FakeWebSocketBinaryStream,
+    ) : RawWebSocketConnector {
         val targetHosts = mutableListOf<String>()
         val domains = mutableListOf<String>()
         val paths = mutableListOf<String>()
 
-        override fun connect(targetHost: String, domain: String, path: String): WebSocketBinaryStream {
+        override fun connect(
+            targetHost: String,
+            domain: String,
+            path: String,
+        ): WebSocketBinaryStream {
             targetHosts.add(targetHost)
             domains.add(domain)
             paths.add(path)

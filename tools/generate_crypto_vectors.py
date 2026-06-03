@@ -16,7 +16,6 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM_ROOT = REPO_ROOT / "third_party" / "tg-ws-proxy"
 OUTPUT_PATH = REPO_ROOT / "app" / "src" / "test" / "resources" / "crypto_vectors.json"
@@ -91,14 +90,22 @@ def _update_in_chunks(stream, data: bytes, sizes: list[int]) -> bytes:
 
 
 def _client_payload(name: str) -> bytes:
-    return (f"client->telegram parity payload for {name}; ".encode("utf-8") + bytes(range(64)))[:96]
+    return (
+        f"client->telegram parity payload for {name}; ".encode("utf-8")
+        + bytes(range(64))
+    )[:96]
 
 
 def _telegram_payload(name: str) -> bytes:
-    return (f"telegram->client parity payload for {name}; ".encode("utf-8") + bytes(range(255, 159, -1)))[:96]
+    return (
+        f"telegram->client parity payload for {name}; ".encode("utf-8")
+        + bytes(range(255, 159, -1))
+    )[:96]
 
 
-def _client_ciphertext(client_dec_prekey_iv: bytes, secret: bytes, plain: bytes) -> bytes:
+def _client_ciphertext(
+    client_dec_prekey_iv: bytes, secret: bytes, plain: bytes
+) -> bytes:
     prekey = client_dec_prekey_iv[:PREKEY_LEN]
     iv = client_dec_prekey_iv[PREKEY_LEN:]
     import hashlib
@@ -114,7 +121,9 @@ def _telegram_ciphertext(relay_init: bytes, plain: bytes) -> bytes:
     return stream.update(plain)
 
 
-def _vector(rng: random.Random, name: str, proto_tag: bytes, dc_idx: int) -> dict[str, Any]:
+def _vector(
+    rng: random.Random, name: str, proto_tag: bytes, dc_idx: int
+) -> dict[str, Any]:
     client_dec_prekey_iv = _randbytes(rng, PREKEY_LEN + IV_LEN)
 
     recorder = RecordingUrandom(rng)
@@ -122,19 +131,31 @@ def _vector(rng: random.Random, name: str, proto_tag: bytes, dc_idx: int) -> dic
         relay_init = _generate_relay_init(proto_tag, dc_idx)
 
     if len(recorder.calls) < 2:
-        raise RuntimeError(f"relay init for {name} did not request expected random bytes")
+        raise RuntimeError(
+            f"relay init for {name} did not request expected random bytes"
+        )
 
     ctx = _build_crypto_ctx(client_dec_prekey_iv, SECRET, relay_init)
 
     plain_from_client = _client_payload(name)
-    sample_client_ciphertext = _client_ciphertext(client_dec_prekey_iv, SECRET, plain_from_client)
-    expected_plain_from_client = _update_in_chunks(ctx.clt_dec, sample_client_ciphertext, CHUNK_SIZES)
-    expected_telegram_ciphertext = _update_in_chunks(ctx.tg_enc, expected_plain_from_client, CHUNK_SIZES)
+    sample_client_ciphertext = _client_ciphertext(
+        client_dec_prekey_iv, SECRET, plain_from_client
+    )
+    expected_plain_from_client = _update_in_chunks(
+        ctx.clt_dec, sample_client_ciphertext, CHUNK_SIZES
+    )
+    expected_telegram_ciphertext = _update_in_chunks(
+        ctx.tg_enc, expected_plain_from_client, CHUNK_SIZES
+    )
 
     plain_from_telegram = _telegram_payload(name)
     sample_telegram_ciphertext = _telegram_ciphertext(relay_init, plain_from_telegram)
-    expected_plain_from_telegram = _update_in_chunks(ctx.tg_dec, sample_telegram_ciphertext, CHUNK_SIZES)
-    expected_client_ciphertext = _update_in_chunks(ctx.clt_enc, expected_plain_from_telegram, CHUNK_SIZES)
+    expected_plain_from_telegram = _update_in_chunks(
+        ctx.tg_dec, sample_telegram_ciphertext, CHUNK_SIZES
+    )
+    expected_client_ciphertext = _update_in_chunks(
+        ctx.clt_enc, expected_plain_from_telegram, CHUNK_SIZES
+    )
 
     if expected_plain_from_client != plain_from_client:
         raise RuntimeError(f"client decrypt mismatch while generating {name}")
@@ -180,7 +201,9 @@ def generate_vectors() -> dict[str, Any]:
             "utils": "third_party/tg-ws-proxy/proxy/utils.py",
             "seed": SEED,
         },
-        "vectors": [_vector(rng, name, proto_tag, dc_idx) for name, proto_tag, dc_idx in specs],
+        "vectors": [
+            _vector(rng, name, proto_tag, dc_idx) for name, proto_tag, dc_idx in specs
+        ],
     }
 
 
@@ -190,7 +213,9 @@ def main() -> int:
     with OUTPUT_PATH.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2, sort_keys=True)
         handle.write("\n")
-    print(f"wrote {len(data['vectors'])} vectors to {OUTPUT_PATH.relative_to(REPO_ROOT)}")
+    print(
+        f"wrote {len(data['vectors'])} vectors to {OUTPUT_PATH.relative_to(REPO_ROOT)}"
+    )
     return 0
 
 

@@ -1,38 +1,38 @@
 {
-  "manifest_version": 1,
-  "upstream_root": "third_party/tg-ws-proxy",
-  "files": [
-    {
-      "path": "proxy/tg_ws_proxy.py",
-      "sha256": "2f9d39bc91aae4912acab778ae6acb09fc18a68b6e06385a3738f8b23c3659e3"
-    },
-    {
-      "path": "proxy/bridge.py",
-      "sha256": "6ee057693d21a386d35431afc642948d4d6cf12b7edb7a5205c7e023215f6a38"
-    },
-    {
-      "path": "proxy/raw_websocket.py",
-      "sha256": "3595eef50cf82d9afd3792768637130ba8ddc672d5f8c9de90c0f870fa7697ae"
-    },
-    {
-      "path": "proxy/config.py",
-      "sha256": "df667bf04928e274cfd6b202558ed4f8408bd5639832e5ec2f70a27b6f05fe40"
-    },
-    {
-      "path": "proxy/utils.py",
-      "sha256": "5412a3cd8abbeb941f3a5f9863fc3ac5b83b777c69746780f60b8a746c3f7a95"
-    },
-    {
-      "path": "proxy/fake_tls.py",
-      "sha256": "ce4ce10990117f96522558bc38f2798630b4b736854fd0bf738ba886332b9cb9"
-    },
-    {
-      "path": "proxy/pool.py",
-      "sha256": "cf63fa4f6520f62207021a29077f05a06482759483c9f7320a868041a3187729"
-    },
-    {
-      "path": "proxy/balancer.py",
-      "sha256": "3d4330488b968e146286b14790c0814eae3efe5d0f26206572369ca6368eed24"
-    }
-  ]
+    "manifest_version": 1,
+    "upstream_root": "third_party/tg-ws-proxy",
+    "files": [
+        {
+            "path": "proxy/tg_ws_proxy.py",
+            "sha256": "2f9d39bc91aae4912acab778ae6acb09fc18a68b6e06385a3738f8b23c3659e3"
+        },
+        {
+            "path": "proxy/bridge.py",
+            "sha256": "6ee057693d21a386d35431afc642948d4d6cf12b7edb7a5205c7e023215f6a38"
+        },
+        {
+            "path": "proxy/raw_websocket.py",
+            "sha256": "3595eef50cf82d9afd3792768637130ba8ddc672d5f8c9de90c0f870fa7697ae"
+        },
+        {
+            "path": "proxy/config.py",
+            "sha256": "df667bf04928e274cfd6b202558ed4f8408bd5639832e5ec2f70a27b6f05fe40"
+        },
+        {
+            "path": "proxy/utils.py",
+            "sha256": "5412a3cd8abbeb941f3a5f9863fc3ac5b83b777c69746780f60b8a746c3f7a95"
+        },
+        {
+            "path": "proxy/fake_tls.py",
+            "sha256": "ce4ce10990117f96522558bc38f2798630b4b736854fd0bf738ba886332b9cb9"
+        },
+        {
+            "path": "proxy/pool.py",
+            "sha256": "cf63fa4f6520f62207021a29077f05a06482759483c9f7320a868041a3187729"
+        },
+        {
+            "path": "proxy/balancer.py",
+            "sha256": "3d4330488b968e146286b14790c0814eae3efe5d0f26206572369ca6368eed24"
+        }
+    ]
 }

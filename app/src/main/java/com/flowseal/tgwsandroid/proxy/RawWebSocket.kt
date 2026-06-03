@@ -37,13 +37,20 @@ class RawWebSocket private constructor(
     interface Transport {
         val input: InputStream
         val output: OutputStream
+
         fun flush() = output.flush()
+
         fun close()
     }
 
     /** Factory abstraction so tests can connect over in-memory streams. */
     fun interface TransportFactory {
-        fun connect(host: String, port: Int, domain: String, timeoutMs: Int): Transport
+        fun connect(
+            host: String,
+            port: Int,
+            domain: String,
+            timeoutMs: Int,
+        ): Transport
     }
 
     class WsHandshakeException(
@@ -77,7 +84,14 @@ class RawWebSocket private constructor(
                 RawWebSocketCodec.OP_CLOSE -> {
                     closed = true
                     try {
-                        val closePayload = if (frame.payload.isEmpty()) ByteArray(0) else frame.payload.copyOfRange(0, minOf(2, frame.payload.size))
+                        val closePayload =
+                            if (frame.payload.isEmpty()) {
+                                ByteArray(
+                                    0,
+                                )
+                            } else {
+                                frame.payload.copyOfRange(0, minOf(2, frame.payload.size))
+                            }
                         transport.output.write(maskedFrame(RawWebSocketCodec.OP_CLOSE, closePayload))
                         transport.flush()
                     } catch (_: Exception) {
@@ -85,6 +99,7 @@ class RawWebSocket private constructor(
                     }
                     return null
                 }
+
                 RawWebSocketCodec.OP_PING -> {
                     try {
                         transport.output.write(maskedFrame(RawWebSocketCodec.OP_PONG, frame.payload))
@@ -93,9 +108,18 @@ class RawWebSocket private constructor(
                         // Match upstream: ignore pong write errors and keep reading.
                     }
                 }
-                RawWebSocketCodec.OP_PONG -> Unit
-                OP_TEXT, RawWebSocketCodec.OP_BINARY -> return frame.payload
-                else -> Unit
+
+                RawWebSocketCodec.OP_PONG -> {
+                    Unit
+                }
+
+                OP_TEXT, RawWebSocketCodec.OP_BINARY -> {
+                    return frame.payload
+                }
+
+                else -> {
+                    Unit
+                }
             }
         }
         return null
@@ -121,8 +145,10 @@ class RawWebSocket private constructor(
         if (closed) throw IOException("WebSocket closed")
     }
 
-    private fun maskedFrame(opcode: Int, payload: ByteArray): ByteArray =
-        RawWebSocketCodec.buildFrame(opcode, payload, mask = true, randomProvider = randomProvider)
+    private fun maskedFrame(
+        opcode: Int,
+        payload: ByteArray,
+    ): ByteArray = RawWebSocketCodec.buildFrame(opcode, payload, mask = true, randomProvider = randomProvider)
 
     companion object {
         private const val OP_TEXT = 0x1
@@ -145,11 +171,12 @@ class RawWebSocket private constructor(
             val transport = transportFactory.connect(host, 443, domain, boundedTimeoutMs)
             try {
                 val wsKey = Base64.getEncoder().encodeToString(randomProvider(16))
-                val request = RawWebSocketCodec.buildUpgradeRequest(
-                    path = path,
-                    domain = domain,
-                    secWebSocketKey = wsKey,
-                )
+                val request =
+                    RawWebSocketCodec.buildUpgradeRequest(
+                        path = path,
+                        domain = domain,
+                        secWebSocketKey = wsKey,
+                    )
                 transport.output.write(request.toByteArray(Charsets.UTF_8))
                 transport.flush()
 
@@ -214,7 +241,12 @@ class RawWebSocket private constructor(
 internal object TrustAllTlsTransportFactory : RawWebSocket.TransportFactory {
     private const val BUFFER_SIZE = 256 * 1024
 
-    override fun connect(host: String, port: Int, domain: String, timeoutMs: Int): RawWebSocket.Transport {
+    override fun connect(
+        host: String,
+        port: Int,
+        domain: String,
+        timeoutMs: Int,
+    ): RawWebSocket.Transport {
         val socket = trustAllSocketFactory().createSocket() as SSLSocket
         socket.soTimeout = timeoutMs
         socket.tcpNoDelay = true
@@ -236,7 +268,10 @@ internal object TrustAllTlsTransportFactory : RawWebSocket.TransportFactory {
         return context.socketFactory
     }
 
-    private fun setSni(socket: SSLSocket, domain: String) {
+    private fun setSni(
+        socket: SSLSocket,
+        domain: String,
+    ) {
         try {
             val parameters = socket.sslParameters
             parameters.serverNames = listOf(SNIHostName(domain))
@@ -247,14 +282,25 @@ internal object TrustAllTlsTransportFactory : RawWebSocket.TransportFactory {
     }
 
     private object TrustAllX509TrustManager : X509TrustManager {
-        override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-        override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
+        override fun checkClientTrusted(
+            chain: Array<out X509Certificate>?,
+            authType: String?,
+        ) = Unit
+
+        override fun checkServerTrusted(
+            chain: Array<out X509Certificate>?,
+            authType: String?,
+        ) = Unit
+
         override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
     }
 
-    private class SocketTransport(private val socket: Socket) : RawWebSocket.Transport {
+    private class SocketTransport(
+        private val socket: Socket,
+    ) : RawWebSocket.Transport {
         override val input: InputStream = socket.getInputStream()
         override val output: OutputStream = socket.getOutputStream()
+
         override fun close() = socket.close()
     }
 }

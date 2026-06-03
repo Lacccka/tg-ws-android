@@ -51,11 +51,12 @@ class BridgeSessionTest {
     fun clientToWebSocketWithMsgSplitterUsesSendBatchForMultipleSplitParts() {
         val vector = firstCryptoVector()
         val relayInit = vector.getString("relay_init_hex").hexToBytes()
-        val telegramCiphertext = telegramCiphertextForPlainPackets(
-            relayInit,
-            packet(payload = byteArrayOf(1, 2, 3, 4)),
-            packet(payload = byteArrayOf(5, 6, 7, 8)),
-        )
+        val telegramCiphertext =
+            telegramCiphertextForPlainPackets(
+                relayInit,
+                packet(payload = byteArrayOf(1, 2, 3, 4)),
+                packet(payload = byteArrayOf(5, 6, 7, 8)),
+            )
         val clientCiphertext = clientCiphertextForTelegramCiphertext(vector, telegramCiphertext)
         val client = FakeClientByteStream(reads = listOf(clientCiphertext), eofAfterReads = true)
         val webSocket = FakeWebSocketBinaryStream(blockOnEmptyRecv = true)
@@ -73,19 +74,21 @@ class BridgeSessionTest {
     fun clientEofFlushesSplitterTailLikeUpstream() {
         val vector = firstCryptoVector()
         val relayInit = vector.getString("relay_init_hex").hexToBytes()
-        val incompleteTelegramCiphertext = telegramCiphertextForPlainPackets(
-            relayInit,
-            packet(payload = byteArrayOf(9, 10, 11, 12)),
-        ).copyOfRange(0, 5)
+        val incompleteTelegramCiphertext =
+            telegramCiphertextForPlainPackets(
+                relayInit,
+                packet(payload = byteArrayOf(9, 10, 11, 12)),
+            ).copyOfRange(0, 5)
         val clientCiphertext = clientCiphertextForTelegramCiphertext(vector, incompleteTelegramCiphertext)
         val client = FakeClientByteStream(reads = listOf(clientCiphertext), eofAfterReads = true)
         val webSocket = FakeWebSocketBinaryStream(blockOnEmptyRecv = true)
-        val session = BridgeSession(
-            client = client,
-            webSocket = webSocket,
-            cryptoContext = buildContext(vector),
-            splitter = MsgSplitter(relayInit, MsgSplitter.PROTO_INTERMEDIATE_INT),
-        )
+        val session =
+            BridgeSession(
+                client = client,
+                webSocket = webSocket,
+                cryptoContext = buildContext(vector),
+                splitter = MsgSplitter(relayInit, MsgSplitter.PROTO_INTERMEDIATE_INT),
+            )
 
         session.runBlocking()
 
@@ -128,33 +131,43 @@ class BridgeSessionTest {
 
     private fun firstCryptoVector(): JSONObject = loadCryptoVectors().first()
 
-    private fun buildContext(vector: JSONObject): CryptoContext = CryptoContext.build(
-        clientDecPrekeyIv = vector.getString("client_dec_prekey_iv_hex").hexToBytes(),
-        secret = vector.getString("secret_hex").hexToBytes(),
-        relayInit = vector.getString("relay_init_hex").hexToBytes(),
-    )
+    private fun buildContext(vector: JSONObject): CryptoContext =
+        CryptoContext.build(
+            clientDecPrekeyIv = vector.getString("client_dec_prekey_iv_hex").hexToBytes(),
+            secret = vector.getString("secret_hex").hexToBytes(),
+            relayInit = vector.getString("relay_init_hex").hexToBytes(),
+        )
 
-    private fun JSONObject.chunkSizes(): List<Int> = getJSONArray("chunk_sizes").let { sizes ->
-        List(sizes.length()) { index -> sizes.getInt(index) }
-    }
+    private fun JSONObject.chunkSizes(): List<Int> =
+        getJSONArray("chunk_sizes").let { sizes ->
+            List(sizes.length()) { index -> sizes.getInt(index) }
+        }
 
     private fun packet(payload: ByteArray): ByteArray = littleEndianInt(payload.size) + payload
 
-    private fun telegramCiphertextForPlainPackets(relayInit: ByteArray, vararg packets: ByteArray): ByteArray {
-        val cipher = aesCtr(
-            relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN, MtprotoHandshake.SKIP_LEN + 32),
-            relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN + 32, MtprotoHandshake.SKIP_LEN + 32 + 16),
-        )
+    private fun telegramCiphertextForPlainPackets(
+        relayInit: ByteArray,
+        vararg packets: ByteArray,
+    ): ByteArray {
+        val cipher =
+            aesCtr(
+                relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN, MtprotoHandshake.SKIP_LEN + 32),
+                relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN + 32, MtprotoHandshake.SKIP_LEN + 32 + 16),
+            )
         cipher.update(ByteArray(64))
         return cipher.update(packets.toList().joinToByteArray())
     }
 
-    private fun clientCiphertextForTelegramCiphertext(vector: JSONObject, telegramCiphertext: ByteArray): ByteArray {
+    private fun clientCiphertextForTelegramCiphertext(
+        vector: JSONObject,
+        telegramCiphertext: ByteArray,
+    ): ByteArray {
         val relayInit = vector.getString("relay_init_hex").hexToBytes()
-        val telegramDecryptor = aesCtr(
-            relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN, MtprotoHandshake.SKIP_LEN + 32),
-            relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN + 32, MtprotoHandshake.SKIP_LEN + 32 + 16),
-        )
+        val telegramDecryptor =
+            aesCtr(
+                relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN, MtprotoHandshake.SKIP_LEN + 32),
+                relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN + 32, MtprotoHandshake.SKIP_LEN + 32 + 16),
+            )
         telegramDecryptor.update(ByteArray(64))
         val plain = telegramDecryptor.update(telegramCiphertext)
 
@@ -167,18 +180,22 @@ class BridgeSessionTest {
         return clientCipher.update(plain)
     }
 
-    private fun aesCtr(key: ByteArray, iv: ByteArray): Cipher {
+    private fun aesCtr(
+        key: ByteArray,
+        iv: ByteArray,
+    ): Cipher {
         val cipher = Cipher.getInstance("AES/CTR/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
         return cipher
     }
 
-    private fun littleEndianInt(value: Int): ByteArray = byteArrayOf(
-        (value and 0xff).toByte(),
-        ((value shr 8) and 0xff).toByte(),
-        ((value shr 16) and 0xff).toByte(),
-        ((value shr 24) and 0xff).toByte(),
-    )
+    private fun littleEndianInt(value: Int): ByteArray =
+        byteArrayOf(
+            (value and 0xff).toByte(),
+            ((value shr 8) and 0xff).toByte(),
+            ((value shr 16) and 0xff).toByte(),
+            ((value shr 24) and 0xff).toByte(),
+        )
 
     private fun List<ByteArray>.joinToByteArray(): ByteArray = flatMap { it.asIterable() }.toByteArray()
 
@@ -196,7 +213,6 @@ class BridgeSessionTest {
         }
         return chunks
     }
-
 }
 
 private class FakeClientByteStream(
@@ -208,6 +224,7 @@ private class FakeClientByteStream(
     private val lock = Object()
     private val written = mutableListOf<ByteArray>()
     private var readIndex = 0
+
     @Volatile var closed: Boolean = false
 
     override fun read(bufferSize: Int): ByteArray? {
@@ -245,6 +262,7 @@ private class FakeWebSocketBinaryStream(
     private val lock = Object()
     private val sent = mutableListOf<Pair<String, ByteArray>>()
     private var recvIndex = 0
+
     @Volatile var closed: Boolean = false
 
     override fun send(data: ByteArray) {

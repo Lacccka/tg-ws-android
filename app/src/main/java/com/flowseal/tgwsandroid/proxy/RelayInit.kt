@@ -25,14 +25,15 @@ object RelayInit {
     val PROTO_TAG_SECURE: ByteArray = byteArrayOf(0xdd.toByte(), 0xdd.toByte(), 0xdd.toByte(), 0xdd.toByte())
 
     private val RESERVED_FIRST_BYTES = setOf(0xef)
-    private val RESERVED_STARTS = setOf(
-        byteArrayOf(0x48, 0x45, 0x41, 0x44),
-        byteArrayOf(0x50, 0x4f, 0x53, 0x54),
-        byteArrayOf(0x47, 0x45, 0x54, 0x20),
-        byteArrayOf(0xee.toByte(), 0xee.toByte(), 0xee.toByte(), 0xee.toByte()),
-        byteArrayOf(0xdd.toByte(), 0xdd.toByte(), 0xdd.toByte(), 0xdd.toByte()),
-        byteArrayOf(0x16, 0x03, 0x01, 0x02),
-    )
+    private val RESERVED_STARTS =
+        setOf(
+            byteArrayOf(0x48, 0x45, 0x41, 0x44),
+            byteArrayOf(0x50, 0x4f, 0x53, 0x54),
+            byteArrayOf(0x47, 0x45, 0x54, 0x20),
+            byteArrayOf(0xee.toByte(), 0xee.toByte(), 0xee.toByte(), 0xee.toByte()),
+            byteArrayOf(0xdd.toByte(), 0xdd.toByte(), 0xdd.toByte(), 0xdd.toByte()),
+            byteArrayOf(0x16, 0x03, 0x01, 0x02),
+        )
     private val RESERVED_CONTINUE = byteArrayOf(0x00, 0x00, 0x00, 0x00)
 
     fun interface RandomBytes {
@@ -45,7 +46,11 @@ object RelayInit {
         override fun nextBytes(length: Int): ByteArray = ByteArray(length).also { secureRandom.nextBytes(it) }
     }
 
-    fun generate(protoTag: ByteArray, dcIdx: Int, randomBytes: RandomBytes = SecureRandomBytes): ByteArray {
+    fun generate(
+        protoTag: ByteArray,
+        dcIdx: Int,
+        randomBytes: RandomBytes = SecureRandomBytes,
+    ): ByteArray {
         require(protoTag.size == 4) { "protoTag must be exactly 4 bytes" }
         require(dcIdx in Short.MIN_VALUE..Short.MAX_VALUE) { "dcIdx must fit in a signed int16" }
 
@@ -75,16 +80,21 @@ object RelayInit {
         }
     }
 
-    private fun aesCtr(key: ByteArray, iv: ByteArray, input: ByteArray): ByteArray {
+    private fun aesCtr(
+        key: ByteArray,
+        iv: ByteArray,
+        input: ByteArray,
+    ): ByteArray {
         val cipher = Cipher.getInstance("AES/CTR/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
         return cipher.doFinal(input)
     }
 
-    private fun littleEndianInt16(value: Int): ByteArray = byteArrayOf(
-        (value and 0xff).toByte(),
-        ((value shr 8) and 0xff).toByte(),
-    )
+    private fun littleEndianInt16(value: Int): ByteArray =
+        byteArrayOf(
+            (value and 0xff).toByte(),
+            ((value shr 8) and 0xff).toByte(),
+        )
 
     private fun ByteArray.startsWith(prefix: ByteArray): Boolean {
         if (size < prefix.size) return false

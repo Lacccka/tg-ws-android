@@ -30,7 +30,11 @@ class CryptoContext private constructor(
         private const val KEY_LEN = 32
         private const val ZERO_64_LEN = 64
 
-        fun build(clientDecPrekeyIv: ByteArray, secret: ByteArray, relayInit: ByteArray): CryptoContext {
+        fun build(
+            clientDecPrekeyIv: ByteArray,
+            secret: ByteArray,
+            relayInit: ByteArray,
+        ): CryptoContext {
             require(clientDecPrekeyIv.size == MtprotoHandshake.PREKEY_LEN + MtprotoHandshake.IV_LEN) {
                 "clientDecPrekeyIv must be exactly ${MtprotoHandshake.PREKEY_LEN + MtprotoHandshake.IV_LEN} bytes"
             }
@@ -50,19 +54,23 @@ class CryptoContext private constructor(
             val clientEncryptor = aesCtr(clientEncKey, clientEncIv)
             clientDecryptor.updateCompat(ByteArray(ZERO_64_LEN))
 
-            val relayEncKey = relayInit.copyOfRange(
-                MtprotoHandshake.SKIP_LEN,
-                MtprotoHandshake.SKIP_LEN + MtprotoHandshake.PREKEY_LEN,
-            )
-            val relayEncIv = relayInit.copyOfRange(
-                MtprotoHandshake.SKIP_LEN + MtprotoHandshake.PREKEY_LEN,
-                MtprotoHandshake.SKIP_LEN + MtprotoHandshake.PREKEY_LEN + MtprotoHandshake.IV_LEN,
-            )
+            val relayEncKey =
+                relayInit.copyOfRange(
+                    MtprotoHandshake.SKIP_LEN,
+                    MtprotoHandshake.SKIP_LEN + MtprotoHandshake.PREKEY_LEN,
+                )
+            val relayEncIv =
+                relayInit.copyOfRange(
+                    MtprotoHandshake.SKIP_LEN + MtprotoHandshake.PREKEY_LEN,
+                    MtprotoHandshake.SKIP_LEN + MtprotoHandshake.PREKEY_LEN + MtprotoHandshake.IV_LEN,
+                )
 
-            val relayDecPrekeyIv = relayInit.copyOfRange(
-                MtprotoHandshake.SKIP_LEN,
-                MtprotoHandshake.SKIP_LEN + KEY_LEN + MtprotoHandshake.IV_LEN,
-            ).reversedArray()
+            val relayDecPrekeyIv =
+                relayInit
+                    .copyOfRange(
+                        MtprotoHandshake.SKIP_LEN,
+                        MtprotoHandshake.SKIP_LEN + KEY_LEN + MtprotoHandshake.IV_LEN,
+                    ).reversedArray()
             val relayDecKey = relayDecPrekeyIv.copyOfRange(0, KEY_LEN)
             val relayDecIv = relayDecPrekeyIv.copyOfRange(KEY_LEN, relayDecPrekeyIv.size)
 
@@ -75,7 +83,10 @@ class CryptoContext private constructor(
 
         private fun sha256(bytes: ByteArray): ByteArray = MessageDigest.getInstance("SHA-256").digest(bytes)
 
-        private fun aesCtr(key: ByteArray, iv: ByteArray): Cipher {
+        private fun aesCtr(
+            key: ByteArray,
+            iv: ByteArray,
+        ): Cipher {
             val cipher = Cipher.getInstance("AES/CTR/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
             return cipher
@@ -83,8 +94,9 @@ class CryptoContext private constructor(
     }
 }
 
-private fun Cipher.updateCompat(data: ByteArray): ByteArray = if (data.isEmpty()) {
-    ByteArray(0)
-} else {
-    update(data) ?: ByteArray(0)
-}
+private fun Cipher.updateCompat(data: ByteArray): ByteArray =
+    if (data.isEmpty()) {
+        ByteArray(0)
+    } else {
+        update(data) ?: ByteArray(0)
+    }

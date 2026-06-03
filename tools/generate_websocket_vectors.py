@@ -19,10 +19,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM_ROOT = REPO_ROOT / "third_party" / "tg-ws-proxy"
-OUTPUT_PATH = REPO_ROOT / "app" / "src" / "test" / "resources" / "websocket_vectors.json"
+OUTPUT_PATH = (
+    REPO_ROOT / "app" / "src" / "test" / "resources" / "websocket_vectors.json"
+)
 SEED = 0x524157574542534F434B4554
 
 sys.path.insert(0, str(UPSTREAM_ROOT))
@@ -44,7 +45,7 @@ class DeterministicUrandom:
 
 
 def _payload(label: str, length: int) -> bytes:
-    base = (label.encode("utf-8") + b"|")
+    base = label.encode("utf-8") + b"|"
     return bytes((base[index % len(base)] + index) & 0xFF for index in range(length))
 
 
@@ -83,7 +84,9 @@ def _parse_response_like_upstream(raw_response: bytes) -> dict[str, Any]:
             "error_message": None,
         }
 
-    err = WsHandshakeError(status_code, first_line, headers, location=headers.get("location"))
+    err = WsHandshakeError(
+        status_code, first_line, headers, location=headers.get("location")
+    )
     return _response_error_dict(err)
 
 
@@ -99,7 +102,9 @@ def _response_error_dict(err: Any) -> dict[str, Any]:
     }
 
 
-def _build_request_like_upstream(path: str, domain: str, key_bytes: bytes) -> tuple[str, str]:
+def _build_request_like_upstream(
+    path: str, domain: str, key_bytes: bytes
+) -> tuple[str, str]:
     ws_key = base64.b64encode(key_bytes).decode()
     req = (
         f"GET {path} HTTP/1.1\r\n"
@@ -114,7 +119,9 @@ def _build_request_like_upstream(path: str, domain: str, key_bytes: bytes) -> tu
     return ws_key, req
 
 
-def _frame_vector(name: str, opcode: int, payload: bytes, mask: bool, seed: int) -> dict[str, Any]:
+def _frame_vector(
+    name: str, opcode: int, payload: bytes, mask: bool, seed: int
+) -> dict[str, Any]:
     deterministic = DeterministicUrandom(seed)
     with patch.object(raw_websocket.os, "urandom", deterministic):
         frame = RawWebSocket._build_frame(opcode, payload, mask=mask)
@@ -159,17 +166,57 @@ def _read_frame_bytes_like_upstream(frame: bytes) -> tuple[int, bytes]:
 
 def generate_vectors() -> dict[str, Any]:
     frame_specs = [
-        ("binary_len_lt_126_unmasked", RawWebSocket.OP_BINARY, _payload("lt126", 12), False),
-        ("binary_len_eq_126_unmasked", RawWebSocket.OP_BINARY, _payload("eq126", 126), False),
-        ("binary_len_between_126_and_65535_unmasked", RawWebSocket.OP_BINARY, _payload("mid", 4096), False),
-        ("binary_len_ge_65536_unmasked", RawWebSocket.OP_BINARY, _payload("large", 66000), False),
+        (
+            "binary_len_lt_126_unmasked",
+            RawWebSocket.OP_BINARY,
+            _payload("lt126", 12),
+            False,
+        ),
+        (
+            "binary_len_eq_126_unmasked",
+            RawWebSocket.OP_BINARY,
+            _payload("eq126", 126),
+            False,
+        ),
+        (
+            "binary_len_between_126_and_65535_unmasked",
+            RawWebSocket.OP_BINARY,
+            _payload("mid", 4096),
+            False,
+        ),
+        (
+            "binary_len_ge_65536_unmasked",
+            RawWebSocket.OP_BINARY,
+            _payload("large", 66000),
+            False,
+        ),
         ("close_frame_unmasked", RawWebSocket.OP_CLOSE, b"\x03\xe8bye", False),
         ("ping_frame_unmasked", RawWebSocket.OP_PING, b"ping-payload", False),
         ("pong_frame_unmasked", RawWebSocket.OP_PONG, b"pong-payload", False),
-        ("binary_len_lt_126_masked", RawWebSocket.OP_BINARY, _payload("masked-small", 17), True),
-        ("binary_len_eq_126_masked", RawWebSocket.OP_BINARY, _payload("masked-126", 126), True),
-        ("binary_len_between_126_and_65535_masked", RawWebSocket.OP_BINARY, _payload("masked-mid", 2048), True),
-        ("binary_len_ge_65536_masked", RawWebSocket.OP_BINARY, _payload("masked-large", 66000), True),
+        (
+            "binary_len_lt_126_masked",
+            RawWebSocket.OP_BINARY,
+            _payload("masked-small", 17),
+            True,
+        ),
+        (
+            "binary_len_eq_126_masked",
+            RawWebSocket.OP_BINARY,
+            _payload("masked-126", 126),
+            True,
+        ),
+        (
+            "binary_len_between_126_and_65535_masked",
+            RawWebSocket.OP_BINARY,
+            _payload("masked-mid", 2048),
+            True,
+        ),
+        (
+            "binary_len_ge_65536_masked",
+            RawWebSocket.OP_BINARY,
+            _payload("masked-large", 66000),
+            True,
+        ),
         ("close_frame_masked", RawWebSocket.OP_CLOSE, b"\x03\xe8", True),
         ("ping_frame_masked", RawWebSocket.OP_PING, b"ping", True),
         ("pong_frame_masked", RawWebSocket.OP_PONG, b"pong", True),
@@ -186,28 +233,38 @@ def generate_vectors() -> dict[str, Any]:
     requests = []
     for name, path, domain, key_bytes in request_specs:
         sec_key, request_text = _build_request_like_upstream(path, domain, key_bytes)
-        requests.append({
-            "name": name,
-            "path": path,
-            "domain": domain,
-            "sec_websocket_key": sec_key,
-            "expected_request_text": request_text,
-        })
+        requests.append(
+            {
+                "name": name,
+                "path": path,
+                "domain": domain,
+                "sec_websocket_key": sec_key,
+                "expected_request_text": request_text,
+            }
+        )
 
     response_specs = [
-        ("switching_protocols", b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: binary\r\n\r\n"),
-        ("redirect_301", b"HTTP/1.1 301 Moved Permanently\r\nLocation: https://new.example/apiws\r\nX-Test: yes\r\n\r\n"),
+        (
+            "switching_protocols",
+            b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Protocol: binary\r\n\r\n",
+        ),
+        (
+            "redirect_301",
+            b"HTTP/1.1 301 Moved Permanently\r\nLocation: https://new.example/apiws\r\nX-Test: yes\r\n\r\n",
+        ),
         ("redirect_302", b"HTTP/1.1 302 Found\r\nLocation: /apiws2\r\n\r\n"),
         ("empty_response", b""),
         ("malformed_status", b"HTTP/1.1 NOPE Broken\r\nHeader: value\r\n\r\n"),
     ]
     responses = []
     for name, raw_response in response_specs:
-        responses.append({
-            "name": name,
-            "raw_response_hex": raw_response.hex(),
-            "expected": _parse_response_like_upstream(raw_response),
-        })
+        responses.append(
+            {
+                "name": name,
+                "raw_response_hex": raw_response.hex(),
+                "expected": _parse_response_like_upstream(raw_response),
+            }
+        )
 
     return {
         "metadata": {
@@ -231,7 +288,9 @@ def generate_vectors() -> dict[str, Any]:
 def main() -> None:
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     data = generate_vectors()
-    OUTPUT_PATH.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    OUTPUT_PATH.write_text(
+        json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
     print(f"wrote {OUTPUT_PATH.relative_to(REPO_ROOT)}")
 
 

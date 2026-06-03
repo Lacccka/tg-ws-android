@@ -26,9 +26,10 @@ class RawWebSocketLiveTest {
 
     @Test
     fun redirectResponseThrowsHandshakeExceptionWithLocation() {
-        val fake = FakeTransportFactory(
-            "HTTP/1.1 302 Found\r\nLocation: https://redirect.example/apiws\r\n\r\n".toByteArray(Charsets.UTF_8),
-        )
+        val fake =
+            FakeTransportFactory(
+                "HTTP/1.1 302 Found\r\nLocation: https://redirect.example/apiws\r\n\r\n".toByteArray(Charsets.UTF_8),
+            )
 
         val error = assertThrowsHandshake { connect(fake) }
 
@@ -103,13 +104,15 @@ class RawWebSocketLiveTest {
 
     @Test
     fun recvReturnsBinaryPayload() {
-        val fake = FakeTransportFactory(
-            httpResponse(101, "Switching Protocols") + RawWebSocketCodec.buildFrame(
-                opcode = RawWebSocketCodec.OP_BINARY,
-                data = "payload".bytes(),
-                mask = false,
-            ),
-        )
+        val fake =
+            FakeTransportFactory(
+                httpResponse(101, "Switching Protocols") +
+                    RawWebSocketCodec.buildFrame(
+                        opcode = RawWebSocketCodec.OP_BINARY,
+                        data = "payload".bytes(),
+                        mask = false,
+                    ),
+            )
         val ws = connect(fake)
 
         assertEquals("payload", ws.recv()!!.toString(Charsets.UTF_8))
@@ -117,13 +120,15 @@ class RawWebSocketLiveTest {
 
     @Test
     fun recvAcceptsTextFramesAsPayload() {
-        val fake = FakeTransportFactory(
-            httpResponse(101, "Switching Protocols") + RawWebSocketCodec.buildFrame(
-                opcode = 0x1,
-                data = "text-payload".bytes(),
-                mask = false,
-            ),
-        )
+        val fake =
+            FakeTransportFactory(
+                httpResponse(101, "Switching Protocols") +
+                    RawWebSocketCodec.buildFrame(
+                        opcode = 0x1,
+                        data = "text-payload".bytes(),
+                        mask = false,
+                    ),
+            )
         val ws = connect(fake)
 
         assertEquals("text-payload", ws.recv()!!.toString(Charsets.UTF_8))
@@ -133,11 +138,12 @@ class RawWebSocketLiveTest {
     fun recvRespondsToPingWithMaskedPongThenReturnsNextPayload() {
         val pingPayload = "ping".bytes()
         val binaryPayload = "after-ping".bytes()
-        val fake = FakeTransportFactory(
-            httpResponse(101, "Switching Protocols") +
-                RawWebSocketCodec.buildFrame(RawWebSocketCodec.OP_PING, pingPayload, mask = false) +
-                RawWebSocketCodec.buildFrame(RawWebSocketCodec.OP_BINARY, binaryPayload, mask = false),
-        )
+        val fake =
+            FakeTransportFactory(
+                httpResponse(101, "Switching Protocols") +
+                    RawWebSocketCodec.buildFrame(RawWebSocketCodec.OP_PING, pingPayload, mask = false) +
+                    RawWebSocketCodec.buildFrame(RawWebSocketCodec.OP_BINARY, binaryPayload, mask = false),
+            )
         val ws = connect(fake)
         val requestLength = fake.transport.outputBytes().size
 
@@ -152,13 +158,15 @@ class RawWebSocketLiveTest {
 
     @Test
     fun recvReturnsNullOnCloseFrameAndAcknowledgesClose() {
-        val fake = FakeTransportFactory(
-            httpResponse(101, "Switching Protocols") + RawWebSocketCodec.buildFrame(
-                opcode = RawWebSocketCodec.OP_CLOSE,
-                data = byteArrayOf(0x03, 0xE8.toByte(), 0x55),
-                mask = false,
-            ),
-        )
+        val fake =
+            FakeTransportFactory(
+                httpResponse(101, "Switching Protocols") +
+                    RawWebSocketCodec.buildFrame(
+                        opcode = RawWebSocketCodec.OP_CLOSE,
+                        data = byteArrayOf(0x03, 0xE8.toByte(), 0x55),
+                        mask = false,
+                    ),
+            )
         val ws = connect(fake)
         val requestLength = fake.transport.outputBytes().size
 
@@ -187,29 +195,34 @@ class RawWebSocketLiveTest {
         assertTrue(fake.transport.closed)
     }
 
-    private fun connect(fake: FakeTransportFactory): RawWebSocket = RawWebSocket.connect(
-        host = "edge.example",
-        domain = "ws.example",
-        transportFactory = fake,
-        randomProvider = deterministicRandomProvider(),
-    )
+    private fun connect(fake: FakeTransportFactory): RawWebSocket =
+        RawWebSocket.connect(
+            host = "edge.example",
+            domain = "ws.example",
+            transportFactory = fake,
+            randomProvider = deterministicRandomProvider(),
+        )
 
-    private fun deterministicRandomProvider(): (Int) -> ByteArray = { length ->
-        when (length) {
-            16 -> ByteArray(16) { it.toByte() }
-            4 -> byteArrayOf(0x01, 0x23, 0x45, 0x67)
-            else -> error("unexpected random length $length")
+    private fun deterministicRandomProvider(): (Int) -> ByteArray =
+        { length ->
+            when (length) {
+                16 -> ByteArray(16) { it.toByte() }
+                4 -> byteArrayOf(0x01, 0x23, 0x45, 0x67)
+                else -> error("unexpected random length $length")
+            }
         }
-    }
 
-    private fun expectedUpgradeRequest(): String = RawWebSocketCodec.buildUpgradeRequest(
-        path = "/apiws",
-        domain = "ws.example",
-        secWebSocketKey = "AAECAwQFBgcICQoLDA0ODw==",
-    )
+    private fun expectedUpgradeRequest(): String =
+        RawWebSocketCodec.buildUpgradeRequest(
+            path = "/apiws",
+            domain = "ws.example",
+            secWebSocketKey = "AAECAwQFBgcICQoLDA0ODw==",
+        )
 
-    private fun httpResponse(statusCode: Int, reason: String): ByteArray =
-        "HTTP/1.1 $statusCode $reason\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n".toByteArray(Charsets.UTF_8)
+    private fun httpResponse(
+        statusCode: Int,
+        reason: String,
+    ): ByteArray = "HTTP/1.1 $statusCode $reason\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n".toByteArray(Charsets.UTF_8)
 
     private fun String.bytes(): ByteArray = toByteArray(Charsets.UTF_8)
 
@@ -222,19 +235,33 @@ class RawWebSocketLiveTest {
         throw AssertionError("Expected WsHandshakeException")
     }
 
-    private data class ConnectionCall(val host: String, val port: Int, val domain: String, val timeoutMs: Int)
+    private data class ConnectionCall(
+        val host: String,
+        val port: Int,
+        val domain: String,
+        val timeoutMs: Int,
+    )
 
-    private class FakeTransportFactory(responseBytes: ByteArray) : RawWebSocket.TransportFactory {
+    private class FakeTransportFactory(
+        responseBytes: ByteArray,
+    ) : RawWebSocket.TransportFactory {
         val transport = FakeTransport(responseBytes)
         val calls = mutableListOf<ConnectionCall>()
 
-        override fun connect(host: String, port: Int, domain: String, timeoutMs: Int): RawWebSocket.Transport {
+        override fun connect(
+            host: String,
+            port: Int,
+            domain: String,
+            timeoutMs: Int,
+        ): RawWebSocket.Transport {
             calls += ConnectionCall(host, port, domain, timeoutMs)
             return transport
         }
     }
 
-    private class FakeTransport(responseBytes: ByteArray) : RawWebSocket.Transport {
+    private class FakeTransport(
+        responseBytes: ByteArray,
+    ) : RawWebSocket.Transport {
         override val input: InputStream = ByteArrayInputStream(responseBytes)
         private val outputBuffer = ByteArrayOutputStream()
         override val output: OutputStream = outputBuffer

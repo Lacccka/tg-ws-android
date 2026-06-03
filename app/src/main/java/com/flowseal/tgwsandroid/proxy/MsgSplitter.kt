@@ -11,7 +11,10 @@ import javax.crypto.spec.SecretKeySpec
  * only enough state to parse MTProto transport packet lengths while returning the original
  * ciphertext packet bytes, preserving AES-CTR and buffer state across calls.
  */
-class MsgSplitter(relayInit: ByteArray, private val protoInt: Int) {
+class MsgSplitter(
+    relayInit: ByteArray,
+    private val protoInt: Int,
+) {
     private val decryptor: Cipher
     private var cipherBuffer = ByteArray(0)
     private var plainBuffer = ByteArray(0)
@@ -21,10 +24,11 @@ class MsgSplitter(relayInit: ByteArray, private val protoInt: Int) {
         require(relayInit.size == MtprotoHandshake.HANDSHAKE_LEN) {
             "relayInit must be exactly ${MtprotoHandshake.HANDSHAKE_LEN} bytes"
         }
-        decryptor = aesCtr(
-            relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN, MtprotoHandshake.SKIP_LEN + KEY_LEN),
-            relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN + KEY_LEN, MtprotoHandshake.SKIP_LEN + KEY_LEN + IV_LEN),
-        )
+        decryptor =
+            aesCtr(
+                relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN, MtprotoHandshake.SKIP_LEN + KEY_LEN),
+                relayInit.copyOfRange(MtprotoHandshake.SKIP_LEN + KEY_LEN, MtprotoHandshake.SKIP_LEN + KEY_LEN + IV_LEN),
+            )
         decryptor.updateCompat(ByteArray(ZERO_64_LEN))
     }
 
@@ -65,7 +69,10 @@ class MsgSplitter(relayInit: ByteArray, private val protoInt: Int) {
         return listOf(tail)
     }
 
-    private fun nextPacketLength(offset: Int, available: Int): Int? {
+    private fun nextPacketLength(
+        offset: Int,
+        available: Int,
+    ): Int? {
         if (available <= 0) return null
         return when (protoInt) {
             PROTO_ABRIDGED_INT -> nextAbridgedLength(offset, available)
@@ -74,7 +81,10 @@ class MsgSplitter(relayInit: ByteArray, private val protoInt: Int) {
         }
     }
 
-    private fun nextAbridgedLength(offset: Int, available: Int): Int? {
+    private fun nextAbridgedLength(
+        offset: Int,
+        available: Int,
+    ): Int? {
         val first = plainBuffer[offset].toInt() and 0xff
         val payloadLength: Int
         val headerLength: Int
@@ -92,7 +102,10 @@ class MsgSplitter(relayInit: ByteArray, private val protoInt: Int) {
         return packetLength
     }
 
-    private fun nextIntermediateLength(offset: Int, available: Int): Int? {
+    private fun nextIntermediateLength(
+        offset: Int,
+        available: Int,
+    ): Int? {
         if (available < 4) return null
         val payloadLength = littleEndianInt(plainBuffer, offset) and 0x7fffffff
         if (payloadLength <= 0) return 0
@@ -101,28 +114,38 @@ class MsgSplitter(relayInit: ByteArray, private val protoInt: Int) {
         return packetLength
     }
 
-    private fun littleEndianUInt24(bytes: ByteArray, offset: Int): Int =
+    private fun littleEndianUInt24(
+        bytes: ByteArray,
+        offset: Int,
+    ): Int =
         (bytes[offset].toInt() and 0xff) or
             ((bytes[offset + 1].toInt() and 0xff) shl 8) or
             ((bytes[offset + 2].toInt() and 0xff) shl 16)
 
-    private fun littleEndianInt(bytes: ByteArray, offset: Int): Int =
+    private fun littleEndianInt(
+        bytes: ByteArray,
+        offset: Int,
+    ): Int =
         (bytes[offset].toInt() and 0xff) or
             ((bytes[offset + 1].toInt() and 0xff) shl 8) or
             ((bytes[offset + 2].toInt() and 0xff) shl 16) or
             (bytes[offset + 3].toInt() shl 24)
 
-    private fun aesCtr(key: ByteArray, iv: ByteArray): Cipher {
+    private fun aesCtr(
+        key: ByteArray,
+        iv: ByteArray,
+    ): Cipher {
         val cipher = Cipher.getInstance("AES/CTR/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key, "AES"), IvParameterSpec(iv))
         return cipher
     }
 
-    private fun Cipher.updateCompat(data: ByteArray): ByteArray = if (data.isEmpty()) {
-        ByteArray(0)
-    } else {
-        update(data) ?: ByteArray(0)
-    }
+    private fun Cipher.updateCompat(data: ByteArray): ByteArray =
+        if (data.isEmpty()) {
+            ByteArray(0)
+        } else {
+            update(data) ?: ByteArray(0)
+        }
 
     companion object {
         private const val KEY_LEN = 32

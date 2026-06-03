@@ -15,15 +15,16 @@ class RawWebSocketCodecParityTest {
         for (index in 0 until frames.length()) {
             val vector = frames.getJSONObject(index)
             val maskKey = vector.optString("mask_key_hex", "").hexToBytes()
-            val actual = RawWebSocketCodec.buildFrame(
-                opcode = vector.getInt("opcode"),
-                data = vector.getString("payload_hex").hexToBytes(),
-                mask = vector.getBoolean("mask"),
-                randomProvider = { length ->
-                    assertEquals("${vector.getString("name")} mask length", 4, length)
-                    maskKey
-                },
-            )
+            val actual =
+                RawWebSocketCodec.buildFrame(
+                    opcode = vector.getInt("opcode"),
+                    data = vector.getString("payload_hex").hexToBytes(),
+                    mask = vector.getBoolean("mask"),
+                    randomProvider = { length ->
+                        assertEquals("${vector.getString("name")} mask length", 4, length)
+                        maskKey
+                    },
+                )
             assertEquals(vector.getString("name"), vector.getString("expected_frame_hex"), actual.toHex())
         }
     }
@@ -38,7 +39,15 @@ class RawWebSocketCodecParityTest {
             assertEquals(vector.getString("name"), expected.getInt("opcode"), parsed.opcode)
             assertEquals(vector.getString("name"), expected.getBoolean("masked_input"), parsed.masked)
             assertEquals(vector.getString("name"), expected.getString("payload_hex"), parsed.payload.toHex())
-            assertEquals(vector.getString("name"), expected.getString("payload_hex").hexToBytes().size.toLong(), parsed.length)
+            assertEquals(
+                vector.getString("name"),
+                expected
+                    .getString("payload_hex")
+                    .hexToBytes()
+                    .size
+                    .toLong(),
+                parsed.length,
+            )
         }
     }
 
@@ -47,11 +56,12 @@ class RawWebSocketCodecParityTest {
         val requests = loadWebSocketVectors().getJSONArray("requests")
         for (index in 0 until requests.length()) {
             val vector = requests.getJSONObject(index)
-            val actual = RawWebSocketCodec.buildUpgradeRequest(
-                path = vector.getString("path"),
-                domain = vector.getString("domain"),
-                secWebSocketKey = vector.getString("sec_websocket_key"),
-            )
+            val actual =
+                RawWebSocketCodec.buildUpgradeRequest(
+                    path = vector.getString("path"),
+                    domain = vector.getString("domain"),
+                    secWebSocketKey = vector.getString("sec_websocket_key"),
+                )
             assertEquals(vector.getString("name"), vector.getString("expected_request_text"), actual)
         }
     }
@@ -82,12 +92,13 @@ class RawWebSocketCodecParityTest {
         assertFalse(payload.contentEquals(masked))
         assertArrayEquals(payload, RawWebSocketCodec.xorMask(masked, maskKey))
 
-        val frame = RawWebSocketCodec.buildFrame(
-            opcode = RawWebSocketCodec.OP_BINARY,
-            data = payload,
-            mask = true,
-            randomProvider = { maskKey },
-        )
+        val frame =
+            RawWebSocketCodec.buildFrame(
+                opcode = RawWebSocketCodec.OP_BINARY,
+                data = payload,
+                mask = true,
+                randomProvider = { maskKey },
+            )
         val parsed = RawWebSocketCodec.parseFrame(frame)
         assertTrue(parsed.masked)
         assertEquals(RawWebSocketCodec.OP_BINARY, parsed.opcode)
@@ -96,9 +107,10 @@ class RawWebSocketCodecParityTest {
 
     @Test
     fun successfulHandshakeHasNoErrorMessage() {
-        val response = RawWebSocketCodec.parseHandshakeResponse(
-            "HTTP/1.1 101 Switching Protocols\r\n\r\n".toByteArray(Charsets.UTF_8),
-        )
+        val response =
+            RawWebSocketCodec.parseHandshakeResponse(
+                "HTTP/1.1 101 Switching Protocols\r\n\r\n".toByteArray(Charsets.UTF_8),
+            )
         assertTrue(response.success)
         assertNull(response.errorMessage)
     }
@@ -108,14 +120,14 @@ class RawWebSocketCodecParityTest {
         return JSONObject(stream.reader(Charsets.UTF_8).readText())
     }
 
-    private fun JSONObject.toStringMap(): Map<String, String> = buildMap {
-        val keys = keys()
-        while (keys.hasNext()) {
-            val key = keys.next()
-            put(key, getString(key))
+    private fun JSONObject.toStringMap(): Map<String, String> =
+        buildMap {
+            val keys = keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                put(key, getString(key))
+            }
         }
-    }
 
-    private fun JSONObject.nullableString(name: String): String? =
-        if (isNull(name)) null else getString(name)
+    private fun JSONObject.nullableString(name: String): String? = if (isNull(name)) null else getString(name)
 }

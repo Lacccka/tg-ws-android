@@ -14,10 +14,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 UPSTREAM_ROOT = REPO_ROOT / "third_party" / "tg-ws-proxy"
-OUTPUT_PATH = REPO_ROOT / "app" / "src" / "test" / "resources" / "handshake_vectors.json"
+OUTPUT_PATH = (
+    REPO_ROOT / "app" / "src" / "test" / "resources" / "handshake_vectors.json"
+)
 SEED = 0x54575753
 VALID_SECRET = bytes.fromhex("0123456789abcdeffedcba9876543210")
 WRONG_SECRET = bytes.fromhex("00112233445566778899aabbccddeeff")
@@ -61,10 +62,15 @@ def _random_handshake_prefix(rng: random.Random) -> bytearray:
 def _keystream(data: bytes, key: bytes, iv: bytes) -> bytes:
     encryptor = Cipher(algorithms.AES(key), modes.CTR(iv)).encryptor()
     encrypted = encryptor.update(data)
-    return bytes(encrypted_byte ^ plain_byte for encrypted_byte, plain_byte in zip(encrypted, data))
+    return bytes(
+        encrypted_byte ^ plain_byte
+        for encrypted_byte, plain_byte in zip(encrypted, data)
+    )
 
 
-def build_client_handshake(rng: random.Random, secret: bytes, proto_tag: bytes, dc_idx: int) -> bytes:
+def build_client_handshake(
+    rng: random.Random, secret: bytes, proto_tag: bytes, dc_idx: int
+) -> bytes:
     """Build a client obfuscated handshake accepted by upstream _try_handshake."""
     handshake = _random_handshake_prefix(rng)
     dec_prekey = bytes(handshake[SKIP_LEN : SKIP_LEN + PREKEY_LEN])
@@ -72,7 +78,9 @@ def build_client_handshake(rng: random.Random, secret: bytes, proto_tag: bytes, 
     dec_key = hashlib.sha256(dec_prekey + secret).digest()
     stream = _keystream(bytes(handshake), dec_key, dec_iv)
 
-    tail_plain = proto_tag + int(dc_idx).to_bytes(2, "little", signed=True) + _randbytes(rng, 2)
+    tail_plain = (
+        proto_tag + int(dc_idx).to_bytes(2, "little", signed=True) + _randbytes(rng, 2)
+    )
     tail_start = PROTO_TAG_POS
     for offset, plain_byte in enumerate(tail_plain):
         handshake[tail_start + offset] = plain_byte ^ stream[tail_start + offset]
@@ -123,10 +131,16 @@ def generate_vectors() -> dict[str, Any]:
             raise RuntimeError(f"upstream rejected generated valid vector {name}")
         vectors.append(vector)
 
-    wrong_secret_handshake = build_client_handshake(rng, VALID_SECRET, PROTO_TAG_ABRIDGED, 2)
-    vectors.append(_vector("invalid_wrong_secret", WRONG_SECRET, wrong_secret_handshake))
+    wrong_secret_handshake = build_client_handshake(
+        rng, VALID_SECRET, PROTO_TAG_ABRIDGED, 2
+    )
+    vectors.append(
+        _vector("invalid_wrong_secret", WRONG_SECRET, wrong_secret_handshake)
+    )
 
-    invalid_proto_handshake = build_client_handshake(rng, VALID_SECRET, b"\x00\x00\x00\x00", 2)
+    invalid_proto_handshake = build_client_handshake(
+        rng, VALID_SECRET, b"\x00\x00\x00\x00", 2
+    )
     vectors.append(_vector("invalid_proto_tag", VALID_SECRET, invalid_proto_handshake))
 
     malformed = build_client_handshake(rng, VALID_SECRET, PROTO_TAG_SECURE, 4)[:55]
@@ -152,7 +166,9 @@ def main() -> int:
     with OUTPUT_PATH.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, indent=2, sort_keys=True)
         handle.write("\n")
-    print(f"wrote {len(data['vectors'])} vectors to {OUTPUT_PATH.relative_to(REPO_ROOT)}")
+    print(
+        f"wrote {len(data['vectors'])} vectors to {OUTPUT_PATH.relative_to(REPO_ROOT)}"
+    )
     return 0
 
 

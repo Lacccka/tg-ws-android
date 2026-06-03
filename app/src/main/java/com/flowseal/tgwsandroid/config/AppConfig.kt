@@ -33,22 +33,23 @@ data class AppConfig(
         const val DEFAULT_LOG_MAX_MB = 5.0
         val DEFAULT_DC_IP = listOf("2:149.154.167.220", "4:149.154.167.220")
 
-        fun fromJson(json: JSONObject): AppConfig = AppConfig(
-            host = json.optString("host", DEFAULT_HOST),
-            port = json.optInt("port", DEFAULT_PORT),
-            secret = json.optString("secret", ""),
-            dcIp = json.optStringList("dc_ip", DEFAULT_DC_IP),
-            verbose = json.optBoolean("verbose", false),
-            autostart = json.optBoolean("autostart", false),
-            bufKb = json.optInt("buf_kb", DEFAULT_BUF_KB),
-            poolSize = json.optInt("pool_size", DEFAULT_POOL_SIZE),
-            logMaxMb = json.optDouble("log_max_mb", DEFAULT_LOG_MAX_MB),
-            checkUpdates = json.optBoolean("check_updates", true),
-            cfproxy = json.optBoolean("cfproxy", true),
-            cfproxyUserDomain = json.optStringList("cfproxy_user_domain", emptyList()),
-            cfproxyWorkerDomain = json.optStringList("cfproxy_worker_domain", emptyList()),
-            appearance = Appearance.fromConfigValue(json.optString("appearance", Appearance.AUTO.configValue)),
-        )
+        fun fromJson(json: JSONObject): AppConfig =
+            AppConfig(
+                host = json.optString("host", DEFAULT_HOST),
+                port = json.optInt("port", DEFAULT_PORT),
+                secret = json.optString("secret", ""),
+                dcIp = json.optStringList("dc_ip", DEFAULT_DC_IP),
+                verbose = json.optBoolean("verbose", false),
+                autostart = json.optBoolean("autostart", false),
+                bufKb = json.optInt("buf_kb", DEFAULT_BUF_KB),
+                poolSize = json.optInt("pool_size", DEFAULT_POOL_SIZE),
+                logMaxMb = json.optDouble("log_max_mb", DEFAULT_LOG_MAX_MB),
+                checkUpdates = json.optBoolean("check_updates", true),
+                cfproxy = json.optBoolean("cfproxy", true),
+                cfproxyUserDomain = json.optStringList("cfproxy_user_domain", emptyList()),
+                cfproxyWorkerDomain = json.optStringList("cfproxy_worker_domain", emptyList()),
+                appearance = Appearance.fromConfigValue(json.optString("appearance", Appearance.AUTO.configValue)),
+            )
     }
 }
 
@@ -56,32 +57,52 @@ data class AppConfig(
  * Mirrors upstream `ui/ctk_theme.py::apply_ctk_appearance` values as persisted
  * by `ui/ctk_tray_ui.py::validate_config_form` under the `appearance` key.
  */
-enum class Appearance(val configValue: String) {
+enum class Appearance(
+    val configValue: String,
+) {
     AUTO("auto"),
     LIGHT("light"),
-    DARK("dark");
+    DARK("dark"),
+    ;
 
     companion object {
-        fun fromConfigValue(value: String): Appearance = entries.firstOrNull {
-            it.configValue.equals(value, ignoreCase = true)
-        } ?: AUTO
+        fun fromConfigValue(value: String): Appearance =
+            entries.firstOrNull {
+                it.configValue.equals(value, ignoreCase = true)
+            } ?: AUTO
     }
 }
 
-private fun JSONObject.optStringList(name: String, defaultValue: List<String>): List<String> {
+private fun JSONObject.optStringList(
+    name: String,
+    defaultValue: List<String>,
+): List<String> {
     if (!has(name) || isNull(name)) {
         return defaultValue
     }
 
     return when (val value = opt(name)) {
-        is JSONArray -> buildList {
-            for (index in 0 until value.length()) {
-                value.optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
+        is JSONArray -> {
+            buildList {
+                for (index in 0 until value.length()) {
+                    value
+                        .optString(index)
+                        .trim()
+                        .takeIf(String::isNotEmpty)
+                        ?.let(::add)
+                }
             }
         }
-        is String -> value.split(',', ';', ' ', '\n', '\t')
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-        else -> defaultValue
+
+        is String -> {
+            value
+                .split(',', ';', ' ', '\n', '\t')
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+        }
+
+        else -> {
+            defaultValue
+        }
     }
 }
