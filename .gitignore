@@ -182,13 +182,11 @@ cython_debug/
 
 # Other
 local_config/
-<<<<<<< ours
 /patches
-=======
+
 # Android / Gradle
 .gradle/
 **/build/
 local.properties
 *.iml
 .idea/
->>>>>>> theirs
