@@ -47,11 +47,11 @@ Smoke-test steps:
 3. Open **TG WS Android**.
 4. Tap **Start proxy** and grant notification permission on Android 13+ if
    prompted.
-5. Tap **Connect in Telegram** to open the Telegram proxy deep link. If
-   Telegram cannot handle the direct `tg://` link, the app falls back to the
-   `https://t.me/proxy` link; **Copy proxy link** copies the fallback link for
-   manual sharing.
-6. If needed, manually add an MTProto proxy in Telegram with:
+5. Tap **Connect in Telegram** to open the Telegram proxy deep link on the same
+   Android device where this proxy app is running. If Telegram cannot handle the
+   direct `tg://` link, the app falls back to the `https://t.me/proxy` link.
+6. If needed, manually add an MTProto proxy in Telegram on that same Android
+   device with:
    - Server: `127.0.0.1`
    - Port: `1443`
    - Secret: `dd4014e15dd34e4b05c42413eab68c3da8`
@@ -64,5 +64,8 @@ Current runtime limitations:
 - No fake TLS yet.
 - No autostart yet.
 - No settings editor yet.
-- The UI is intentionally minimal: start, stop, Connect in Telegram, Copy proxy link,
-  status, fixed config summary, and recent in-memory service logs only.
+- The UI is intentionally minimal: start, stop, Connect in Telegram, status,
+  fixed config summary, and recent in-memory service logs only.
+- The local endpoint uses `127.0.0.1`, which works only inside the same Android
+  device where the proxy app is running; links or settings using this server are
+  not useful when shared with other devices.

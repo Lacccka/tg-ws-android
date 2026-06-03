@@ -34,7 +34,6 @@ class MainActivity : Activity() {
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var connectTelegramButton: Button
-    private lateinit var copyProxyLinkButton: Button
 
     private val refreshRunnable = object : Runnable {
         override fun run() {
@@ -56,10 +55,6 @@ class MainActivity : Activity() {
         }
         connectTelegramButton.setOnClickListener {
             openTelegramProxyLink()
-        }
-        copyProxyLinkButton.setOnClickListener {
-            copyProxyLink()
-            Toast.makeText(this, "Proxy link copied", Toast.LENGTH_SHORT).show()
         }
         refreshState()
     }
@@ -96,7 +91,6 @@ class MainActivity : Activity() {
         startButton = Button(this).apply { text = "Start proxy" }
         stopButton = Button(this).apply { text = "Stop proxy" }
         connectTelegramButton = Button(this).apply { text = "Connect in Telegram" }
-        copyProxyLinkButton = Button(this).apply { text = "Copy proxy link" }
 
         logsText = TextView(this).apply {
             text = "No logs yet"
@@ -130,7 +124,6 @@ class MainActivity : Activity() {
             addView(startButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(stopButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(connectTelegramButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(copyProxyLinkButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(TextView(this@MainActivity).apply {
                 text = "Recent logs"
                 textSize = 16f
@@ -194,7 +187,6 @@ class MainActivity : Activity() {
         startButton.isEnabled = !running
         stopButton.isEnabled = running
         connectTelegramButton.isEnabled = true
-        copyProxyLinkButton.isEnabled = true
         logsText.text = ProxyForegroundService.State.recentLogs().takeIf { it.isNotEmpty() }?.joinToString("\n") ?: "No logs yet"
     }
 

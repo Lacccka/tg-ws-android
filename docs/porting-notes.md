@@ -23,12 +23,16 @@ the title/status text and bottom logs/buttons are not hidden behind the status
 or navigation bars.
 
 The UI also exposes **Connect in Telegram**, which opens the fixed local MTProto
-proxy link and falls back from `tg://proxy` to `https://t.me/proxy`. Manual
-fallback values remain:
+proxy link on the same Android device where the proxy app is running and falls
+back from `tg://proxy` to `https://t.me/proxy`. Manual fallback values remain:
 
 - Server: `127.0.0.1`
 - Port: `1443`
 - Secret: `dd4014e15dd34e4b05c42413eab68c3da8`
+
+Because the proxy listens on the loopback address, `127.0.0.1` works only on the
+same Android device where the proxy app is running and should not be shared as a
+proxy server for other devices.
 
 ## Current scope
 
