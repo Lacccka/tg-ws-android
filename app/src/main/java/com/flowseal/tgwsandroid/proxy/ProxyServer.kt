@@ -226,6 +226,12 @@ class ProxyServer(
             return
         }
 
+        val protoInt = protoIntForProtoTag(parsed.protoTag)
+        logger.log(
+            "${client.remoteLabel} handshake accepted: DC${parsed.dcId} " +
+                "media=${parsed.isMedia} proto=$protoInt/${protoTagLabel(parsed.protoTag)}",
+        )
+
         val relayDcIdx = if (parsed.isMedia) -parsed.dcId else parsed.dcId
         val relayInit = RelayInit.generate(parsed.protoTag, relayDcIdx, randomBytes)
         val cryptoContext = CryptoContext.build(
@@ -233,17 +239,10 @@ class ProxyServer(
             secret = config.secretHex.hexToBytes(),
             relayInit = relayInit,
         )
-        val protoInt = protoIntForProtoTag(parsed.protoTag)
         val splitter = MsgSplitter(relayInit, protoInt)
         val counters = BridgeSessionCounters()
 
-        val webSocket = try {
-            webSocketConnector.connect(targetHost, targetHost, DEFAULT_WS_PATH)
-        } catch (error: Throwable) {
-            wsConnectErrors.incrementAndGet()
-            logger.log("WebSocket connect failed for DC ${parsed.dcId} at $targetHost: ${error.message ?: error::class.java.simpleName}")
-            return
-        }
+        val webSocket = connectWebSocket(parsed, targetHost) ?: return
 
         try {
             webSocket.send(relayInit)
@@ -257,6 +256,31 @@ class ProxyServer(
                 // Best-effort close.
             }
         }
+    }
+
+
+    private fun connectWebSocket(
+        parsed: MtprotoHandshake.Result,
+        targetHost: String,
+    ): WebSocketBinaryStream? {
+        val failures = mutableListOf<String>()
+        for (domain in wsDomains(parsed.dcId, parsed.isMedia)) {
+            logger.log(
+                "DC${parsed.dcId} media=${parsed.isMedia} -> wss://$domain$DEFAULT_WS_PATH via $targetHost",
+            )
+            try {
+                val webSocket = webSocketConnector.connect(targetHost, domain, DEFAULT_WS_PATH)
+                logger.log("DC${parsed.dcId} WebSocket connected via $domain")
+                return webSocket
+            } catch (error: Throwable) {
+                wsConnectErrors.incrementAndGet()
+                val detail = websocketFailureDetail(error)
+                failures.add("$domain ($detail)")
+                logger.log("DC${parsed.dcId} WebSocket attempt via $domain failed: $detail")
+            }
+        }
+        logger.log("DC${parsed.dcId} WebSocket connect failed after attempts: ${failures.joinToString()}")
+        return null
     }
 
     private fun markBad(message: String) {
@@ -291,6 +315,22 @@ class ProxyServer(
             protoTag.contentEquals(RelayInit.PROTO_TAG_INTERMEDIATE) -> MsgSplitter.PROTO_INTERMEDIATE_INT
             protoTag.contentEquals(RelayInit.PROTO_TAG_SECURE) -> MsgSplitter.PROTO_PADDED_INTERMEDIATE_INT
             else -> throw IllegalArgumentException("Unknown MTProto protocol tag")
+        }
+
+        private fun protoTagLabel(protoTag: ByteArray): String = when {
+            protoTag.contentEquals(RelayInit.PROTO_TAG_ABRIDGED) -> "abridged"
+            protoTag.contentEquals(RelayInit.PROTO_TAG_INTERMEDIATE) -> "intermediate"
+            protoTag.contentEquals(RelayInit.PROTO_TAG_SECURE) -> "secure"
+            else -> "unknown"
+        }
+
+        private fun websocketFailureDetail(error: Throwable): String {
+            val base = "${error::class.java.simpleName}: ${error.message ?: "no message"}"
+            if (error is RawWebSocket.WsHandshakeException) {
+                val location = error.location?.let { " location=$it" }.orEmpty()
+                return "$base status=${error.statusCode}$location"
+            }
+            return base
         }
     }
 }

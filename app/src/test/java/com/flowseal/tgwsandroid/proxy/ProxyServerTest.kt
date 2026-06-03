@@ -42,7 +42,7 @@ class ProxyServerTest {
         proxy.stop()
 
         assertEquals(listOf("203.0.113.2"), connector.targetHosts)
-        assertEquals(listOf("203.0.113.2"), connector.domains)
+        assertEquals(listOf("kws2.web.telegram.org"), connector.domains)
         assertEquals(listOf(ProxyServer.DEFAULT_WS_PATH), connector.paths)
         assertEquals(listOf("send", "bridge", "close"), events.toList())
         assertEquals(MtprotoHandshake.HANDSHAKE_LEN, webSocket.sent.single().size)
@@ -155,8 +155,109 @@ class ProxyServerTest {
         waitUntil { client.closed }
         proxy.stop()
 
-        assertEquals(1L, proxy.stats().wsConnectErrors)
+        assertEquals(2L, proxy.stats().wsConnectErrors)
         assertEquals(0L, proxy.stats().connectionsBad)
+    }
+
+    @Test
+    fun wsDomainsMatchesUpstreamOrdering() {
+        assertEquals(
+            listOf("kws2.web.telegram.org", "kws2-1.web.telegram.org"),
+            wsDomains(2, isMedia = false),
+        )
+        assertEquals(
+            listOf("kws2-1.web.telegram.org", "kws2.web.telegram.org"),
+            wsDomains(2, isMedia = true),
+        )
+        assertEquals(
+            listOf("kws2.web.telegram.org", "kws2-1.web.telegram.org"),
+            wsDomains(203, isMedia = false),
+        )
+    }
+
+    @Test
+    fun proxyTriesNormalDcDomainsInUpstreamOrder() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(server = server, connector = connector)
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(listOf("203.0.113.2"), connector.targetHosts)
+        assertEquals(listOf("kws2.web.telegram.org"), connector.domains)
+        assertEquals(listOf(ProxyServer.DEFAULT_WS_PATH), connector.paths)
+    }
+
+    @Test
+    fun proxyTriesMediaDcDomainsInUpstreamOrder() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_media_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(server = server, connector = connector)
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(listOf("203.0.113.2"), connector.targetHosts)
+        assertEquals(listOf("kws2-1.web.telegram.org"), connector.domains)
+        assertEquals(listOf(ProxyServer.DEFAULT_WS_PATH), connector.paths)
+    }
+
+    @Test
+    fun proxyFallsBackToSecondDomainAndLogsFailureThenSuccess() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val events = CopyOnWriteArrayList<String>()
+        val connector = FailingThenRecordingConnector(FakeWebSocketBinaryStream(events), failCount = 1)
+        val proxy =
+            newProxy(
+                server = server,
+                connector = connector,
+                runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
+                logger = ProxyLogger { logs.add(it) },
+            )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(
+            listOf("kws2.web.telegram.org", "kws2-1.web.telegram.org"),
+            connector.domains,
+        )
+        assertEquals(1L, proxy.stats().wsConnectErrors)
+        assertTrue(logs.any { it.contains("wss://kws2.web.telegram.org/apiws via 203.0.113.2") })
+        assertTrue(logs.any { it.contains("kws2.web.telegram.org failed: IOException: planned failure 1") })
+        assertTrue(logs.any { it.contains("DC2 WebSocket connected via kws2-1.web.telegram.org") })
+    }
+
+    @Test
+    fun allWebSocketDomainsFailClosesClientIncrementsCounterAndLogsAttempts() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RawWebSocketConnector { _, domain, _ -> throw IOException("boom for $domain") }
+        val proxy = newProxy(server = server, connector = connector, logger = ProxyLogger { logs.add(it) })
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(2L, proxy.stats().wsConnectErrors)
+        assertEquals(0L, proxy.stats().connectionsBad)
+        assertTrue(logs.any { it.contains("wss://kws2.web.telegram.org/apiws via 203.0.113.2") })
+        assertTrue(logs.any { it.contains("wss://kws2-1.web.telegram.org/apiws via 203.0.113.2") })
+        assertTrue(logs.any { it.contains("IOException: boom for kws2.web.telegram.org") })
+        assertTrue(logs.any { it.contains("connect failed after attempts") })
     }
 
     @Test
@@ -324,6 +425,25 @@ class ProxyServerTest {
         override fun close() {
             events.add("close")
             closed = true
+        }
+    }
+
+    private class FailingThenRecordingConnector(
+        private val webSocket: FakeWebSocketBinaryStream,
+        private val failCount: Int,
+    ) : RawWebSocketConnector {
+        val domains = mutableListOf<String>()
+        private var attempts = 0
+
+        override fun connect(
+            targetHost: String,
+            domain: String,
+            path: String,
+        ): WebSocketBinaryStream {
+            attempts += 1
+            domains.add(domain)
+            if (attempts <= failCount) throw IOException("planned failure $attempts")
+            return webSocket
         }
     }
 

@@ -43,9 +43,10 @@ TLS connection/send/recv/close layer, the reusable BridgeSession layer
 equivalent to upstream `bridge_ws_reencrypt`, and a minimal blocking local
 `ProxyServer` runtime without Android Service/UI. The `ProxyServer` accepts local
 TCP clients, reads the non-fake-TLS 64-byte MTProto handshake, selects a
-configured DC target, creates relay init/crypto/splitter state, opens an
-injectable direct RawWebSocket connection, sends relay init as the first binary
-frame, and invokes `BridgeSession`. ws_pool/connection pools, cfproxy fallback
+configured DC TCP target, derives the upstream-compatible Telegram WebSocket
+web domains for TLS SNI/HTTP Host, creates relay init/crypto/splitter state,
+opens an injectable direct RawWebSocket connection, sends relay init as the first
+binary frame, and invokes `BridgeSession`. ws_pool/connection pools, cfproxy fallback
 and refresh, fake TLS, proxy_protocol, foreground service integration, UI,
 balancing code, app lifecycle, autostart, and richer Telegram routing remain
 intentionally unimplemented until their own parity or integration test scopes
@@ -165,6 +166,17 @@ send, bridge invocation, best-effort close handling, callback logging, and local
 stats for total/active/bad connections, WebSocket connect failures, and surfaced
 bridge byte counters.
 
-Not ported in this milestone: ws_pool/connection pooling, cfproxy fallback or
-refresh, fake TLS, proxy_protocol, balancer, Android ForegroundService/UI, app
+The direct WebSocket path now matches upstream domain selection. The TCP target
+remains the configured DC IP from `dcRedirects` (for example
+`149.154.167.220`), while the WebSocket domain used for TLS SNI, HTTP `Host`,
+and the visible `wss://.../apiws` URL is selected from
+`kws*.web.telegram.org`. Non-media DCs try `kws{dc}.web.telegram.org` before
+`kws{dc}-1.web.telegram.org`; media DCs try the `-1` domain first; DC 203 maps
+to DC 2 for domain generation. ProxyServer logs the accepted client handshake,
+each attempted `wss://` domain via the target IP, per-domain failure details,
+and the first successful domain through `ProxyLogger` so Android service recent
+logs can surface the path without proxy-core using Android logging APIs.
+
+Still not ported in this milestone: ws_pool/connection pooling, cfproxy fallback
+or refresh, fake TLS, proxy_protocol, balancer, Android ForegroundService/UI, app
 lifecycle, autostart, and production Cloudflare/Telegram integration testing.
