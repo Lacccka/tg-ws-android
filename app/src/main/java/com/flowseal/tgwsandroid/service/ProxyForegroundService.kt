@@ -41,6 +41,7 @@ class ProxyForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        ProxyRuntimeConfig.initialize(applicationContext)
         State.initialize(applicationContext, "service")
         State.addLog("service created", LogSeverity.INFO, "service")
         ensureNotificationChannel()
@@ -112,19 +113,20 @@ class ProxyForegroundService : Service() {
         executor.execute {
             synchronized(lock) {
                 if (proxyServer?.isRunning == true) {
-                    State.setRunning(true, "Proxy already running on ${ProxyRuntimeConfig.endpointSummary()}")
+                    State.setRunning(true, "Proxy already running on ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
                     return@execute
                 }
                 State.addLog("proxy start requested", LogSeverity.INFO, "service")
                 registerNetworkCallback()
                 val logger = ProxyLogger { message -> State.addProxyLog(message) }
-                val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(), logger = logger)
+                val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(applicationContext), logger = logger)
                 proxyServer = server
                 try {
                     server.start()
                     val stats = server.stats()
                     State.updateStats(stats)
-                    State.setRunning(true, "Proxy running on ${ProxyRuntimeConfig.endpointSummary()}")
+                    State.setRunning(true, "Proxy running on ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
+                    State.markProxyStarted()
                     State.addLog("proxy started", LogSeverity.INFO, "service")
                     acquireWakeLock()
                     startWatchdog()
@@ -213,7 +215,7 @@ class ProxyForegroundService : Service() {
         }
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setContentTitle("TG WS Android")
-            .setContentText("Proxy running on ${ProxyRuntimeConfig.endpointSummary()}")
+            .setContentText("Proxy running on ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
             .setContentIntent(activityPendingIntent)
             .setOngoing(true)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
@@ -391,6 +393,8 @@ class ProxyForegroundService : Service() {
         private var persistenceConfigured = false
         private var crashHandlerInstalled = false
         private var runMarker: ProxyRunMarker? = null
+        @Volatile
+        private var appContext: Context? = null
 
         @Volatile
         var running: Boolean = false
@@ -408,6 +412,7 @@ class ProxyForegroundService : Service() {
         private var statsSnapshot: ProxyServerStats? = null
 
         fun initialize(context: Context, openedBy: String) {
+            appContext = context.applicationContext
             synchronized(initLock) {
                 if (!persistenceConfigured) {
                     val runtimeDir = File(context.filesDir, "runtime_logs")
@@ -508,17 +513,23 @@ class ProxyForegroundService : Service() {
 
         fun hasLogs(): Boolean = !logStore.isEmpty()
 
-        fun diagnosticReport(): String = DiagnosticReportFormatter.format(
-            DiagnosticReportFormatter.snapshot(
-                status = lastStatus,
-                endpoint = ProxyRuntimeConfig.endpointSummary(),
-                secret = ProxyRuntimeConfig.partialTelegramSecret(),
-                dcSummary = ProxyRuntimeConfig.dcSummary(),
-                batteryOptimization = batteryOptimizationStatus,
-                network = networkStatus,
-                stats = statsSnapshot,
-                logs = logStore.snapshot(),
-            ),
-        )
+        fun diagnosticReport(): String {
+            val context = appContext
+            val endpoint = context?.let { ProxyRuntimeConfig.endpointSummary(it) } ?: "unknown"
+            val secret = context?.let { ProxyRuntimeConfig.partialTelegramSecret(it) } ?: "unknown"
+            val dcSummary = context?.let { ProxyRuntimeConfig.dcSummary(it) } ?: "unknown"
+            return DiagnosticReportFormatter.format(
+                DiagnosticReportFormatter.snapshot(
+                    status = lastStatus,
+                    endpoint = endpoint,
+                    secret = secret,
+                    dcSummary = dcSummary,
+                    batteryOptimization = batteryOptimizationStatus,
+                    network = networkStatus,
+                    stats = statsSnapshot,
+                    logs = logStore.snapshot(),
+                ),
+            )
+        }
     }
 }
