@@ -107,6 +107,7 @@ class MainActivity : Activity() {
                 appendLine("Endpoint: ${ProxyRuntimeConfig.endpointSummary()}")
                 appendLine("Secret: ${ProxyRuntimeConfig.partialTelegramSecret()}")
                 appendLine("DCs: ${ProxyRuntimeConfig.dcSummary()}")
+                appendLine("CF fallback: ${ProxyRuntimeConfig.cfFallbackSummary()}")
                 appendLine("Hint: tap Start proxy before connecting Telegram.")
             }
             setPadding(0, 0, 0, smallPadding)
@@ -233,6 +234,11 @@ class MainActivity : Activity() {
         Toast.makeText(this, "Logs copied", Toast.LENGTH_SHORT).show()
     }
 
+    private fun copyDiagnosticsToClipboard(diagnosticsReport: String) {
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("TG WS Android logs", diagnosticsReport))
+    }
+
     private fun shareLogs() {
         if (!ProxyForegroundService.State.hasLogs()) {
             Toast.makeText(this, "No logs to share", Toast.LENGTH_SHORT).show()
@@ -244,15 +250,16 @@ class MainActivity : Activity() {
             return
         }
 
-        val logsUri = try {
-            DiagnosticsFileExporter(this).export(diagnosticsReport)
+        val export = try {
+            DiagnosticsFileExporter(this).exportWithFile(diagnosticsReport)
         } catch (error: Throwable) {
             ProxyForegroundService.State.addLog(
-                "Failed to export logs: ${error.message ?: error.javaClass.simpleName}",
+                "Failed to export logs: ${error.javaClass.simpleName}: ${error.message ?: "no message"}",
                 LogSeverity.ERROR,
                 "ui",
             )
-            Toast.makeText(this, "Failed to export logs", Toast.LENGTH_LONG).show()
+            copyDiagnosticsToClipboard(diagnosticsReport)
+            Toast.makeText(this, "Failed to share file; logs copied", Toast.LENGTH_LONG).show()
             return
         }
 
@@ -260,8 +267,8 @@ class MainActivity : Activity() {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, "TG WS Android diagnostics")
             putExtra(Intent.EXTRA_TEXT, "TG WS Android diagnostics log attached.")
-            putExtra(Intent.EXTRA_STREAM, logsUri)
-            clipData = ClipData.newUri(contentResolver, "TG WS Android diagnostics", logsUri)
+            putExtra(Intent.EXTRA_STREAM, export.uri)
+            clipData = ClipData.newUri(contentResolver, export.file.name, export.uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         try {

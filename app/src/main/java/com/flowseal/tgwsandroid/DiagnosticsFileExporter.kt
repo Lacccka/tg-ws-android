@@ -11,18 +11,23 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /** Writes diagnostics reports to app-private cache files that can be shared with a FileProvider. */
+data class ExportedDiagnostics(val file: File, val uri: Uri)
+
 class DiagnosticsFileExporter(
     private val context: Context,
     private val clock: Clock = Clock.systemDefaultZone(),
 ) {
-    fun export(diagnosticsText: String): Uri {
+    fun export(diagnosticsText: String): Uri = exportWithFile(diagnosticsText).uri
+
+    fun exportWithFile(diagnosticsText: String): ExportedDiagnostics {
         val sharedLogsDir = File(context.cacheDir, SHARED_LOGS_DIR)
         sharedLogsDir.mkdirs()
         cleanupOldExports(sharedLogsDir)
 
         val file = File(sharedLogsDir, generateFileName(LocalDateTime.now(clock)))
         writeDiagnosticsText(file, diagnosticsText)
-        return FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        return ExportedDiagnostics(file = file, uri = uri)
     }
 
     private fun cleanupOldExports(sharedLogsDir: File) {

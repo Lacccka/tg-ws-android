@@ -33,11 +33,12 @@ configuration for the first device smoke test:
 - Android 15 edge-to-edge safe areas: the native UI applies system bar and
   display cutout insets so the title, buttons, and logs are not hidden behind
   the status or navigation bars.
-- DC redirects: `2:149.154.167.220`, `3:149.154.167.220`, `4:149.154.167.220`
-- Android currently uses this minimal direct WebSocket redirect mapping instead
-  of the full upstream `DC_DEFAULT_IPS` list. DC3 is included because Telegram
-  may select DC3 on mobile networks; direct WebSocket attempts to other
-  official DC IPs may timeout and are intentionally not enabled yet.
+- DC redirects: `2:149.154.167.220`, `4:149.154.167.220`
+- CF fallback: enabled. Android currently uses this minimal direct WebSocket
+  redirect mapping instead of the full upstream `DC_DEFAULT_IPS` list.
+  DC1/DC3/DC5/DC203 use CF fallback when selected by Telegram. DC3 direct
+  mapping was removed because device logs showed repeated HTTP 302 direct-pool
+  warmup failures via `149.154.167.220`.
 - Buffer: `256 KiB`
 - Pool size setting: `4`; direct WebSocket pool/warmup is enabled for configured DC redirects and both media modes.
 - Cloudflare-proxy setting: enabled in config; bundled CF fallback remains available when direct routes fail.
@@ -67,22 +68,25 @@ Current runtime limitations:
   or a selected DC has no direct redirect configured. Remote CF domain refresh
   is not implemented yet; only bundled/default or configured domains are used.
 - CF worker fallback is not implemented yet.
-- Direct WebSocket pool/warmup is implemented for the fixed DC2/DC3/DC4 direct
+- Direct WebSocket pool/warmup is implemented for the fixed DC2/DC4 direct
   redirects and is expected to reduce cold-connect latency on Wi-Fi. Mobile
   networks may still timeout direct WebSocket routes; CF fallback handles those
   failures when enabled.
 - No fake TLS yet.
 - No autostart yet.
 - No settings editor or editable DC mapping UI yet. Direct runtime DC mapping
-  remains minimal: DC2/DC3/DC4 -> `149.154.167.220`; missing or failing direct
-  DCs can use CF fallback when enabled.
+  remains minimal: DC2/DC4 -> `149.154.167.220`; DC1/DC3/DC5/DC203 and other
+  missing or failing direct DCs can use CF fallback when enabled.
 - The UI is intentionally minimal: start, stop, Connect in Telegram, status,
   fixed config summary, compact battery/network diagnostics, proxy stats, and
   recent in-memory service logs.
 - Runtime logs are kept in a bounded in-memory diagnostics buffer. For bug
   reports, use **Clear logs** before reproducing a bug, reproduce the issue,
   then use **Share logs** and send the generated `.txt` diagnostics attachment.
-  **Copy logs** remains available for short logs and quick clipboard sharing.
+  FileProvider sharing uses `cacheDir/shared_logs` and requires no storage
+  permission; if file sharing fails, the app copies the same logs to the
+  clipboard and shows a fallback toast. Alternatively, use **Clear logs** ->
+  reproduce issue -> **Copy logs** for short logs and quick clipboard sharing.
   Screenshots are no longer required for normal log sharing. The diagnostics
   report includes status, endpoint, partial secret, DC summary, battery
   optimization status, network status, stats, and recent log lines.

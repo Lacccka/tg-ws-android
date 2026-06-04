@@ -1,6 +1,7 @@
 package com.flowseal.tgwsandroid.service
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,7 +17,6 @@ class ProxyRuntimeConfigTest {
         assertEquals(
             mapOf(
                 2 to "149.154.167.220",
-                3 to "149.154.167.220",
                 4 to "149.154.167.220",
             ),
             config.dcRedirects,
@@ -27,12 +27,12 @@ class ProxyRuntimeConfigTest {
     }
 
     @Test
-    fun dcRedirectsKeepDc2Dc3Dc4OnKnownWorkingTarget() {
+    fun dcRedirectsKeepOnlyDc2Dc4OnKnownWorkingTarget() {
         val redirects = ProxyRuntimeConfig.proxyServerConfig().dcRedirects
 
         assertEquals("149.154.167.220", redirects[2])
-        assertEquals("149.154.167.220", redirects[3])
         assertEquals("149.154.167.220", redirects[4])
+        assertFalse(redirects.containsKey(3))
         assertNotEquals("149.154.167.51", redirects[2])
         assertNotEquals("149.154.167.91", redirects[2])
         assertNotEquals("149.154.167.51", redirects[4])
@@ -45,6 +45,8 @@ class ProxyRuntimeConfigTest {
         assertEquals("4014...3da8", ProxyRuntimeConfig.partialSecret())
         assertEquals("dd4014e15dd34e4b05c42413eab68c3da8", ProxyRuntimeConfig.TELEGRAM_SECRET_HEX)
         assertEquals("dd40...3da8", ProxyRuntimeConfig.partialTelegramSecret())
+        assertEquals("2,4 via 149.154.167.220", ProxyRuntimeConfig.dcSummary())
+        assertEquals("enabled", ProxyRuntimeConfig.cfFallbackSummary())
     }
 
     @Test

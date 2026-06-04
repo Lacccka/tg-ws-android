@@ -3,6 +3,7 @@ package com.flowseal.tgwsandroid.proxy
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /** Blocking client byte stream used by [BridgeSession]. */
 interface ClientByteStream {
@@ -43,11 +44,13 @@ class BridgeSessionCounters {
     private val bytesDownAtomic = AtomicLong(0)
     private val packetsUpAtomic = AtomicLong(0)
     private val packetsDownAtomic = AtomicLong(0)
+    private val closeReasonAtomic = AtomicReference<String?>(null)
 
     val bytesUp: Long get() = bytesUpAtomic.get()
     val bytesDown: Long get() = bytesDownAtomic.get()
     val packetsUp: Long get() = packetsUpAtomic.get()
     val packetsDown: Long get() = packetsDownAtomic.get()
+    val closeReason: String? get() = closeReasonAtomic.get()
 
     fun recordUp(bytes: Int) {
         bytesUpAtomic.addAndGet(bytes.toLong())
@@ -58,7 +61,14 @@ class BridgeSessionCounters {
         bytesDownAtomic.addAndGet(bytes.toLong())
         packetsDownAtomic.incrementAndGet()
     }
+
+    fun finish(reason: String) {
+        closeReasonAtomic.compareAndSet(null, reason)
+    }
 }
+
+internal fun bridgeExceptionReason(error: Throwable): String =
+    "exception: ${error.javaClass.simpleName}: ${error.message ?: "no message"}"
 
 /**
  * Blocking/threaded client TCP <-> Telegram WebSocket bridge with MTProto re-encryption.
@@ -112,6 +122,7 @@ class BridgeSession(
             closeBothBestEffort()
             joinBestEffort(clientToWebSocket)
             joinBestEffort(webSocketToClient)
+            counters.finish("completed")
         }
     }
 
@@ -120,6 +131,7 @@ class BridgeSession(
             while (!closed.get()) {
                 val chunk = client.read(bufferSize)
                 if (chunk == null || chunk.isEmpty()) {
+                    counters.finish("client closed")
                     flushSplitterTail()
                     break
                 }
@@ -129,7 +141,8 @@ class BridgeSession(
                 val telegramCiphertext = cryptoContext.encryptToTelegram(plain)
                 sendTelegramCiphertext(telegramCiphertext)
             }
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            counters.finish(bridgeExceptionReason(error))
             // Match upstream bridge behavior: direction errors end the session.
         }
     }
@@ -137,13 +150,18 @@ class BridgeSession(
     private fun webSocketToClientLoop() {
         try {
             while (!closed.get()) {
-                val frame = webSocket.recv() ?: break
+                val frame = webSocket.recv()
+                if (frame == null) {
+                    counters.finish("websocket closed")
+                    break
+                }
                 counters.recordDown(frame.size)
                 val plain = cryptoContext.decryptFromTelegram(frame)
                 val clientCiphertext = cryptoContext.encryptToClient(plain)
                 client.write(clientCiphertext)
             }
-        } catch (_: Throwable) {
+        } catch (error: Throwable) {
+            counters.finish(bridgeExceptionReason(error))
             // Match upstream bridge behavior: direction errors end the session.
         }
     }

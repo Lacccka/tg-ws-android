@@ -57,6 +57,36 @@ class ProxyServerTest {
     }
 
     @Test
+    fun bridgeCompletionLogsSessionEndRouteAndByteCounters() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            connector = RecordingConnector(FakeWebSocketBinaryStream()),
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
+                counters.recordUp(13)
+                counters.recordDown(17)
+                counters.finish("completed")
+            },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { logs.any { it.contains("session ended") } }
+        proxy.stop()
+
+        val endLog = logs.first { it.contains("session ended") }
+        assertTrue(endLog.contains("fake-client session ended: DC2"))
+        assertTrue(endLog.contains("media=false"))
+        assertTrue(endLog.contains("route=direct-cold"))
+        assertTrue(endLog.contains("bytesUp=13"))
+        assertTrue(endLog.contains("bytesDown=17"))
+        assertTrue(endLog.contains("reason=completed"))
+    }
+
+    @Test
     fun invalidHandshakeClosesClientAndIncrementsBadCounter() {
         val invalid = handshakeVector("invalid_wrong_secret")
         val client = FakeTcpClientTransport(invalid.getString("handshake_hex").hexToBytes())
@@ -298,6 +328,34 @@ class ProxyServerTest {
     }
 
     @Test
+    fun missingDc3DirectRedirectWithCfEnabledAttemptsCfProxyDomain() {
+        val client = FakeTcpClientTransport(buildClientHandshake(dcIdx = 3, protoTag = RelayInit.PROTO_TAG_ABRIDGED))
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(cfProxyDomains = listOf("cf.example")),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("kws3.cf.example"), connector.targetHosts)
+        assertEquals(listOf("kws3.cf.example"), connector.domains)
+        assertEquals(1L, proxy.stats().cfProxyConnections)
+        assertTrue(logs.any { it.contains("DC3 has no direct redirect configured; trying CF fallback") })
+        assertTrue(logs.any { it.contains("DC3 -> trying CF proxy wss://kws3.cf.example/apiws") })
+        assertTrue(logs.any { it.contains("DC3 CF proxy connected via kws3.cf.example") })
+    }
+
+    @Test
     fun directWebSocketFailureFallsBackToCfProxyAndStartsBridge() {
         val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
         val server = FakeTcpServerTransport()
@@ -390,7 +448,7 @@ class ProxyServerTest {
         assertEquals(2L, proxy.stats().cfProxyErrors)
         assertEquals(1L, proxy.stats().connectionsBad)
         assertTrue(logs.any { it.contains("DC5 CF proxy failed via one.example: IOException: cf boom for kws5.one.example") })
-        assertTrue(logs.any { it.contains("DC5 CF proxy connect failed after all attempts") })
+        assertTrue(logs.any { it.contains("DC5 all CF proxy fallback attempts failed") })
     }
 
     @Test

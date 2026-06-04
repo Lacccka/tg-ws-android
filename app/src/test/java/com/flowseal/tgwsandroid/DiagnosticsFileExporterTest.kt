@@ -1,6 +1,7 @@
 package com.flowseal.tgwsandroid
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -31,4 +32,14 @@ class DiagnosticsFileExporterTest {
 
         assertEquals(diagnosticsText, file.readText(Charsets.UTF_8))
     }
+    @Test
+    fun fileProviderPathsUseUnqualifiedNameAndPathAttributes() {
+        val xml = java.io.File("app/src/main/res/xml/file_paths.xml").readText()
+
+        assertTrue(xml.contains("name=\"shared_logs\""))
+        assertTrue(xml.contains("path=\"shared_logs/\""))
+        assertFalse(xml.contains("android:name="))
+        assertFalse(xml.contains("android:path="))
+    }
+
 }

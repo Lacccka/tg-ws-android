@@ -14,7 +14,7 @@ object ProxyRuntimeConfig {
     const val CFPROXY_ENABLED = true
     const val VERBOSE = true
 
-    val dcIp: List<String> = listOf("2:149.154.167.220", "3:149.154.167.220", "4:149.154.167.220")
+    val dcIp: List<String> = listOf("2:149.154.167.220", "4:149.154.167.220")
 
     fun appConfig(): AppConfig =
         AppConfig(
@@ -36,6 +36,8 @@ object ProxyRuntimeConfig {
         val parts = entry.split(':', limit = 2)
         if (parts.size == 2) parts[0] else entry
     } + " via " + (dcIp.firstOrNull()?.substringAfter(':', "unknown") ?: "unknown")
+
+    fun cfFallbackSummary(): String = if (CFPROXY_ENABLED) "enabled" else "disabled"
 
     fun partialSecret(): String = "${SECRET_HEX.take(4)}...${SECRET_HEX.takeLast(4)}"
 

@@ -93,7 +93,7 @@ class RuntimeLogStoreTest {
                 status = "proxy running on 127.0.0.1:1443",
                 endpoint = "127.0.0.1:1443",
                 secret = "dd40...3da8",
-                dcSummary = "2,3,4 via 149.154.167.220",
+                dcSummary = "2,4 via 149.154.167.220",
                 batteryOptimization = "optimized",
                 network = "Wi-Fi",
                 stats = stats,

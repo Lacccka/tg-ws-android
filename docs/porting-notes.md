@@ -184,19 +184,19 @@ and the first successful domain through `ProxyLogger` so Android service recent
 logs can surface the path without proxy-core using Android logging APIs.
 
 The Android smoke/runtime config deliberately keeps a minimal direct WebSocket
-redirect mapping: DC2, DC3, and DC4 all route to `149.154.167.220`. DC3 was
-added because Telegram may select DC3 on mobile networks, while DC2/DC4 were
-already known to work with this target. The full upstream `DC_DEFAULT_IPS` list
-is not used yet because direct WebSocket connections to those official DC IPs
-may timeout. Unsupported or failing direct DCs can now route through bundled
-CF-proxy fallback when it is enabled; a settings UI for editable DC mapping
-remains unimplemented.
+redirect mapping: only DC2 and DC4 route to `149.154.167.220`. DC3 direct
+mapping was removed because device logs showed repeated HTTP 302 direct-pool
+warmup failures and `0 ready` refills through that target. The full upstream
+`DC_DEFAULT_IPS` list is not used yet because direct WebSocket connections to
+those official DC IPs may timeout. DC1/DC3/DC5/DC203 and other unsupported or
+failing direct DCs can now route through bundled CF-proxy fallback when it is
+enabled; a settings UI for editable DC mapping remains unimplemented.
 
 Still not ported in this milestone: CF remote refresh, CF worker fallback, TCP
 fallback, fake TLS, proxy_protocol, Android ForegroundService/UI, app lifecycle,
 autostart, settings UI, and production Cloudflare/Telegram integration testing.
-The direct ws_pool/warmup port is Android-independent and keeps the fixed
-DC2/DC3/DC4 mapping unchanged.
+The direct ws_pool/warmup port is Android-independent and follows the fixed
+DC2/DC4 runtime direct mapping.
 
 ## CF-proxy fallback status
 
@@ -211,8 +211,8 @@ Not implemented yet: remote CF domain refresh from GitHub, CF Worker fallback,
 TCP fallback, fake TLS, and settings UI. Direct WebSocket pool/warmup is now
 implemented and should reduce Wi-Fi cold-connect latency by reusing preconnected
 idle sockets. Runtime direct DC mapping remains intentionally minimal
-(DC2/DC3/DC4 -> `149.154.167.220`); direct timeouts on mobile networks still rely
-on CF fallback when enabled.
+(DC2/DC4 -> `149.154.167.220`); DC1/DC3/DC5/DC203 and direct timeouts on mobile
+networks still rely on CF fallback when enabled.
 
 ## Android service diagnostics and copyable logs
 
@@ -223,9 +223,12 @@ DEBUG/INFO/WARN/ERROR severities and records a source category such as service,
 proxy, network, battery, or ui. The app UI can clear the current log buffer, copy
 a full text diagnostics report to the clipboard for short logs, or share the
 report as a `.txt` file attachment through `Intent.ACTION_SEND` and an app-cache
-`FileProvider`. For clean bug reports, clear logs before reproducing, reproduce
-the issue, then share logs and send the generated `.txt` file; screenshots are no
-longer the normal path for log capture.
+`FileProvider`. FileProvider sharing writes to `cacheDir/shared_logs` and needs
+no storage permission; if the file share path fails, the app copies the same
+logs to the clipboard and shows `Failed to share file; logs copied`. For clean
+bug reports, use **Clear logs** -> reproduce issue -> **Share logs**, or use
+**Clear logs** -> reproduce issue -> **Copy logs** for clipboard-only sharing;
+screenshots are no longer the normal path for log capture.
 
 The foreground service logs lifecycle milestones, foreground notification start,
 proxy start/stop/failure events, WakeLock acquire/release, network callback

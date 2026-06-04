@@ -95,6 +95,11 @@ fun interface RawWebSocketConnector {
     fun connect(targetHost: String, domain: String, path: String): WebSocketBinaryStream
 }
 
+private data class WebSocketRoute(
+    val stream: WebSocketBinaryStream,
+    val type: String,
+)
+
 fun interface ProxyBridgeRunner {
     fun run(
         client: TcpClientTransport,
@@ -278,9 +283,9 @@ class ProxyServer(
             return
         }
 
-        val directWebSocket = getPooledOrConnectWebSocket(parsed, targetHost)
-        if (directWebSocket != null) {
-            runWebSocketRoute(client, directWebSocket, relayInit, cryptoContext, splitter, counters)
+        val directRoute = getPooledOrConnectWebSocket(parsed, targetHost)
+        if (directRoute != null) {
+            runWebSocketRoute(client, parsed, directRoute, relayInit, cryptoContext, splitter, counters)
             return
         }
 
@@ -295,18 +300,18 @@ class ProxyServer(
     private fun getPooledOrConnectWebSocket(
         parsed: MtprotoHandshake.Result,
         targetHost: String,
-    ): WebSocketBinaryStream? {
+    ): WebSocketRoute? {
         if (config.poolSize > 0) {
             val pooled = webSocketPool.get(parsed.dcId, parsed.isMedia, targetHost, wsDomains(parsed.dcId, parsed.isMedia))
             if (pooled != null) {
                 poolHits.incrementAndGet()
                 logger.log("DC${parsed.dcId} direct WS pool hit")
-                return pooled
+                return WebSocketRoute(pooled, "direct-pool")
             }
             poolMisses.incrementAndGet()
             logger.log("DC${parsed.dcId} direct WS pool miss")
         }
-        return connectWebSocket(parsed, targetHost)
+        return connectWebSocket(parsed, targetHost)?.let { WebSocketRoute(it, "direct-cold") }
     }
 
     private fun connectWebSocket(
@@ -360,7 +365,7 @@ class ProxyServer(
                 cfProxyConnections.incrementAndGet()
                 logger.log("DC${parsed.dcId} CF proxy connected via $domain")
                 cfProxyBalancer.updateDomainForDc(parsed.dcId, baseDomain)
-                runWebSocketRoute(client, webSocket, relayInit, cryptoContext, splitter, counters)
+                runWebSocketRoute(client, parsed, WebSocketRoute(webSocket, "cf"), relayInit, cryptoContext, splitter, counters)
                 return true
             } catch (error: Throwable) {
                 cfProxyErrors.incrementAndGet()
@@ -370,27 +375,43 @@ class ProxyServer(
         if (!attempted) {
             logger.log("DC${parsed.dcId} CF proxy has no bundled base domains configured")
         } else {
-            logger.log("DC${parsed.dcId} CF proxy connect failed after all attempts")
+            logger.log("DC${parsed.dcId} all CF proxy fallback attempts failed")
         }
         return false
     }
 
     private fun runWebSocketRoute(
         client: TcpClientTransport,
-        webSocket: WebSocketBinaryStream,
+        parsed: MtprotoHandshake.Result,
+        route: WebSocketRoute,
         relayInit: ByteArray,
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
         counters: BridgeSessionCounters,
     ) {
+        val startedAtNs = System.nanoTime()
+        var routeFailure: Throwable? = null
         try {
-            webSocket.send(relayInit)
-            bridgeRunner.run(client, webSocket, cryptoContext, splitter, counters)
+            route.stream.send(relayInit)
+            bridgeRunner.run(client, route.stream, cryptoContext, splitter, counters)
+        } catch (error: Throwable) {
+            routeFailure = error
+            counters.finish(bridgeExceptionReason(error))
+            throw error
         } finally {
             bytesUp.addAndGet(counters.bytesUp)
             bytesDown.addAndGet(counters.bytesDown)
+            val durationMs = (System.nanoTime() - startedAtNs) / 1_000_000
+            val reason = counters.closeReason
+                ?: routeFailure?.let { bridgeExceptionReason(it) }
+                ?: "completed"
+            logger.log(
+                "${client.remoteLabel} session ended: DC${parsed.dcId} media=${parsed.isMedia} " +
+                    "route=${route.type} durationMs=$durationMs bytesUp=${counters.bytesUp} " +
+                    "bytesDown=${counters.bytesDown} reason=$reason",
+            )
             try {
-                webSocket.close()
+                route.stream.close()
             } catch (_: Throwable) {
                 // Best-effort close.
             }
