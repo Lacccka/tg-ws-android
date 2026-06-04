@@ -1,8 +1,6 @@
 package com.flowseal.tgwsandroid.service
 
 import com.flowseal.tgwsandroid.config.AppConfig
-import com.flowseal.tgwsandroid.config.AppConfigStore
-import com.flowseal.tgwsandroid.config.FakeSharedPreferences
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -56,10 +54,7 @@ class ProxyRuntimeConfigTest {
 
     @Test
     fun telegramProxyUrlUsesPersistedSecret() {
-        val prefs = FakeSharedPreferences().also {
-            it.edit().putString("secret", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").apply()
-        }
-        val config = AppConfigStore.getConfig(prefs)
+        val config = AppConfig(secret = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
 
         val url = ProxyRuntimeConfig.telegramProxyUrl(config)
 

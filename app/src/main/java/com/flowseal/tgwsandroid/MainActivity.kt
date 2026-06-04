@@ -31,18 +31,14 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
-import com.flowseal.tgwsandroid.config.AppConfigStore
 import com.flowseal.tgwsandroid.service.LogSeverity
 import com.flowseal.tgwsandroid.service.ProxyForegroundService
 import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
 
 class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
+
     private lateinit var statusText: TextView
-<<<<<<< ours
-    private lateinit var configText: TextView
-    private lateinit var diagnosticsText: TextView
-=======
     private lateinit var networkText: TextView
     private lateinit var batteryText: TextView
     private lateinit var lastStatusText: TextView
@@ -51,18 +47,13 @@ class MainActivity : Activity() {
     private lateinit var dcText: TextView
     private lateinit var cfFallbackText: TextView
     private lateinit var statsText: TextView
->>>>>>> theirs
     private lateinit var logsText: TextView
+
     private lateinit var primaryControlButton: Button
     private lateinit var restartButton: Button
     private lateinit var resetSecretButton: Button
     private lateinit var connectTelegramButton: Button
     private lateinit var copyProxyLinkButton: Button
-<<<<<<< ours
-    private lateinit var resetSecretButton: Button
-    private lateinit var resetConfigButton: Button
-=======
->>>>>>> theirs
     private lateinit var clearLogsButton: Button
     private lateinit var copyDiagnosticsButton: Button
     private lateinit var shareDiagnosticsButton: Button
@@ -81,6 +72,7 @@ class MainActivity : Activity() {
         ProxyForegroundService.State.initialize(applicationContext, "activity")
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(buildContentView())
+
         primaryControlButton.setOnClickListener {
             if (ProxyForegroundService.State.running) {
                 startService(ProxyForegroundService.stopIntent(this))
@@ -89,45 +81,20 @@ class MainActivity : Activity() {
                 startProxyService()
             }
         }
-        restartButton.setOnClickListener {
-            restartProxyService()
-        }
-        resetSecretButton.setOnClickListener {
-            resetSecret()
-        }
-        connectTelegramButton.setOnClickListener {
-            openTelegramProxyLink()
-        }
+        restartButton.setOnClickListener { restartProxyService() }
+        resetSecretButton.setOnClickListener { resetSecret() }
+        connectTelegramButton.setOnClickListener { openTelegramProxyLink() }
         copyProxyLinkButton.setOnClickListener {
             copyProxyLink()
             Toast.makeText(this, "Proxy link copied", Toast.LENGTH_SHORT).show()
         }
-<<<<<<< ours
-        resetSecretButton.setOnClickListener {
-            AppConfigStore.resetSecret(this)
-            refreshState()
-            Toast.makeText(this, "Secret reset", Toast.LENGTH_SHORT).show()
-        }
-        resetConfigButton.setOnClickListener {
-            AppConfigStore.resetConfig(this)
-            refreshState()
-            Toast.makeText(this, "Config reset", Toast.LENGTH_SHORT).show()
-        }
-=======
->>>>>>> theirs
         clearLogsButton.setOnClickListener {
             ProxyForegroundService.State.clearLogs()
             refreshState()
         }
-        copyDiagnosticsButton.setOnClickListener {
-            copyDiagnostics()
-        }
-        shareDiagnosticsButton.setOnClickListener {
-            shareDiagnostics()
-        }
-        batterySettingsButton.setOnClickListener {
-            openBatterySettings()
-        }
+        copyDiagnosticsButton.setOnClickListener { copyDiagnostics() }
+        shareDiagnosticsButton.setOnClickListener { shareDiagnostics() }
+        batterySettingsButton.setOnClickListener { openBatterySettings() }
         refreshState()
     }
 
@@ -156,6 +123,12 @@ class MainActivity : Activity() {
         dcText = createValueText()
         cfFallbackText = createValueText()
         statsText = createValueText()
+        logsText = TextView(this).apply {
+            text = "No logs yet"
+            setTextColor(COLOR_TEXT_SECONDARY)
+            textSize = 13f
+            setTextIsSelectable(true)
+        }
 
         primaryControlButton = createButton("Start proxy")
         restartButton = createButton("Restart proxy")
@@ -167,24 +140,11 @@ class MainActivity : Activity() {
         shareDiagnosticsButton = createButton("Share diagnostics")
         batterySettingsButton = createButton("Battery settings")
 
-        logsText = TextView(this).apply {
-            text = "No logs yet"
-            setTextColor(COLOR_TEXT_SECONDARY)
-            textSize = 13f
-            setTextIsSelectable(true)
-        }
-
-<<<<<<< ours
-        configText = TextView(this).apply {
-            setPadding(0, 0, 0, smallPadding)
-        }
-=======
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
             setBackgroundColor(COLOR_BACKGROUND)
             applySystemInsetsPadding(basePadding = padding)
->>>>>>> theirs
 
             addView(TextView(this@MainActivity).apply {
                 text = "TG WS Android"
@@ -200,18 +160,18 @@ class MainActivity : Activity() {
             }, matchWrapParams())
 
             addView(createCard("Status") {
-                addView(createTextRow("Status", statusText, rowGap))
-                addView(createTextRow("Network", networkText, rowGap))
-                addView(createTextRow("Battery optimization", batteryText, rowGap))
-                addView(createTextRow("Last status", lastStatusText, rowGap))
+                addView(createTextRow("Status", statusText), matchWrapParams())
+                addView(createTextRow("Network", networkText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Battery optimization", batteryText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Last status", lastStatusText), matchWrapParams(topMargin = rowGap))
                 addView(batterySettingsButton, matchWrapParams(topMargin = smallPadding))
             }, cardParams(topMargin = smallPadding))
 
             addView(createCard("Connection") {
-                addView(createTextRow("Endpoint", endpointText, rowGap))
-                addView(createTextRow("Secret", secretText, rowGap))
-                addView(createTextRow("DC summary", dcText, rowGap))
-                addView(createTextRow("CF fallback", cfFallbackText, rowGap))
+                addView(createTextRow("Endpoint", endpointText), matchWrapParams())
+                addView(createTextRow("Secret", secretText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("DC summary", dcText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("CF fallback", cfFallbackText), matchWrapParams(topMargin = rowGap))
                 addView(connectTelegramButton, matchWrapParams(topMargin = smallPadding))
                 addView(copyProxyLinkButton, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
@@ -223,7 +183,7 @@ class MainActivity : Activity() {
             }, cardParams(topMargin = padding))
 
             addView(createCard("Diagnostics") {
-                addView(createTextRow("Stats", statsText, rowGap))
+                addView(createTextRow("Stats", statsText), matchWrapParams())
                 addView(createSectionTitle("Recent logs"), matchWrapParams(topMargin = smallPadding))
                 addView(logsText, matchWrapParams(topMargin = rowGap))
                 addView(shareDiagnosticsButton, matchWrapParams(topMargin = smallPadding))
@@ -232,30 +192,9 @@ class MainActivity : Activity() {
             }, cardParams(topMargin = padding, bottomMargin = padding))
         }
 
-<<<<<<< ours
-        startButton = Button(this).apply { text = "Start proxy" }
-        stopButton = Button(this).apply { text = "Stop proxy" }
-        connectTelegramButton = Button(this).apply { text = "Connect in Telegram" }
-        copyProxyLinkButton = Button(this).apply { text = "Copy proxy link" }
-        resetSecretButton = Button(this).apply { text = "Reset secret" }
-        resetConfigButton = Button(this).apply { text = "Reset config" }
-        clearLogsButton = Button(this).apply { text = "Clear logs" }
-        copyLogsButton = Button(this).apply { text = "Copy logs" }
-        shareLogsButton = Button(this).apply { text = "Share logs" }
-        batterySettingsButton = Button(this).apply { text = "Battery settings" }
-
-        logsText = TextView(this).apply {
-            text = "No logs yet"
-            setTextIsSelectable(true)
-            layoutParams = ViewGroup.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT,
-            )
-=======
         return ScrollView(this).apply {
             setBackgroundColor(COLOR_BACKGROUND)
             addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
->>>>>>> theirs
         }
     }
 
@@ -270,7 +209,7 @@ class MainActivity : Activity() {
             }
             val innerPadding = (16 * resources.displayMetrics.density).toInt()
             setPadding(innerPadding, innerPadding, innerPadding, innerPadding)
-            addView(createSectionTitle(title), matchWrapParams())
+            addView(createSectionTitle(title), matchWrapParams(bottomMargin = (8 * resources.displayMetrics.density).toInt()))
             body()
         }
 
@@ -286,41 +225,16 @@ class MainActivity : Activity() {
         isAllCaps = false
     }
 
-    private fun createTextRow(label: String, value: TextView, bottomPadding: Int): LinearLayout =
+    private fun createTextRow(label: String, value: TextView): LinearLayout =
         LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, bottomPadding, 0, 0)
             addView(TextView(this@MainActivity).apply {
-<<<<<<< ours
-                text = "TG WS Android"
-                textSize = 22f
-                setPadding(0, 0, 0, smallPadding)
-            }, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(statusText, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(configText, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(diagnosticsText, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(startButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(stopButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(connectTelegramButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(copyProxyLinkButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(resetSecretButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(resetConfigButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(batterySettingsButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(TextView(this@MainActivity).apply {
-                text = "Recent logs"
-                textSize = 16f
-                setPadding(0, smallPadding, 0, smallPadding)
-            })
-            addView(logsButtons, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
-            addView(logsScroll)
-=======
                 text = label
                 textSize = 12f
                 setTextColor(COLOR_TEXT_MUTED)
                 typeface = Typeface.DEFAULT_BOLD
             }, matchWrapParams())
             addView(value, matchWrapParams(topMargin = 2))
->>>>>>> theirs
         }
 
     private fun createValueText(textSize: Float = 14f, bold: Boolean = false): TextView = TextView(this).apply {
@@ -478,25 +392,12 @@ class MainActivity : Activity() {
         ProxyRuntimeConfig.initialize(applicationContext)
         refreshLocalDiagnostics()
         val running = ProxyForegroundService.State.running
-<<<<<<< ours
-        configText.text = buildString {
-            appendLine("Endpoint: ${ProxyRuntimeConfig.endpointSummary(this@MainActivity)}")
-            appendLine("Secret: ${ProxyRuntimeConfig.partialTelegramSecret(this@MainActivity)}")
-            appendLine("DCs: ${ProxyRuntimeConfig.dcSummary(this@MainActivity)}")
-            appendLine("CF fallback: ${ProxyRuntimeConfig.cfFallbackSummary(this@MainActivity)}")
-            appendLine("Hint: tap Start proxy before connecting Telegram.")
+        val failed = ProxyForegroundService.State.lastStatus.contains("failed", ignoreCase = true)
+        statusText.text = when {
+            running -> "Running"
+            failed -> "Error"
+            else -> "Stopped"
         }
-        statusText.text = "Status: ${ProxyForegroundService.State.lastStatus}"
-        diagnosticsText.text = buildString {
-            appendLine("Battery optimization: ${ProxyForegroundService.State.batteryOptimizationStatus}")
-            appendLine("Network: ${ProxyForegroundService.State.networkStatus}")
-            append("Stats: ${ProxyForegroundService.State.statsLine()}")
-        }
-        startButton.isEnabled = !running
-        stopButton.isEnabled = running
-=======
-        val statusLabel = if (running) "Running" else if (ProxyForegroundService.State.lastStatus.contains("failed", ignoreCase = true)) "Error" else "Stopped"
-        statusText.text = statusLabel
         networkText.text = ProxyForegroundService.State.networkStatus
         batteryText.text = ProxyForegroundService.State.batteryOptimizationStatus
         lastStatusText.text = ProxyForegroundService.State.lastStatus
@@ -507,7 +408,6 @@ class MainActivity : Activity() {
         statsText.text = ProxyForegroundService.State.statsLine()
         primaryControlButton.text = if (running) "Stop proxy" else "Start proxy"
         restartButton.isEnabled = true
->>>>>>> theirs
         connectTelegramButton.isEnabled = true
         logsText.text = ProxyForegroundService.State.recentLogs()
             .takeLast(MAX_VISIBLE_LOG_LINES)
