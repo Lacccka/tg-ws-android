@@ -25,7 +25,7 @@ data class ProxyServerConfig(
     val secretHex: String,
     val dcRedirects: Map<Int, String>,
     val bufferSizeBytes: Int = BridgeSession.DEFAULT_BUFFER_SIZE,
-    /** Reserved for a future WebSocket pool port; pooling is intentionally not implemented yet. */
+    /** Number of idle direct WebSocket connections to keep warm per DC/media route. */
     val poolSize: Int = 0,
     /** Enables bundled Cloudflare-proxy fallback when direct WebSocket routing is unavailable. */
     val cfproxyEnabled: Boolean = false,
@@ -66,6 +66,9 @@ data class ProxyServerStats(
     val cfProxyErrors: Long,
     val bytesUp: Long,
     val bytesDown: Long,
+    val poolHits: Long,
+    val poolMisses: Long,
+    val poolRefillErrors: Long,
 )
 
 fun interface ProxyLogger {
@@ -112,8 +115,8 @@ fun interface ProxyBridgeRunner {
  * `RawWebSocket.connect` usage, then delegates bridge work equivalent to
  * `proxy/bridge.py::bridge_ws_reencrypt`.
  *
- * Future work intentionally excluded from this milestone: WebSocket pooling,
- * CF remote refresh, CF worker/TCP fallback, fake TLS, proxy_protocol, Android
+ * Future work intentionally excluded from this milestone: CF remote refresh,
+ * CF worker/TCP fallback, fake TLS, proxy_protocol, Android
  * ForegroundService/UI/lifecycle, and autostart.
  */
 class ProxyServer(
@@ -139,6 +142,15 @@ class ProxyServer(
     private val cfProxyErrors = AtomicLong(0)
     private val bytesUp = AtomicLong(0)
     private val bytesDown = AtomicLong(0)
+    private val poolHits = AtomicLong(0)
+    private val poolMisses = AtomicLong(0)
+    private val poolRefillErrors = AtomicLong(0)
+    private val webSocketPool = WebSocketPool(
+        poolSize = config.poolSize,
+        connector = webSocketConnector,
+        logger = logger,
+        onRefillError = { poolRefillErrors.incrementAndGet() },
+    )
     private var acceptThread: Thread? = null
 
     val isRunning: Boolean get() = running.get()
@@ -146,6 +158,9 @@ class ProxyServer(
     fun start() {
         if (!running.compareAndSet(false, true)) return
         serverTransport.bind(config.host, config.port)
+        if (config.poolSize > 0) {
+            webSocketPool.warmup(config.dcRedirects, ::wsDomains)
+        }
         acceptThread = Thread(::acceptLoop, "ProxyServer-accept-${config.host}:${config.port}").also {
             it.isDaemon = true
             it.start()
@@ -163,6 +178,7 @@ class ProxyServer(
         for (client in activeClients.toList()) {
             closeClient(client)
         }
+        webSocketPool.closeAll()
         joinAcceptThreadBestEffort()
         logger.log("ProxyServer stopped")
     }
@@ -176,6 +192,9 @@ class ProxyServer(
         cfProxyErrors = cfProxyErrors.get(),
         bytesUp = bytesUp.get(),
         bytesDown = bytesDown.get(),
+        poolHits = poolHits.get(),
+        poolMisses = poolMisses.get(),
+        poolRefillErrors = poolRefillErrors.get(),
     )
 
     private fun acceptLoop() {
@@ -259,7 +278,7 @@ class ProxyServer(
             return
         }
 
-        val directWebSocket = connectWebSocket(parsed, targetHost)
+        val directWebSocket = getPooledOrConnectWebSocket(parsed, targetHost)
         if (directWebSocket != null) {
             runWebSocketRoute(client, directWebSocket, relayInit, cryptoContext, splitter, counters)
             return
@@ -270,6 +289,24 @@ class ProxyServer(
         }
 
         logger.log("DC${parsed.dcId} no route available after direct WebSocket attempts")
+    }
+
+
+    private fun getPooledOrConnectWebSocket(
+        parsed: MtprotoHandshake.Result,
+        targetHost: String,
+    ): WebSocketBinaryStream? {
+        if (config.poolSize > 0) {
+            val pooled = webSocketPool.get(parsed.dcId, parsed.isMedia, targetHost, wsDomains(parsed.dcId, parsed.isMedia))
+            if (pooled != null) {
+                poolHits.incrementAndGet()
+                logger.log("DC${parsed.dcId} direct WS pool hit")
+                return pooled
+            }
+            poolMisses.incrementAndGet()
+            logger.log("DC${parsed.dcId} direct WS pool miss")
+        }
+        return connectWebSocket(parsed, targetHost)
     }
 
     private fun connectWebSocket(

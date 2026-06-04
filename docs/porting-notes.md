@@ -50,10 +50,11 @@ binary frame, and invokes `BridgeSession`. If direct WebSocket connection fails,
 or if the parsed DC has no direct redirect configured, `ProxyServer` can use the
 bundled CF-proxy fallback path (`kws{dc}.{baseDomain}` over `/apiws`) with
 Android-independent default-domain decoding and per-DC active-domain memory.
-Remote CF domain refresh, CF worker fallback, TCP fallback, ws_pool/connection
-pools and warmup, fake TLS, proxy_protocol, foreground service integration, UI,
-app lifecycle, autostart, and richer Telegram routing remain intentionally
-unimplemented until their own parity or integration test scopes exist. Real
+Direct WebSocket ws_pool-style pooling/warmup is ported for configured direct DC
+redirects. Remote CF domain refresh, CF worker fallback, TCP fallback, fake TLS,
+proxy_protocol, foreground service integration, UI, app lifecycle, autostart, and
+richer Telegram routing remain intentionally unimplemented until their own parity
+or integration test scopes exist. Real
 RawWebSocket integration against Telegram/Cloudflare has not been tested yet.
 
 ## Parity-test workflow
@@ -121,7 +122,8 @@ client frames, supports sendBatch, receives binary and text payload frames,
 responds to ping with pong, ignores pong, acknowledges close frames, and closes
 best-effort like upstream. Unit tests use fake in-memory transports only; real
 Telegram/Cloudflare integration is not tested yet. Minimal TCP proxy server integration now exists in `ProxyServer`; normal bundled
-CF-proxy fallback is ported, while connection pool/ws_pool, foreground services,
+CF-proxy fallback is ported, and direct WebSocket pool/warmup now preconnects
+configured direct DCs for both normal and media routes. Foreground services,
 Android UI, CF remote refresh, CF worker/TCP fallback, fake TLS, proxy_protocol,
 app lifecycle, autostart, and richer Telegram-specific routing are intentionally
 left for separate milestones.
@@ -190,10 +192,11 @@ may timeout. Unsupported or failing direct DCs can now route through bundled
 CF-proxy fallback when it is enabled; a settings UI for editable DC mapping
 remains unimplemented.
 
-Still not ported in this milestone: ws_pool/connection pooling/warmup, CF remote
-refresh, CF worker fallback, TCP fallback, fake TLS, proxy_protocol, Android
-ForegroundService/UI, app lifecycle, autostart, and production
-Cloudflare/Telegram integration testing.
+Still not ported in this milestone: CF remote refresh, CF worker fallback, TCP
+fallback, fake TLS, proxy_protocol, Android ForegroundService/UI, app lifecycle,
+autostart, settings UI, and production Cloudflare/Telegram integration testing.
+The direct ws_pool/warmup port is Android-independent and keeps the fixed
+DC2/DC3/DC4 mapping unchanged.
 
 ## CF-proxy fallback status
 
@@ -205,8 +208,8 @@ same re-encryption bridge state. The bundled domain list mirrors upstream
 `config.py` defaults and is deterministic for JVM tests.
 
 Not implemented yet: remote CF domain refresh from GitHub, CF Worker fallback,
-TCP fallback, fake TLS, settings UI, and ws_pool/warmup. Because ws_pool/warmup
-is still absent, first-connection latency and ping can still be worse than the
-PC upstream app. Runtime direct DC mapping remains intentionally minimal
-(DC2/DC3/DC4 -> `149.154.167.220`), so missing or failing direct DCs rely on CF
-fallback when enabled.
+TCP fallback, fake TLS, and settings UI. Direct WebSocket pool/warmup is now
+implemented and should reduce Wi-Fi cold-connect latency by reusing preconnected
+idle sockets. Runtime direct DC mapping remains intentionally minimal
+(DC2/DC3/DC4 -> `149.154.167.220`); direct timeouts on mobile networks still rely
+on CF fallback when enabled.

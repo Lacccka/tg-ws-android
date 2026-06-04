@@ -394,6 +394,188 @@ class ProxyServerTest {
     }
 
     @Test
+    fun websocketPoolWarmupCreatesEntriesForConfiguredDcsAndMediaModes() {
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = MultiSocketRecordingConnector()
+        val pool = WebSocketPool(
+            poolSize = 1,
+            connector = connector,
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        pool.warmup(
+            mapOf(2 to "203.0.113.2", 3 to "203.0.113.3", 4 to "203.0.113.4"),
+            ::wsDomains,
+        )
+        waitUntil { connector.domains.size == 6 }
+
+        for (dc in listOf(2, 3, 4)) {
+            waitUntil { pool.readyCount(dc, isMedia = false) == 1 && pool.readyCount(dc, isMedia = true) == 1 }
+        }
+        assertTrue(logs.any { it.contains("WS pool warmup started for 3 DC(s)") })
+        pool.closeAll()
+    }
+
+    @Test
+    fun pooledWebSocketHitRunsBridgeWithoutColdDirectConnect() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val events = CopyOnWriteArrayList<String>()
+        val warmSocket = FakeWebSocketBinaryStream(events)
+        val attempts = AtomicInteger(0)
+        val connector = RawWebSocketConnector { _, domain, _ ->
+            val attempt = attempts.incrementAndGet()
+            if (attempt == 1 && domain == "kws2.web.telegram.org") warmSocket else throw IOException("cold direct blocked")
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
+            runner = ProxyBridgeRunner { _, webSocket, _, _, _ ->
+                assertTrue(webSocket === warmSocket)
+                events.add("bridge")
+            },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { logs.any { it.contains("WS pool refilled DC2: 1 ready") } }
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(1L, proxy.stats().poolHits)
+        assertEquals(0L, proxy.stats().poolMisses)
+        assertTrue(logs.any { it.contains("DC2 direct WS pool hit") })
+        assertTrue(events.contains("send"))
+    }
+
+    @Test
+    fun poolMissFallsBackToColdDirectConnection() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val events = CopyOnWriteArrayList<String>()
+        val attempts = AtomicInteger(0)
+        val coldSocket = FakeWebSocketBinaryStream(events)
+        val connector = RawWebSocketConnector { _, domain, _ ->
+            val attempt = attempts.incrementAndGet()
+            if (attempt <= 4) throw IOException("warmup failed $attempt")
+            if (!Thread.currentThread().name.startsWith("ProxyServer-client")) throw IOException("refill blocked $attempt")
+            if (domain == "kws2.web.telegram.org") coldSocket else throw IOException("unexpected $domain")
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
+            runner = ProxyBridgeRunner { _, webSocket, _, _, _ ->
+                assertTrue(webSocket === coldSocket)
+                events.add("bridge")
+            },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { logs.count { it.contains("direct WS pool refill failed") } >= 4 }
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(0L, proxy.stats().poolHits)
+        assertEquals(1L, proxy.stats().poolMisses)
+        assertTrue(logs.any { it.contains("DC2 direct WS pool miss") })
+        assertTrue(logs.any { it.contains("DC2 WebSocket connected via kws2.web.telegram.org") })
+    }
+
+    @Test
+    fun expiredPoolEntriesAreClosedAndNotReused() {
+        var now = 1_000L
+        val socket = FakeWebSocketBinaryStream()
+        val connector = MultiSocketRecordingConnector(socket)
+        val pool = WebSocketPool(
+            poolSize = 1,
+            connector = connector,
+            maxAgeMs = 10,
+            nowMs = { now },
+        )
+
+        pool.warmup(mapOf(2 to "203.0.113.2"), ::wsDomains)
+        waitUntil { pool.readyCount(2, isMedia = false) == 1 }
+        now += 11
+        val pooled = pool.get(2, isMedia = false, "203.0.113.2", wsDomains(2, false))
+
+        assertEquals(null, pooled)
+        assertTrue(socket.closed)
+        pool.closeAll()
+    }
+
+    @Test
+    fun failedPoolRefillDoesNotCrashAndLogsFailure() {
+        val logs = CopyOnWriteArrayList<String>()
+        val pool = WebSocketPool(
+            poolSize = 1,
+            connector = RawWebSocketConnector { _, domain, _ -> throw IOException("refill boom for $domain") },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        pool.warmup(mapOf(2 to "203.0.113.2"), ::wsDomains)
+        waitUntil { logs.any { it.contains("DC2 direct WS pool refill failed via kws2.web.telegram.org") } }
+
+        assertTrue(logs.any { it.contains("IOException: refill boom for kws2.web.telegram.org") })
+        pool.closeAll()
+    }
+
+    @Test
+    fun stopClosesIdlePooledSockets() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val sockets = CopyOnWriteArrayList<FakeWebSocketBinaryStream>()
+        val connector = RawWebSocketConnector { _, _, _ ->
+            FakeWebSocketBinaryStream().also { sockets.add(it) }
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(poolSize = 1, dcRedirects = mapOf(2 to "203.0.113.2")),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { logs.count { it.contains("WS pool refilled DC2") } >= 2 }
+        proxy.stop()
+
+        waitUntil { sockets.all { it.closed } }
+    }
+
+    @Test
+    fun directPoolAndColdDirectFailureStillRunsCfFallback() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = FailingDirectThenCfConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(poolSize = 1, cfProxyDomains = listOf("cf.example"), dcRedirects = mapOf(2 to "203.0.113.2")),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { logs.any { it.contains("direct WS pool refill failed via kws2.web.telegram.org") } }
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertTrue(connector.domains.contains("kws2.cf.example"))
+        assertEquals(1L, proxy.stats().cfProxyConnections)
+        assertTrue(logs.any { it.contains("DC2 direct WS pool miss") })
+        assertTrue(logs.any { it.contains("DC2 -> trying CF proxy wss://kws2.cf.example/apiws") })
+    }
+
+    @Test
     fun bridgeRunnerReceivesMsgSplitterAndCryptoContext() {
         val client = FakeTcpClientTransport(handshakeVector("intermediate_dc4").getString("handshake_hex").hexToBytes())
         val server = FakeTcpServerTransport()
@@ -449,7 +631,7 @@ class ProxyServerTest {
             secretHex = "0123456789abcdeffedcba9876543210",
             dcRedirects = mapOf(2 to "203.0.113.2", 4 to "203.0.113.4"),
             bufferSizeBytes = 4096,
-            poolSize = 4,
+            poolSize = 0,
             cfproxyEnabled = true,
         )
 
@@ -627,6 +809,26 @@ class ProxyServerTest {
             domains.add(domain)
             if (domain.endsWith(".web.telegram.org")) throw IOException("direct down for $domain")
             return webSocket
+        }
+    }
+
+    private class MultiSocketRecordingConnector(
+        private val fixedSocket: FakeWebSocketBinaryStream? = null,
+    ) : RawWebSocketConnector {
+        val targetHosts = CopyOnWriteArrayList<String>()
+        val domains = CopyOnWriteArrayList<String>()
+        val paths = CopyOnWriteArrayList<String>()
+        val sockets = CopyOnWriteArrayList<FakeWebSocketBinaryStream>()
+
+        override fun connect(
+            targetHost: String,
+            domain: String,
+            path: String,
+        ): WebSocketBinaryStream {
+            targetHosts.add(targetHost)
+            domains.add(domain)
+            paths.add(path)
+            return fixedSocket ?: FakeWebSocketBinaryStream().also { sockets.add(it) }
         }
     }
 

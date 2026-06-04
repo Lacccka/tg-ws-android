@@ -39,8 +39,8 @@ configuration for the first device smoke test:
   may select DC3 on mobile networks; direct WebSocket attempts to other
   official DC IPs may timeout and are intentionally not enabled yet.
 - Buffer: `256 KiB`
-- Pool size setting: `4` (reserved; pooling is not implemented yet)
-- Cloudflare-proxy setting: enabled in config (fallback is not implemented yet)
+- Pool size setting: `4`; direct WebSocket pool/warmup is enabled for configured DC redirects and both media modes.
+- Cloudflare-proxy setting: enabled in config; bundled CF fallback remains available when direct routes fail.
 
 Smoke-test steps:
 
@@ -67,8 +67,10 @@ Current runtime limitations:
   or a selected DC has no direct redirect configured. Remote CF domain refresh
   is not implemented yet; only bundled/default or configured domains are used.
 - CF worker fallback is not implemented yet.
-- No ws_pool / connection pooling or warmup yet, so initial latency and ping may
-  still be worse than the PC upstream app.
+- Direct WebSocket pool/warmup is implemented for the fixed DC2/DC3/DC4 direct
+  redirects and is expected to reduce cold-connect latency on Wi-Fi. Mobile
+  networks may still timeout direct WebSocket routes; CF fallback handles those
+  failures when enabled.
 - No fake TLS yet.
 - No autostart yet.
 - No settings editor or editable DC mapping UI yet. Direct runtime DC mapping
