@@ -28,6 +28,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import com.flowseal.tgwsandroid.service.LogSeverity
 import com.flowseal.tgwsandroid.service.ProxyForegroundService
 import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
 
@@ -234,17 +235,39 @@ class MainActivity : Activity() {
 
     private fun shareLogs() {
         if (!ProxyForegroundService.State.hasLogs()) {
-            Toast.makeText(this, "No logs to copy", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "No logs to share", Toast.LENGTH_SHORT).show()
             return
         }
+        val diagnosticsReport = ProxyForegroundService.State.diagnosticReport()
+        if (diagnosticsReport.isBlank()) {
+            Toast.makeText(this, "No logs to share", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val logsUri = try {
+            DiagnosticsFileExporter(this).export(diagnosticsReport)
+        } catch (error: Throwable) {
+            ProxyForegroundService.State.addLog(
+                "Failed to export logs: ${error.message ?: error.javaClass.simpleName}",
+                LogSeverity.ERROR,
+                "ui",
+            )
+            Toast.makeText(this, "Failed to export logs", Toast.LENGTH_LONG).show()
+            return
+        }
+
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "TG WS Android logs")
-            putExtra(Intent.EXTRA_TEXT, ProxyForegroundService.State.diagnosticReport())
+            putExtra(Intent.EXTRA_SUBJECT, "TG WS Android diagnostics")
+            putExtra(Intent.EXTRA_TEXT, "TG WS Android diagnostics log attached.")
+            putExtra(Intent.EXTRA_STREAM, logsUri)
+            clipData = ClipData.newUri(contentResolver, "TG WS Android diagnostics", logsUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         try {
             startActivity(Intent.createChooser(intent, "Share TG WS Android logs"))
         } catch (_: ActivityNotFoundException) {
+            ProxyForegroundService.State.addLog("No app can share logs", LogSeverity.WARN, "ui")
             Toast.makeText(this, "No app can share logs", Toast.LENGTH_LONG).show()
         }
     }

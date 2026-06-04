@@ -221,10 +221,11 @@ store separate from the Android-independent proxy core. `ProxyLogger` still only
 emits strings from proxy-core; the service classifies those strings into simple
 DEBUG/INFO/WARN/ERROR severities and records a source category such as service,
 proxy, network, battery, or ui. The app UI can clear the current log buffer, copy
-a full text diagnostics report to the clipboard, or share the same text through
-`Intent.ACTION_SEND`. For clean bug reports, clear logs before reproducing, then
-copy/share logs after reproducing; screenshots are no longer the normal path for
-log capture.
+a full text diagnostics report to the clipboard for short logs, or share the
+report as a `.txt` file attachment through `Intent.ACTION_SEND` and an app-cache
+`FileProvider`. For clean bug reports, clear logs before reproducing, reproduce
+the issue, then share logs and send the generated `.txt` file; screenshots are no
+longer the normal path for log capture.
 
 The foreground service logs lifecycle milestones, foreground notification start,
 proxy start/stop/failure events, WakeLock acquire/release, network callback

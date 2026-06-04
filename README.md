@@ -79,10 +79,11 @@ Current runtime limitations:
 - The UI is intentionally minimal: start, stop, Connect in Telegram, status,
   fixed config summary, compact battery/network diagnostics, proxy stats, and
   recent in-memory service logs.
-- Runtime logs are kept in a bounded in-memory diagnostics buffer. Use
-  **Clear logs** before reproducing a bug, then use **Copy logs** or
-  **Share logs** after reproducing it and paste the text into ChatGPT or an
-  issue. Screenshots are no longer required for normal log sharing. The copied
+- Runtime logs are kept in a bounded in-memory diagnostics buffer. For bug
+  reports, use **Clear logs** before reproducing a bug, reproduce the issue,
+  then use **Share logs** and send the generated `.txt` diagnostics attachment.
+  **Copy logs** remains available for short logs and quick clipboard sharing.
+  Screenshots are no longer required for normal log sharing. The diagnostics
   report includes status, endpoint, partial secret, DC summary, battery
   optimization status, network status, stats, and recent log lines.
 - Android and MIUI/Xiaomi battery or background-network restrictions may stop or
