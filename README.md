@@ -77,7 +77,28 @@ Current runtime limitations:
   remains minimal: DC2/DC3/DC4 -> `149.154.167.220`; missing or failing direct
   DCs can use CF fallback when enabled.
 - The UI is intentionally minimal: start, stop, Connect in Telegram, status,
-  fixed config summary, and recent in-memory service logs only.
+  fixed config summary, compact battery/network diagnostics, proxy stats, and
+  recent in-memory service logs.
+- Runtime logs are kept in a bounded in-memory diagnostics buffer. Use
+  **Clear logs** before reproducing a bug, then use **Copy logs** or
+  **Share logs** after reproducing it and paste the text into ChatGPT or an
+  issue. Screenshots are no longer required for normal log sharing. The copied
+  report includes status, endpoint, partial secret, DC summary, battery
+  optimization status, network status, stats, and recent log lines.
+- Android and MIUI/Xiaomi battery or background-network restrictions may stop or
+  throttle long-running local proxy services after several minutes. Keep the
+  foreground notification visible while the proxy runs and allow unrestricted
+  battery/background activity for this app where the device exposes that option
+  (MIUI may call it **No restrictions**). The **Battery settings** button opens
+  the platform battery optimization flow or falls back to the system list.
+- While the proxy is running, the service registers network callbacks and logs
+  available/lost/capability changes without automatically restarting the proxy.
+  A lightweight watchdog emits a compact stats/battery/network line about every
+  45 seconds.
+- The app holds a non-reference-counted partial WakeLock only while the proxy is
+  running, and releases it on proxy stop or service destruction. This helps CPU
+  continuity but does not keep the screen on and does not bypass OEM background
+  policy.
 - The local endpoint uses `127.0.0.1`, which works only inside the same Android
   device where the proxy app is running; links or settings using this server are
   not useful when shared with other devices.

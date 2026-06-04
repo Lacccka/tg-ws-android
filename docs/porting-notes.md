@@ -213,3 +213,35 @@ implemented and should reduce Wi-Fi cold-connect latency by reusing preconnected
 idle sockets. Runtime direct DC mapping remains intentionally minimal
 (DC2/DC3/DC4 -> `149.154.167.220`); direct timeouts on mobile networks still rely
 on CF fallback when enabled.
+
+## Android service diagnostics and copyable logs
+
+The Android service layer now has a bounded, thread-safe in-memory runtime log
+store separate from the Android-independent proxy core. `ProxyLogger` still only
+emits strings from proxy-core; the service classifies those strings into simple
+DEBUG/INFO/WARN/ERROR severities and records a source category such as service,
+proxy, network, battery, or ui. The app UI can clear the current log buffer, copy
+a full text diagnostics report to the clipboard, or share the same text through
+`Intent.ACTION_SEND`. For clean bug reports, clear logs before reproducing, then
+copy/share logs after reproducing; screenshots are no longer the normal path for
+log capture.
+
+The foreground service logs lifecycle milestones, foreground notification start,
+proxy start/stop/failure events, WakeLock acquire/release, network callback
+registration and network changes, and battery optimization status. Separators are
+added when Start proxy or Stop proxy is pressed so multiple test runs remain
+easy to distinguish without automatically clearing logs. A watchdog runs about
+every 45 seconds while the proxy is active and records a compact snapshot of
+running status, active/total connections, WebSocket errors, CF connections/errors,
+pool hits/misses/refill errors, network status, and battery optimization status.
+
+Android and OEM firmware, especially MIUI/Xiaomi, may restrict long-running
+foreground proxy services or background network activity. Users should keep the
+foreground notification visible and manually allow unrestricted battery/background
+activity (MIUI may label this **No restrictions**) when investigating
+10–30-minute disconnects. The app exposes battery optimization status and a
+Battery settings action; it also holds a partial WakeLock only while the proxy is
+running to reduce CPU sleep interruptions, but this is not a substitute for OEM
+background policy allow-listing. Network changes are diagnostics-only in this
+milestone; the service logs them but does not restart `ProxyServer` or change the
+fixed DC/IP mapping.

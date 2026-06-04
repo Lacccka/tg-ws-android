@@ -8,11 +8,15 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.PowerManager
+import android.provider.Settings
 import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.Button
@@ -30,10 +34,15 @@ import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
 class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var statusText: TextView
+    private lateinit var diagnosticsText: TextView
     private lateinit var logsText: TextView
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
     private lateinit var connectTelegramButton: Button
+    private lateinit var clearLogsButton: Button
+    private lateinit var copyLogsButton: Button
+    private lateinit var shareLogsButton: Button
+    private lateinit var batterySettingsButton: Button
 
     private val refreshRunnable = object : Runnable {
         override fun run() {
@@ -55,6 +64,19 @@ class MainActivity : Activity() {
         }
         connectTelegramButton.setOnClickListener {
             openTelegramProxyLink()
+        }
+        clearLogsButton.setOnClickListener {
+            ProxyForegroundService.State.clearLogs()
+            refreshState()
+        }
+        copyLogsButton.setOnClickListener {
+            copyLogs()
+        }
+        shareLogsButton.setOnClickListener {
+            shareLogs()
+        }
+        batterySettingsButton.setOnClickListener {
+            openBatterySettings()
         }
         refreshState()
     }
@@ -83,15 +105,23 @@ class MainActivity : Activity() {
             text = buildString {
                 appendLine("Endpoint: ${ProxyRuntimeConfig.endpointSummary()}")
                 appendLine("Secret: ${ProxyRuntimeConfig.partialTelegramSecret()}")
-                appendLine("DCs: 2,3,4 via 149.154.167.220")
+                appendLine("DCs: ${ProxyRuntimeConfig.dcSummary()}")
                 appendLine("Hint: tap Start proxy before connecting Telegram.")
             }
+            setPadding(0, 0, 0, smallPadding)
+        }
+
+        diagnosticsText = TextView(this).apply {
             setPadding(0, 0, 0, smallPadding)
         }
 
         startButton = Button(this).apply { text = "Start proxy" }
         stopButton = Button(this).apply { text = "Stop proxy" }
         connectTelegramButton = Button(this).apply { text = "Connect in Telegram" }
+        clearLogsButton = Button(this).apply { text = "Clear logs" }
+        copyLogsButton = Button(this).apply { text = "Copy logs" }
+        shareLogsButton = Button(this).apply { text = "Share logs" }
+        batterySettingsButton = Button(this).apply { text = "Battery settings" }
 
         logsText = TextView(this).apply {
             text = "No logs yet"
@@ -111,6 +141,13 @@ class MainActivity : Activity() {
             )
         }
 
+        val logsButtons = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(clearLogsButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(copyLogsButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(shareLogsButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -122,14 +159,17 @@ class MainActivity : Activity() {
             }, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(statusText, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(configText, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            addView(diagnosticsText, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(startButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(stopButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(connectTelegramButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
+            addView(batterySettingsButton, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(TextView(this@MainActivity).apply {
                 text = "Recent logs"
                 textSize = 16f
                 setPadding(0, smallPadding, 0, smallPadding)
             })
+            addView(logsButtons, LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT)
             addView(logsScroll)
         }
     }
@@ -182,13 +222,87 @@ class MainActivity : Activity() {
         clipboard.setPrimaryClip(ClipData.newPlainText("Telegram proxy link", ProxyRuntimeConfig.telegramProxyUrl()))
     }
 
+    private fun copyLogs() {
+        if (!ProxyForegroundService.State.hasLogs()) {
+            Toast.makeText(this, "No logs to copy", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("TG WS Android logs", ProxyForegroundService.State.diagnosticReport()))
+        Toast.makeText(this, "Logs copied", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun shareLogs() {
+        if (!ProxyForegroundService.State.hasLogs()) {
+            Toast.makeText(this, "No logs to copy", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_SUBJECT, "TG WS Android logs")
+            putExtra(Intent.EXTRA_TEXT, ProxyForegroundService.State.diagnosticReport())
+        }
+        try {
+            startActivity(Intent.createChooser(intent, "Share TG WS Android logs"))
+        } catch (_: ActivityNotFoundException) {
+            Toast.makeText(this, "No app can share logs", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun openBatterySettings() {
+        if (detectBatteryOptimizationStatus() == "optimized") {
+            val packageUri = Uri.parse("package:$packageName")
+            val requestIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, packageUri)
+            if (tryStartActivity(requestIntent)) return
+        }
+
+        val settingsIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        if (tryStartActivity(settingsIntent)) return
+
+        Toast.makeText(this, "Battery settings cannot be opened", Toast.LENGTH_LONG).show()
+    }
+
     private fun refreshState() {
+        refreshLocalDiagnostics()
         val running = ProxyForegroundService.State.running
         statusText.text = "Status: ${ProxyForegroundService.State.lastStatus}"
+        diagnosticsText.text = buildString {
+            appendLine("Battery optimization: ${ProxyForegroundService.State.batteryOptimizationStatus}")
+            appendLine("Network: ${ProxyForegroundService.State.networkStatus}")
+            append("Stats: ${ProxyForegroundService.State.statsLine()}")
+        }
         startButton.isEnabled = !running
         stopButton.isEnabled = running
         connectTelegramButton.isEnabled = true
         logsText.text = ProxyForegroundService.State.recentLogs().takeIf { it.isNotEmpty() }?.joinToString("\n") ?: "No logs yet"
+    }
+
+    private fun refreshLocalDiagnostics() {
+        ProxyForegroundService.State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
+        if (!ProxyForegroundService.State.running) {
+            ProxyForegroundService.State.setNetworkStatus(detectNetworkStatus())
+        }
+    }
+
+    private fun detectBatteryOptimizationStatus(): String = try {
+        val powerManager = getSystemService(PowerManager::class.java)
+        if (powerManager.isIgnoringBatteryOptimizations(packageName)) "unrestricted" else "optimized"
+    } catch (_: Throwable) {
+        "unknown"
+    }
+
+    private fun detectNetworkStatus(): String = try {
+        val connectivityManager = getSystemService(ConnectivityManager::class.java)
+        val capabilities = connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork) ?: return "none"
+        when {
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+            else -> "unknown"
+        }
+    } catch (_: Throwable) {
+        "unknown"
     }
 
     private fun requestNotificationPermissionIfNeeded() {

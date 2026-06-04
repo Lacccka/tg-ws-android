@@ -32,6 +32,11 @@ object ProxyRuntimeConfig {
 
     fun endpointSummary(): String = "$HOST:$PORT"
 
+    fun dcSummary(): String = dcIp.joinToString(",") { entry ->
+        val parts = entry.split(':', limit = 2)
+        if (parts.size == 2) parts[0] else entry
+    } + " via " + (dcIp.firstOrNull()?.substringAfter(':', "unknown") ?: "unknown")
+
     fun partialSecret(): String = "${SECRET_HEX.take(4)}...${SECRET_HEX.takeLast(4)}"
 
     fun partialTelegramSecret(): String = "${TELEGRAM_SECRET_HEX.take(4)}...${TELEGRAM_SECRET_HEX.takeLast(4)}"
