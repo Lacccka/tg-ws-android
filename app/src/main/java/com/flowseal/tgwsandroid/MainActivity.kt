@@ -2,6 +2,7 @@ package com.flowseal.tgwsandroid
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -21,6 +22,7 @@ import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.LinearLayout
@@ -48,11 +50,20 @@ class MainActivity : Activity() {
     private lateinit var cfFallbackText: TextView
     private lateinit var statsText: TextView
     private lateinit var logsText: TextView
+    private lateinit var restartRequiredText: TextView
+    private lateinit var telegramCleanupHintText: TextView
+    private lateinit var advancedCard: LinearLayout
+
+    private var pendingRestartRequired: Boolean = false
+    private var showTelegramCleanupHint: Boolean = false
+    private var advancedExpanded: Boolean = false
 
     private lateinit var primaryControlButton: Button
-    private lateinit var restartButton: Button
+    private lateinit var restartDashboardButton: Button
+    private lateinit var restartAdvancedButton: Button
     private lateinit var resetSecretButton: Button
     private lateinit var connectTelegramButton: Button
+    private lateinit var advancedToggleButton: Button
     private lateinit var copyProxyLinkButton: Button
     private lateinit var clearLogsButton: Button
     private lateinit var copyDiagnosticsButton: Button
@@ -70,6 +81,9 @@ class MainActivity : Activity() {
         super.onCreate(savedInstanceState)
         ProxyRuntimeConfig.initialize(applicationContext)
         ProxyForegroundService.State.initialize(applicationContext, "activity")
+        pendingRestartRequired = savedInstanceState?.getBoolean(KEY_PENDING_RESTART_REQUIRED) ?: false
+        showTelegramCleanupHint = savedInstanceState?.getBoolean(KEY_SHOW_TELEGRAM_CLEANUP_HINT) ?: false
+        advancedExpanded = savedInstanceState?.getBoolean(KEY_ADVANCED_EXPANDED) ?: false
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(buildContentView())
 
@@ -81,9 +95,14 @@ class MainActivity : Activity() {
                 startProxyService()
             }
         }
-        restartButton.setOnClickListener { restartProxyService() }
-        resetSecretButton.setOnClickListener { resetSecret() }
+        restartDashboardButton.setOnClickListener { restartProxyService() }
+        restartAdvancedButton.setOnClickListener { restartProxyService() }
+        resetSecretButton.setOnClickListener { confirmResetSecret() }
         connectTelegramButton.setOnClickListener { openTelegramProxyLink() }
+        advancedToggleButton.setOnClickListener {
+            advancedExpanded = !advancedExpanded
+            refreshState()
+        }
         copyProxyLinkButton.setOnClickListener {
             copyProxyLink()
             Toast.makeText(this, "Proxy link copied", Toast.LENGTH_SHORT).show()
@@ -101,6 +120,13 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         handler.post(refreshRunnable)
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(KEY_PENDING_RESTART_REQUIRED, pendingRestartRequired)
+        outState.putBoolean(KEY_SHOW_TELEGRAM_CLEANUP_HINT, showTelegramCleanupHint)
+        outState.putBoolean(KEY_ADVANCED_EXPANDED, advancedExpanded)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onPause() {
@@ -129,11 +155,22 @@ class MainActivity : Activity() {
             textSize = 13f
             setTextIsSelectable(true)
         }
+        restartRequiredText = createValueText().apply {
+            text = "Restart required to apply new secret"
+            setTextColor(COLOR_WARNING)
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        telegramCleanupHintText = createValueText().apply {
+            text = "If Telegram keeps reconnecting, remove old 127.0.0.1:1443 proxy entries and connect again."
+            setTextColor(COLOR_TEXT_SECONDARY)
+        }
 
         primaryControlButton = createButton("Start proxy")
-        restartButton = createButton("Restart proxy")
+        restartDashboardButton = createButton("Restart proxy")
+        restartAdvancedButton = createButton("Restart proxy")
         resetSecretButton = createButton("Reset secret")
         connectTelegramButton = createButton("Connect in Telegram")
+        advancedToggleButton = createButton("Diagnostics / Advanced")
         copyProxyLinkButton = createButton("Copy proxy link")
         clearLogsButton = createButton("Clear logs")
         copyDiagnosticsButton = createButton("Copy diagnostics")
@@ -159,37 +196,37 @@ class MainActivity : Activity() {
                 setPadding(0, smallPadding / 2, 0, smallPadding)
             }, matchWrapParams())
 
-            addView(createCard("Status") {
+            addView(createCard("Dashboard") {
                 addView(createTextRow("Status", statusText), matchWrapParams())
                 addView(createTextRow("Network", networkText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("Battery optimization", batteryText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Endpoint", endpointText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("Last status", lastStatusText), matchWrapParams(topMargin = rowGap))
-                addView(batterySettingsButton, matchWrapParams(topMargin = smallPadding))
+                addView(createTextRow("Stats", statsText), matchWrapParams(topMargin = rowGap))
+                addView(restartRequiredText, matchWrapParams(topMargin = smallPadding))
+                addView(telegramCleanupHintText, matchWrapParams(topMargin = rowGap))
+                addView(primaryControlButton, matchWrapParams(topMargin = smallPadding))
+                addView(restartDashboardButton, matchWrapParams(topMargin = rowGap))
+                addView(connectTelegramButton, matchWrapParams(topMargin = rowGap))
+                addView(advancedToggleButton, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = smallPadding))
 
-            addView(createCard("Connection") {
-                addView(createTextRow("Endpoint", endpointText), matchWrapParams())
-                addView(createTextRow("Secret", secretText), matchWrapParams(topMargin = rowGap))
+            advancedCard = createCard("Diagnostics / Advanced") {
+                addView(createTextRow("Secret", secretText), matchWrapParams())
                 addView(createTextRow("DC summary", dcText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("CF fallback", cfFallbackText), matchWrapParams(topMargin = rowGap))
-                addView(connectTelegramButton, matchWrapParams(topMargin = smallPadding))
+                addView(createSectionTitle("Actions"), matchWrapParams(topMargin = smallPadding))
+                addView(batterySettingsButton, matchWrapParams(topMargin = rowGap))
                 addView(copyProxyLinkButton, matchWrapParams(topMargin = rowGap))
-            }, cardParams(topMargin = padding))
-
-            addView(createCard("Controls") {
-                addView(primaryControlButton, matchWrapParams())
-                addView(restartButton, matchWrapParams(topMargin = rowGap))
+                addView(copyDiagnosticsButton, matchWrapParams(topMargin = rowGap))
+                addView(shareDiagnosticsButton, matchWrapParams(topMargin = rowGap))
+                addView(clearLogsButton, matchWrapParams(topMargin = rowGap))
                 addView(resetSecretButton, matchWrapParams(topMargin = rowGap))
-            }, cardParams(topMargin = padding))
-
-            addView(createCard("Diagnostics") {
-                addView(createTextRow("Stats", statsText), matchWrapParams())
+                addView(restartAdvancedButton, matchWrapParams(topMargin = rowGap))
                 addView(createSectionTitle("Recent logs"), matchWrapParams(topMargin = smallPadding))
                 addView(logsText, matchWrapParams(topMargin = rowGap))
-                addView(shareDiagnosticsButton, matchWrapParams(topMargin = smallPadding))
-                addView(copyDiagnosticsButton, matchWrapParams(topMargin = rowGap))
-                addView(clearLogsButton, matchWrapParams(topMargin = rowGap))
-            }, cardParams(topMargin = padding, bottomMargin = padding))
+            }
+            addView(advancedCard, cardParams(topMargin = padding, bottomMargin = padding))
         }
 
         return ScrollView(this).apply {
@@ -279,22 +316,39 @@ class MainActivity : Activity() {
 
     private fun restartProxyService() {
         requestNotificationPermissionIfNeeded()
+        val hadPendingRestart = pendingRestartRequired
+        pendingRestartRequired = false
+        if (hadPendingRestart) showTelegramCleanupHint = true
         if (!ProxyForegroundService.State.running) {
             startProxyService()
+            refreshState()
             return
         }
 
         startService(ProxyForegroundService.stopIntent(this))
-        handler.postDelayed({ startProxyService() }, RESTART_DELAY_MS)
+        handler.postDelayed({
+            startProxyService()
+            refreshState()
+        }, RESTART_DELAY_MS)
+        refreshState()
+    }
+
+    private fun confirmResetSecret() {
+        AlertDialog.Builder(this)
+            .setTitle("Reset secret?")
+            .setMessage("Reset secret changes Telegram proxy link. You will need to reconnect Telegram.")
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Reset") { _, _ -> resetSecret() }
+            .show()
     }
 
     private fun resetSecret() {
-        val wasRunning = ProxyForegroundService.State.running
         ProxyRuntimeConfig.resetSecret(applicationContext)
-        ProxyForegroundService.State.addLog("proxy secret reset", LogSeverity.INFO, "ui")
+        pendingRestartRequired = true
+        showTelegramCleanupHint = false
+        ProxyForegroundService.State.addLog("proxy secret reset; restart required to apply new secret", LogSeverity.INFO, "ui")
         refreshState()
-        val message = if (wasRunning) "Restart proxy to apply new secret" else "Secret reset"
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Restart required to apply new secret", Toast.LENGTH_LONG).show()
     }
 
     private fun openTelegramProxyLink() {
@@ -392,7 +446,8 @@ class MainActivity : Activity() {
         ProxyRuntimeConfig.initialize(applicationContext)
         refreshLocalDiagnostics()
         val running = ProxyForegroundService.State.running
-        val failed = ProxyForegroundService.State.lastStatus.contains("failed", ignoreCase = true)
+        val failed = ProxyForegroundService.State.lastStatus.contains("failed", ignoreCase = true) ||
+            ProxyForegroundService.State.lastStatus.contains("error", ignoreCase = true)
         statusText.text = when {
             running -> "Running"
             failed -> "Error"
@@ -405,15 +460,27 @@ class MainActivity : Activity() {
         secretText.text = ProxyRuntimeConfig.partialTelegramSecret()
         dcText.text = ProxyRuntimeConfig.dcSummary()
         cfFallbackText.text = ProxyRuntimeConfig.cfFallbackSummary()
-        statsText.text = ProxyForegroundService.State.statsLine()
+        statsText.text = conciseStatsLine()
         primaryControlButton.text = if (running) "Stop proxy" else "Start proxy"
-        restartButton.isEnabled = true
+        restartRequiredText.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE
+        restartDashboardButton.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE
+        telegramCleanupHintText.visibility = if (showTelegramCleanupHint) View.VISIBLE else View.GONE
+        advancedCard.visibility = if (advancedExpanded) View.VISIBLE else View.GONE
+        advancedToggleButton.text = if (advancedExpanded) "Hide Diagnostics / Advanced" else "Diagnostics / Advanced"
+        restartDashboardButton.isEnabled = true
+        restartAdvancedButton.isEnabled = true
         connectTelegramButton.isEnabled = true
         logsText.text = ProxyForegroundService.State.recentLogs()
             .takeLast(MAX_VISIBLE_LOG_LINES)
             .takeIf { it.isNotEmpty() }
             ?.joinToString("\n")
             ?: "No logs yet"
+    }
+
+    private fun conciseStatsLine(): String {
+        val stats = ProxyForegroundService.State.stats() ?: return "active=0, total=0, bad=0, wsErrors=0, timeouts=0"
+        return "active=${stats.connectionsActive}, total=${stats.connectionsTotal}, bad=${stats.connectionsBad}, " +
+            "wsErrors=${stats.wsConnectErrors}, timeouts=${stats.sessionTimeouts}"
     }
 
     private fun refreshLocalDiagnostics() {
@@ -454,11 +521,15 @@ class MainActivity : Activity() {
         private const val REFRESH_MS = 1_000L
         private const val RESTART_DELAY_MS = 350L
         private const val REQUEST_POST_NOTIFICATIONS = 2001
+        private const val KEY_PENDING_RESTART_REQUIRED = "pending_restart_required"
+        private const val KEY_SHOW_TELEGRAM_CLEANUP_HINT = "show_telegram_cleanup_hint"
+        private const val KEY_ADVANCED_EXPANDED = "advanced_expanded"
         private const val MAX_VISIBLE_LOG_LINES = 8
         private const val COLOR_BACKGROUND = 0xFFF6F7FB.toInt()
         private const val COLOR_CARD_STROKE = 0xFFE5E7EB.toInt()
         private const val COLOR_TEXT_PRIMARY = 0xFF111827.toInt()
         private const val COLOR_TEXT_SECONDARY = 0xFF4B5563.toInt()
         private const val COLOR_TEXT_MUTED = 0xFF6B7280.toInt()
+        private const val COLOR_WARNING = 0xFFB45309.toInt()
     }
 }
