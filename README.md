@@ -40,7 +40,7 @@ configuration for the first device smoke test:
   mapping was removed because device logs showed repeated HTTP 302 direct-pool
   warmup failures via `149.154.167.220`.
 - Buffer: `256 KiB`
-- Pool size setting: `4`; direct WebSocket pool/warmup is enabled for configured DC redirects and both media modes.
+- Pool size setting: `4`; direct WebSocket pool/warmup is enabled for configured DC redirects and both media modes. Idle pooled direct sockets are capped at 30 seconds, and stale early EOF/Broken pipe/WebSocket-close hits are discarded, counted as `poolStale`, and retried through cold direct/CF fallback when replay-safe.
 - Cloudflare-proxy setting: enabled in config; bundled CF fallback remains available when direct routes fail.
 
 Smoke-test steps:

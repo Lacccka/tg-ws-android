@@ -281,5 +281,20 @@ A broken pipe on the first send of a pooled direct WebSocket is treated as a
 stale pooled socket. The stale socket is closed and discarded, the session end is
 logged with the failed `direct-pool` route, and proxy-core retries once with a
 cold direct WebSocket before trying CF-proxy fallback when CF fallback is
-enabled. This keeps the direct pool from poisoning the process or the rest of the
-pool while preserving diagnostics for stale pooled WebSockets.
+enabled. Immediate pooled-route EOF, `SocketException`, or WebSocket-close
+failures with no bridged payload (`bytesUp=0` and `bytesDown=0`) are handled the
+same way, which lets the already-parsed MTProto handshake, relay init, crypto
+context, and splitter be reused without re-reading from the client. If client or
+Telegram payload bytes have already advanced, retry is intentionally skipped
+because the AES-CTR streams/splitter may no longer be replay-safe. The
+`poolStale` counter appears in diagnostics and watchdog stats when these pooled
+sockets are discarded.
+
+`WebSocketPool` now caps idle direct pooled sockets at 30 seconds. Telegram
+WebSocket servers and Android/mobile networks may close quiet pooled sockets
+earlier than desktop/server environments, so the shorter idle age reduces stale
+direct-pool hits while keeping the configured pool size unchanged.
+
+Recommended debugging remains: **Clear logs**, reproduce the failure, then
+**Share logs** so the diagnostics include route ends, pool hits/misses/refills,
+`poolStale`, watchdog stats, network, and battery-optimization state.

@@ -13,7 +13,9 @@ import java.util.concurrent.TimeUnit
  * The pool mirrors upstream's lightweight `ws_pool`: startup warmup creates direct
  * RawWebSocket connections for configured DC redirects, client handlers take a
  * ready idle socket when available, and every take/miss schedules a bounded
- * background refill. Only direct Telegram WebSocket routes are pooled; CF-proxy
+ * background refill. Idle sockets are capped at a short age because Telegram
+ * WebSocket servers and Android/mobile networks may close quiet pooled sockets
+ * earlier than desktop/server environments. Only direct Telegram WebSocket routes are pooled; CF-proxy
  * fallback connections stay one-shot.
  */
 class WebSocketPool(
@@ -205,7 +207,7 @@ class WebSocketPool(
     )
 
     companion object {
-        const val DEFAULT_MAX_AGE_MS: Long = 120_000L
+        const val DEFAULT_MAX_AGE_MS: Long = 30_000L
         private const val DEFAULT_MAX_THREADS = 4
         private const val SHUTDOWN_WAIT_MS = 500L
         private fun failureDetail(error: Throwable): String =

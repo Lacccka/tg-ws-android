@@ -146,6 +146,7 @@ class RuntimeLogStoreTest {
             poolHits = 8,
             poolMisses = 9,
             poolRefillErrors = 10,
+            poolStale = 11,
         )
 
         val report = DiagnosticReportFormatter.format(
@@ -167,6 +168,7 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("Status: proxy running on 127.0.0.1:1443"))
         assertTrue(report.contains("Endpoint: 127.0.0.1:1443"))
         assertTrue(report.contains("Stats: total=7, active=1"))
+        assertTrue(report.contains("poolStale=11"))
         assertTrue(report.contains("02:45:30 INFO proxy ProxyServer listening"))
     }
 

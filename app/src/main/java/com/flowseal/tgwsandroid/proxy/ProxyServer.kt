@@ -6,6 +6,7 @@ import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketException
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
@@ -69,6 +70,7 @@ data class ProxyServerStats(
     val poolHits: Long,
     val poolMisses: Long,
     val poolRefillErrors: Long,
+    val poolStale: Long = 0,
     val sessionTimeouts: Long = 0,
     val sessionEof: Long = 0,
     val sessionClientClosed: Long = 0,
@@ -108,6 +110,8 @@ private data class WebSocketRoute(
 private data class WebSocketRouteResult(
     val failed: Boolean,
     val failedBeforeBridge: Boolean,
+    val stalePooled: Boolean,
+    val retryableStalePooled: Boolean,
 )
 
 fun interface ProxyBridgeRunner {
@@ -165,6 +169,7 @@ class ProxyServer(
     private val poolHits = AtomicLong(0)
     private val poolMisses = AtomicLong(0)
     private val poolRefillErrors = AtomicLong(0)
+    private val poolStale = AtomicLong(0)
     private val webSocketPool = WebSocketPool(
         poolSize = config.poolSize,
         connector = webSocketConnector,
@@ -220,6 +225,7 @@ class ProxyServer(
         poolHits = poolHits.get(),
         poolMisses = poolMisses.get(),
         poolRefillErrors = poolRefillErrors.get(),
+        poolStale = poolStale.get(),
     )
 
     private fun acceptLoop() {
@@ -309,15 +315,18 @@ class ProxyServer(
         if (directRoute != null) {
             val directResult = runWebSocketRoute(client, parsed, directRoute, relayInit, cryptoContext, splitter)
             if (!directResult.failed) return
-            if (directRoute.type == "direct-pool" && directResult.failedBeforeBridge) {
-                poolMisses.incrementAndGet()
-                logger.log("DC${parsed.dcId} direct cold retry after stale pooled WebSocket")
+            if (directResult.retryableStalePooled) {
+                logger.log("DC${parsed.dcId} retrying with cold direct route after stale pool")
                 val coldRoute = connectWebSocket(parsed, targetHost)?.let { WebSocketRoute(it, "direct-cold") }
                 if (coldRoute != null) {
                     val coldResult = runWebSocketRoute(client, parsed, coldRoute, relayInit, cryptoContext, splitter)
                     if (!coldResult.failed) return
+                    if (!coldResult.failedBeforeBridge) return
                 }
-            } else if (!directResult.failedBeforeBridge) {
+                if (config.cfproxyEnabled) {
+                    logger.log("DC${parsed.dcId} trying CF fallback after stale pool/cold direct failure")
+                }
+            } else if (!directResult.failedBeforeBridge || directResult.stalePooled) {
                 return
             }
         }
@@ -426,6 +435,8 @@ class ProxyServer(
         val startedAtNs = System.nanoTime()
         var routeFailure: Throwable? = null
         var bridgeStarted = false
+        var durationMs = 0L
+        var reason = "completed"
         try {
             route.stream.send(relayInit)
             bridgeStarted = true
@@ -441,8 +452,8 @@ class ProxyServer(
         } finally {
             bytesUp.addAndGet(counters.bytesUp)
             bytesDown.addAndGet(counters.bytesDown)
-            val durationMs = (System.nanoTime() - startedAtNs) / 1_000_000
-            val reason = counters.closeReason
+            durationMs = (System.nanoTime() - startedAtNs) / 1_000_000
+            reason = counters.closeReason
                 ?: routeFailure?.let { bridgeExceptionReason(it) }
                 ?: "completed"
             recordSessionEnd(reason)
@@ -457,7 +468,64 @@ class ProxyServer(
                 // Best-effort close.
             }
         }
-        return WebSocketRouteResult(failed = routeFailure != null, failedBeforeBridge = routeFailure != null && !bridgeStarted)
+        val failedBeforeBridge = routeFailure != null && !bridgeStarted
+        val stalePooled = isStalePooledRouteFailure(route, routeFailure, reason, durationMs, counters, failedBeforeBridge)
+        val retryableStalePooled = stalePooled && isRetrySafeStalePooledRoute(counters, failedBeforeBridge)
+        if (stalePooled) {
+            poolStale.incrementAndGet()
+            logger.log(
+                "DC${parsed.dcId} direct-pool stale route detected: $reason " +
+                    "durationMs=$durationMs bytesUp=${counters.bytesUp} bytesDown=${counters.bytesDown}",
+            )
+            if (!retryableStalePooled) {
+                logger.log("DC${parsed.dcId} stale direct-pool route not retried after bridge state advanced")
+            }
+        }
+        return WebSocketRouteResult(
+            failed = routeFailure != null || stalePooled,
+            failedBeforeBridge = failedBeforeBridge,
+            stalePooled = stalePooled,
+            retryableStalePooled = retryableStalePooled,
+        )
+    }
+
+    private fun isStalePooledRouteFailure(
+        route: WebSocketRoute,
+        routeFailure: Throwable?,
+        reason: String,
+        durationMs: Long,
+        counters: BridgeSessionCounters,
+        failedBeforeBridge: Boolean,
+    ): Boolean {
+        if (route.type != "direct-pool") return false
+        if (!isStalePoolFailure(routeFailure, reason)) return false
+        if (failedBeforeBridge) return true
+        return durationMs < STALE_POOL_MAX_DURATION_MS || counters.bytesDown == 0L
+    }
+
+    private fun isRetrySafeStalePooledRoute(
+        counters: BridgeSessionCounters,
+        failedBeforeBridge: Boolean,
+    ): Boolean {
+        if (failedBeforeBridge) return true
+        // After bridge startup, retry is only safe while no MTProto payload has
+        // moved in either direction. Once bytesUp/bytesDown advance, the shared
+        // AES-CTR streams and message splitter may have advanced too, so the
+        // client session must not be replayed on a fresh route.
+        return counters.bytesUp == 0L && counters.bytesDown == 0L
+    }
+
+    private fun isStalePoolFailure(error: Throwable?, reason: String): Boolean {
+        if (error != null) {
+            if (error is EOFException || error is SocketException) return true
+            val message = error.message.orEmpty().lowercase()
+            if (message.contains("broken pipe") || message.contains("websocket closed")) return true
+        }
+        val lowerReason = reason.lowercase()
+        return lowerReason.contains("eofexception") ||
+            lowerReason.contains("broken pipe") ||
+            lowerReason.contains("websocket closed") ||
+            lowerReason.contains("socketexception")
     }
 
     private fun recordSessionEnd(reason: String) {
@@ -497,6 +565,7 @@ class ProxyServer(
     companion object {
         const val DEFAULT_WS_PATH = "/apiws"
         private const val STOP_JOIN_TIMEOUT_MS = 1_000L
+        private const val STALE_POOL_MAX_DURATION_MS = 2_000L
 
         fun protoIntForProtoTag(protoTag: ByteArray): Int = when {
             protoTag.contentEquals(RelayInit.PROTO_TAG_ABRIDGED) -> MsgSplitter.PROTO_ABRIDGED_INT

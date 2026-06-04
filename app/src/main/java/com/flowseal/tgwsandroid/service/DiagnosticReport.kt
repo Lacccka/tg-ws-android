@@ -66,6 +66,6 @@ object DiagnosticReportFormatter {
             "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +
             "sessionClientClosed=${stats.sessionClientClosed}, sessionSocketClosed=${stats.sessionSocketClosed}, " +
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, poolHits=${stats.poolHits}, " +
-            "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}"
+            "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}"
     }
 }
