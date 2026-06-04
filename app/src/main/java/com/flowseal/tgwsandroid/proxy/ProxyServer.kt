@@ -105,6 +105,11 @@ private data class WebSocketRoute(
     val type: String,
 )
 
+private data class WebSocketRouteResult(
+    val failed: Boolean,
+    val failedBeforeBridge: Boolean,
+)
+
 fun interface ProxyBridgeRunner {
     fun run(
         client: TcpClientTransport,
@@ -239,6 +244,9 @@ class ProxyServer(
     private fun handleClientAndClose(client: TcpClientTransport) {
         try {
             handleClient(client)
+        } catch (error: Throwable) {
+            sessionUnexpectedErrors.incrementAndGet()
+            logger.log("${client.remoteLabel} client handler failed: ${failureDetail(error)}")
         } finally {
             activeClients.remove(client)
             connectionsActive.decrementAndGet()
@@ -285,13 +293,12 @@ class ProxyServer(
             relayInit = relayInit,
         )
         val splitter = MsgSplitter(relayInit, protoInt)
-        val counters = BridgeSessionCounters()
 
         if (targetHost == null) {
             if (config.cfproxyEnabled) {
                 logger.log("DC${parsed.dcId} has no direct redirect configured; trying CF fallback")
             }
-            if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter, counters)) {
+            if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) {
                 return
             }
             markBad("Unsupported DC ${parsed.dcId} from ${client.remoteLabel}; no direct redirect or CF proxy route available")
@@ -300,11 +307,22 @@ class ProxyServer(
 
         val directRoute = getPooledOrConnectWebSocket(parsed, targetHost)
         if (directRoute != null) {
-            runWebSocketRoute(client, parsed, directRoute, relayInit, cryptoContext, splitter, counters)
-            return
+            val directResult = runWebSocketRoute(client, parsed, directRoute, relayInit, cryptoContext, splitter)
+            if (!directResult.failed) return
+            if (directRoute.type == "direct-pool" && directResult.failedBeforeBridge) {
+                poolMisses.incrementAndGet()
+                logger.log("DC${parsed.dcId} direct cold retry after stale pooled WebSocket")
+                val coldRoute = connectWebSocket(parsed, targetHost)?.let { WebSocketRoute(it, "direct-cold") }
+                if (coldRoute != null) {
+                    val coldResult = runWebSocketRoute(client, parsed, coldRoute, relayInit, cryptoContext, splitter)
+                    if (!coldResult.failed) return
+                }
+            } else if (!directResult.failedBeforeBridge) {
+                return
+            }
         }
 
-        if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter, counters)) {
+        if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) {
             return
         }
 
@@ -360,7 +378,6 @@ class ProxyServer(
         relayInit: ByteArray,
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
-        counters: BridgeSessionCounters,
     ): Boolean {
         var attempted = false
         for (baseDomain in cfProxyBalancer.getDomainsForDc(parsed.dcId)) {
@@ -380,8 +397,10 @@ class ProxyServer(
                 cfProxyConnections.incrementAndGet()
                 logger.log("DC${parsed.dcId} CF proxy connected via $domain")
                 cfProxyBalancer.updateDomainForDc(parsed.dcId, baseDomain)
-                runWebSocketRoute(client, parsed, WebSocketRoute(webSocket, "cf"), relayInit, cryptoContext, splitter, counters)
-                return true
+                val result = runWebSocketRoute(client, parsed, WebSocketRoute(webSocket, "cf"), relayInit, cryptoContext, splitter)
+                if (!result.failed) return true
+                cfProxyErrors.incrementAndGet()
+                logger.log("DC${parsed.dcId} CF proxy route failed via $baseDomain")
             } catch (error: Throwable) {
                 cfProxyErrors.incrementAndGet()
                 logger.log("DC${parsed.dcId} CF proxy failed via $baseDomain: ${websocketFailureDetail(error)}")
@@ -402,17 +421,23 @@ class ProxyServer(
         relayInit: ByteArray,
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
-        counters: BridgeSessionCounters,
-    ) {
+    ): WebSocketRouteResult {
+        val counters = BridgeSessionCounters()
         val startedAtNs = System.nanoTime()
         var routeFailure: Throwable? = null
+        var bridgeStarted = false
         try {
             route.stream.send(relayInit)
+            bridgeStarted = true
             bridgeRunner.run(client, route.stream, cryptoContext, splitter, counters)
         } catch (error: Throwable) {
             routeFailure = error
             counters.finish(bridgeExceptionReason(error))
-            throw error
+            if (!bridgeStarted) {
+                logger.log("DC${parsed.dcId} ${route.type} route failed before bridge: ${failureDetail(error)}")
+            } else {
+                logger.log("DC${parsed.dcId} ${route.type} route failed: ${failureDetail(error)}")
+            }
         } finally {
             bytesUp.addAndGet(counters.bytesUp)
             bytesDown.addAndGet(counters.bytesDown)
@@ -432,6 +457,7 @@ class ProxyServer(
                 // Best-effort close.
             }
         }
+        return WebSocketRouteResult(failed = routeFailure != null, failedBeforeBridge = routeFailure != null && !bridgeStarted)
     }
 
     private fun recordSessionEnd(reason: String) {
@@ -486,8 +512,11 @@ class ProxyServer(
             else -> "unknown"
         }
 
+        private fun failureDetail(error: Throwable): String =
+            "${error::class.java.simpleName}: ${error.message ?: "no message"}"
+
         private fun websocketFailureDetail(error: Throwable): String {
-            val base = "${error::class.java.simpleName}: ${error.message ?: "no message"}"
+            val base = failureDetail(error)
             if (error is RawWebSocket.WsHandshakeException) {
                 val location = error.location?.let { " location=$it" }.orEmpty()
                 return "$base status=${error.statusCode}$location"

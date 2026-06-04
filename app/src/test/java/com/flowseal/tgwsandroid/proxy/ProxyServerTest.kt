@@ -7,6 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
+import java.net.SocketException
 import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
@@ -474,6 +475,71 @@ class ProxyServerTest {
         pool.closeAll()
     }
 
+
+    @Test
+    fun clientThreadContainsRelayInitBrokenPipeWithoutUncaughtException() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val uncaught = CopyOnWriteArrayList<Throwable>()
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { _, error -> uncaught.add(error) }
+        try {
+            val proxy = newProxy(
+                server = server,
+                connector = RecordingConnector(FakeWebSocketBinaryStream(sendError = SocketException("Broken pipe"))),
+                config = baseConfig().copy(cfproxyEnabled = false),
+                logger = ProxyLogger { logs.add(it) },
+            )
+
+            proxy.start()
+            server.enqueue(client)
+            waitUntil { client.closed }
+            proxy.stop()
+
+            assertEquals(0, proxy.stats().connectionsActive)
+            assertEquals(1L, proxy.stats().sessionUnexpectedErrors)
+            assertTrue(logs.any { it.contains("DC2 direct-cold route failed before bridge: SocketException: Broken pipe") })
+            assertTrue(logs.any { it.contains("session ended") && it.contains("reason=exception: SocketException: Broken pipe") })
+            assertTrue(logs.none { it.contains("client handler failed") })
+            assertTrue(uncaught.isEmpty())
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+        }
+    }
+
+    @Test
+    fun bridgeRunnerBrokenPipeDoesNotEscapeClientThread() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val uncaught = CopyOnWriteArrayList<Throwable>()
+        val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { _, error -> uncaught.add(error) }
+        try {
+            val proxy = newProxy(
+                server = server,
+                connector = RecordingConnector(FakeWebSocketBinaryStream()),
+                config = baseConfig().copy(cfproxyEnabled = false),
+                runner = ProxyBridgeRunner { _, _, _, _, _ -> throw SocketException("Broken pipe") },
+                logger = ProxyLogger { logs.add(it) },
+            )
+
+            proxy.start()
+            server.enqueue(client)
+            waitUntil { client.closed }
+            proxy.stop()
+
+            assertEquals(0, proxy.stats().connectionsActive)
+            assertEquals(1L, proxy.stats().sessionUnexpectedErrors)
+            assertTrue(logs.any { it.contains("DC2 direct-cold route failed: SocketException: Broken pipe") })
+            assertTrue(logs.any { it.contains("session ended") && it.contains("reason=exception: SocketException: Broken pipe") })
+            assertTrue(uncaught.isEmpty())
+        } finally {
+            Thread.setDefaultUncaughtExceptionHandler(previousHandler)
+        }
+    }
+
     @Test
     fun pooledWebSocketHitRunsBridgeWithoutColdDirectConnect() {
         val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
@@ -544,6 +610,94 @@ class ProxyServerTest {
         assertEquals(1L, proxy.stats().poolMisses)
         assertTrue(logs.any { it.contains("DC2 direct WS pool miss") })
         assertTrue(logs.any { it.contains("DC2 WebSocket connected via kws2.web.telegram.org") })
+    }
+
+
+    @Test
+    fun stalePooledSocketBrokenPipeRetriesColdDirect() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val events = CopyOnWriteArrayList<String>()
+        val staleSocket = FakeWebSocketBinaryStream(events, sendError = SocketException("Broken pipe"))
+        val coldSocket = FakeWebSocketBinaryStream(events)
+        val attempts = AtomicInteger(0)
+        val connector = RawWebSocketConnector { _, domain, _ ->
+            val attempt = attempts.incrementAndGet()
+            when {
+                attempt == 1 && domain == "kws2.web.telegram.org" -> staleSocket
+                Thread.currentThread().name.startsWith("WebSocketPool") -> throw IOException("refill blocked $attempt")
+                Thread.currentThread().name.startsWith("ProxyServer-client") && domain == "kws2.web.telegram.org" -> coldSocket
+                else -> throw IOException("unexpected $domain attempt $attempt")
+            }
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
+            runner = ProxyBridgeRunner { _, webSocket, _, _, _ ->
+                assertTrue(webSocket === coldSocket)
+                events.add("bridge")
+            },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { logs.any { it.contains("WS pool refilled DC2: 1 ready") } }
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertTrue(staleSocket.closed)
+        assertTrue(coldSocket.closed)
+        assertEquals(1L, proxy.stats().poolHits)
+        assertEquals(1L, proxy.stats().poolMisses)
+        assertEquals(1L, proxy.stats().sessionUnexpectedErrors)
+        assertTrue(logs.any { it.contains("DC2 direct-pool route failed before bridge: SocketException: Broken pipe") })
+        assertTrue(logs.any { it.contains("DC2 direct cold retry after stale pooled WebSocket") })
+        assertTrue(logs.any { it.contains("route=direct-cold") && it.contains("reason=completed") })
+    }
+
+    @Test
+    fun stalePooledSocketFallsBackToCfWhenColdDirectFails() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val events = CopyOnWriteArrayList<String>()
+        val staleSocket = FakeWebSocketBinaryStream(events, sendError = SocketException("Broken pipe"))
+        val cfSocket = FakeWebSocketBinaryStream(events)
+        val attempts = AtomicInteger(0)
+        val connector = RawWebSocketConnector { _, domain, _ ->
+            val attempt = attempts.incrementAndGet()
+            when {
+                attempt == 1 && domain == "kws2.web.telegram.org" -> staleSocket
+                domain.endsWith(".web.telegram.org") -> throw IOException("cold direct down $domain")
+                domain == "kws2.cf.example" -> cfSocket
+                else -> throw IOException("unexpected $domain attempt $attempt")
+            }
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(poolSize = 1, cfProxyDomains = listOf("cf.example"), dcRedirects = mapOf(2 to "203.0.113.2")),
+            runner = ProxyBridgeRunner { _, webSocket, _, _, _ ->
+                assertTrue(webSocket === cfSocket)
+                events.add("bridge")
+            },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { logs.any { it.contains("WS pool refilled DC2: 1 ready") } }
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(1L, proxy.stats().poolHits)
+        assertEquals(1L, proxy.stats().cfProxyConnections)
+        assertTrue(logs.any { it.contains("DC2 direct cold retry after stale pooled WebSocket") })
+        assertTrue(logs.any { it.contains("DC2 -> trying CF proxy wss://kws2.cf.example/apiws") })
+        assertTrue(logs.any { it.contains("route=cf") && it.contains("reason=completed") })
     }
 
     @Test
@@ -810,12 +964,14 @@ class ProxyServerTest {
 
     private class FakeWebSocketBinaryStream(
         private val events: MutableList<String> = CopyOnWriteArrayList(),
+        private val sendError: Throwable? = null,
     ) : WebSocketBinaryStream {
         val sent = mutableListOf<ByteArray>()
         var closed = false
 
         override fun send(data: ByteArray) {
             events.add("send")
+            sendError?.let { throw it }
             sent.add(data)
         }
 

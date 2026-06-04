@@ -266,3 +266,20 @@ Recommended debugging flow:
 3. Reproduce the issue.
 4. Tap **Share logs**.
 5. Send the exported `.txt` diagnostics file.
+
+## Per-client route exception containment
+
+`ProxyServer` now contains per-client/session exceptions inside the proxy-core
+client handler thread. Socket and route failures such as `SocketException: Broken
+pipe`, EOF, WebSocket close, relay-init send failure, bridge-runner failure, and
+best-effort close errors are recorded as session/route failures and must not
+escape to Android's process-level crash handler. Persistent logs can therefore
+distinguish a future proxy stop caused by a real process/service stop from an
+ordinary network/session failure.
+
+A broken pipe on the first send of a pooled direct WebSocket is treated as a
+stale pooled socket. The stale socket is closed and discarded, the session end is
+logged with the failed `direct-pool` route, and proxy-core retries once with a
+cold direct WebSocket before trying CF-proxy fallback when CF fallback is
+enabled. This keeps the direct pool from poisoning the process or the rest of the
+pool while preserving diagnostics for stale pooled WebSockets.
