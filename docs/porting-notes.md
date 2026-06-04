@@ -249,3 +249,20 @@ running to reduce CPU sleep interruptions, but this is not a substitute for OEM
 background policy allow-listing. Network changes are diagnostics-only in this
 milestone; the service logs them but does not restart `ProxyServer` or change the
 fixed DC/IP mapping.
+
+## Runtime diagnostics and WebSocket idle timeout parity
+
+- Raw WebSocket connection setup now matches upstream timeout boundaries: the TCP/TLS connect and HTTP WebSocket 101 handshake/header read remain bounded, while long-lived post-handshake frame reads reset the socket read timeout to infinite (`0`) so idle sessions are not closed merely because no WebSocket frame arrived after 10 seconds.
+- Runtime logs are persisted in private app storage (`filesDir/runtime_logs/current.log`) and are restored when the app process, activity, or foreground service is recreated. No external storage or storage permission is used.
+- **Clear logs** is the only intended way to delete diagnostics. It clears the in-memory buffer, truncates the private persistent log file, and then records a fresh `Logs cleared` line.
+- If the app process or service is killed or recreated, previous log lines should still be available in the in-app log view, Copy logs output, and Share logs `.txt` export until Clear logs is pressed.
+- A private proxy run marker records proxy start/stop state. On the next app/service initialization, a previous marker that still says `proxy_running=true` is reported as `previous proxy run appears to have ended unexpectedly` with the previous run id and start timestamp.
+- Stop commands are source-distinguished for diagnostics: UI, notification, and legacy/unknown actions are logged separately. The notification Stop action remains available.
+
+Recommended debugging flow:
+
+1. Tap **Clear logs**.
+2. Tap **Start proxy**.
+3. Reproduce the issue.
+4. Tap **Share logs**.
+5. Send the exported `.txt` diagnostics file.

@@ -7,6 +7,7 @@ import org.junit.Test
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -68,6 +69,65 @@ class RuntimeLogStoreTest {
         store.append("after", LogSeverity.INFO, "ui")
 
         assertEquals(listOf("02:45:30 INFO ui after"), store.lines())
+    }
+
+    @Test
+    fun appendWritesToPersistenceBestEffort() {
+        val persistence = InMemoryRuntimeLogPersistence()
+        val store = RuntimeLogStore(clock = fixedClock, persistence = persistence)
+
+        store.append("persist me", LogSeverity.INFO, "service")
+
+        assertEquals(listOf("02:45:30 INFO service persist me"), persistence.lines)
+    }
+
+    @Test
+    fun loadRestoresPersistedLines() {
+        val persistence = InMemoryRuntimeLogPersistence(
+            mutableListOf("02:45:30 INFO service before reset"),
+        )
+        val store = RuntimeLogStore(clock = fixedClock)
+
+        val restored = store.configurePersistence(persistence)
+
+        assertEquals(1, restored)
+        assertEquals(listOf("02:45:30 INFO service before reset"), store.lines())
+    }
+
+    @Test
+    fun clearAlsoClearsPersistence() {
+        val persistence = InMemoryRuntimeLogPersistence(mutableListOf("02:45:30 INFO service old"))
+        val store = RuntimeLogStore(clock = fixedClock, persistence = persistence)
+        store.append("new", LogSeverity.INFO, "service")
+
+        store.clear()
+
+        assertTrue(store.lines().isEmpty())
+        assertTrue(persistence.lines.isEmpty())
+    }
+
+    @Test
+    fun persistenceWriteFailureDoesNotThrow() {
+        val store = RuntimeLogStore(clock = fixedClock, persistence = ThrowingRuntimeLogPersistence())
+
+        store.append("still in memory", LogSeverity.INFO, "service")
+
+        assertEquals(listOf("02:45:30 INFO service still in memory"), store.lines())
+    }
+
+    @Test
+    fun filePersistenceTrimsToBoundedSize() {
+        val file = createTempFile(prefix = "runtime", suffix = ".log")
+        try {
+            val persistence = FileRuntimeLogPersistence(file, maxBytes = 80)
+
+            repeat(10) { persistence.appendLine("02:45:30 INFO service line-$it with padding") }
+
+            assertTrue(file.length() <= 80)
+            assertTrue(persistence.readTailLines().last().contains("line-9"))
+        } finally {
+            file.delete()
+        }
     }
 
     @Test
@@ -142,4 +202,26 @@ class RuntimeLogStoreTest {
         assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
         assertTrue(store.lines().size <= 100)
     }
+    private class InMemoryRuntimeLogPersistence(
+        val lines: MutableList<String> = mutableListOf(),
+    ) : RuntimeLogPersistence {
+        override fun readTailLines(): List<String> = lines.toList()
+        override fun appendLine(line: String) {
+            lines += line
+        }
+        override fun clear() {
+            lines.clear()
+        }
+    }
+
+    private class ThrowingRuntimeLogPersistence : RuntimeLogPersistence {
+        override fun readTailLines(): List<String> = emptyList()
+        override fun appendLine(line: String) {
+            throw RuntimeException("disk full")
+        }
+        override fun clear() {
+            throw RuntimeException("disk full")
+        }
+    }
+
 }

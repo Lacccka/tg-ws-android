@@ -195,6 +195,40 @@ class RawWebSocketLiveTest {
         assertTrue(fake.transport.closed)
     }
 
+    @Test
+    fun connectUsesBoundedHandshakeTimeoutThenResetsIdleReadTimeout() {
+        val fake = FakeTransportFactory(httpResponse(101, "Switching Protocols"))
+
+        RawWebSocket.connect(
+            host = "edge.example",
+            domain = "ws.example",
+            timeoutMs = 30_000,
+            transportFactory = fake,
+            randomProvider = deterministicRandomProvider(),
+        )
+
+        assertEquals(10_000, fake.calls.single().timeoutMs)
+        assertEquals(listOf(10_000, 0), fake.transport.readTimeouts)
+    }
+
+    @Test
+    fun failedHandshakeKeepsBoundedReadTimeoutAndClosesTransport() {
+        val fake = FakeTransportFactory(httpResponse(403, "Forbidden"))
+
+        assertThrowsHandshake {
+            RawWebSocket.connect(
+                host = "edge.example",
+                domain = "ws.example",
+                timeoutMs = 30_000,
+                transportFactory = fake,
+                randomProvider = deterministicRandomProvider(),
+            )
+        }
+
+        assertEquals(listOf(10_000), fake.transport.readTimeouts)
+        assertTrue(fake.transport.closed)
+    }
+
     private fun connect(fake: FakeTransportFactory): RawWebSocket =
         RawWebSocket.connect(
             host = "edge.example",
@@ -269,6 +303,11 @@ class RawWebSocketLiveTest {
             private set
         var closed: Boolean = false
             private set
+        val readTimeouts = mutableListOf<Int>()
+
+        override fun setReadTimeout(timeoutMs: Int) {
+            readTimeouts += timeoutMs
+        }
 
         override fun flush() {
             flushCount += 1

@@ -40,6 +40,8 @@ class RawWebSocket private constructor(
 
         fun flush() = output.flush()
 
+        fun setReadTimeout(timeoutMs: Int) = Unit
+
         fun close()
     }
 
@@ -170,6 +172,7 @@ class RawWebSocket private constructor(
             val boundedTimeoutMs = minOf(timeoutMs, 10_000)
             val transport = transportFactory.connect(host, 443, domain, boundedTimeoutMs)
             try {
+                transport.setReadTimeout(boundedTimeoutMs)
                 val wsKey = Base64.getEncoder().encodeToString(randomProvider(16))
                 val request =
                     RawWebSocketCodec.buildUpgradeRequest(
@@ -183,6 +186,7 @@ class RawWebSocket private constructor(
                 val rawResponse = readHttpHeaders(transport.input)
                 val response = RawWebSocketCodec.parseHandshakeResponse(rawResponse)
                 if (response.success) {
+                    transport.setReadTimeout(0)
                     return RawWebSocket(transport, randomProvider)
                 }
 
@@ -300,6 +304,10 @@ internal object TrustAllTlsTransportFactory : RawWebSocket.TransportFactory {
     ) : RawWebSocket.Transport {
         override val input: InputStream = socket.getInputStream()
         override val output: OutputStream = socket.getOutputStream()
+
+        override fun setReadTimeout(timeoutMs: Int) {
+            socket.soTimeout = timeoutMs
+        }
 
         override fun close() = socket.close()
     }

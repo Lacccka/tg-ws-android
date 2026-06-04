@@ -107,3 +107,11 @@ Current runtime limitations:
 - The local endpoint uses `127.0.0.1`, which works only inside the same Android
   device where the proxy app is running; links or settings using this server are
   not useful when shared with other devices.
+
+### Runtime diagnostics persistence
+
+Runtime logs are stored in private app storage and restored after activity/service recreation or app process restart until **Clear logs** is pressed. Share logs continues to export a `.txt` diagnostics attachment through the app FileProvider, and Copy logs copies the same restored diagnostics text.
+
+WebSocket timeout handling follows upstream parity: connect and HTTP WebSocket handshake reads are bounded, but post-handshake WebSocket frame reads do not use a fixed 10-second idle timeout. Unexpected previous proxy termination is detected from a private run marker and logged on the next app/service initialization.
+
+Recommended issue capture: Clear logs, Start proxy, reproduce the issue, Share logs, then send the exported `.txt` file.

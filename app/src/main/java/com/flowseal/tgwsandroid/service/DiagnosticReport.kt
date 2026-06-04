@@ -63,6 +63,9 @@ object DiagnosticReportFormatter {
         "total=${stats.connectionsTotal}, active=${stats.connectionsActive}, bad=${stats.connectionsBad}, " +
             "wsErrors=${stats.wsConnectErrors}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
-            "poolHits=${stats.poolHits}, poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}"
+            "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +
+            "sessionClientClosed=${stats.sessionClientClosed}, sessionSocketClosed=${stats.sessionSocketClosed}, " +
+            "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, poolHits=${stats.poolHits}, " +
+            "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}"
     }
 }

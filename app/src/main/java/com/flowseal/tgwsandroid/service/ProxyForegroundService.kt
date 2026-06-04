@@ -18,6 +18,7 @@ import com.flowseal.tgwsandroid.MainActivity
 import com.flowseal.tgwsandroid.proxy.ProxyLogger
 import com.flowseal.tgwsandroid.proxy.ProxyServer
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
+import java.io.File
 import java.time.LocalDateTime
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -40,6 +41,7 @@ class ProxyForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        State.initialize(applicationContext, "service")
         State.addLog("service created", LogSeverity.INFO, "service")
         ensureNotificationChannel()
         State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
@@ -48,10 +50,11 @@ class ProxyForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP -> {
-                State.addLog("=== Proxy stop ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, "ui")
-                State.addLog("stop command received", LogSeverity.INFO, "service")
-                stopProxyAsync()
+            ACTION_STOP_FROM_UI, ACTION_STOP_FROM_NOTIFICATION, ACTION_STOP_LEGACY -> {
+                val stopSource = stopSourceForAction(intent.action)
+                State.addLog("=== Proxy stop ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, stopSource.logSource)
+                State.addLog(stopSource.logMessage, LogSeverity.INFO, "service")
+                stopProxyAsync(stopSource.markerReason)
             }
             ACTION_START, null -> {
                 State.addLog("=== Proxy start ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, "ui")
@@ -71,9 +74,24 @@ class ProxyForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        State.addLog("onTaskRemoved: app task removed while service running=${State.running}", LogSeverity.WARN, "service")
+        super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onTrimMemory(level: Int) {
+        State.addLog("trim memory requested: level=$level", LogSeverity.WARN, "service")
+        super.onTrimMemory(level)
+    }
+
+    override fun onLowMemory() {
+        State.addLog("low memory callback received", LogSeverity.WARN, "service")
+        super.onLowMemory()
+    }
+
     override fun onDestroy() {
         State.addLog("service destroyed", LogSeverity.INFO, "service")
-        stopProxyBlocking()
+        stopProxyBlocking("service_destroyed")
         unregisterNetworkCallback()
         stopWatchdog()
         releaseWakeLock()
@@ -119,6 +137,7 @@ class ProxyForegroundService : Service() {
                     proxyServer = null
                     State.updateStats(null)
                     State.setRunning(false, "proxy start failed with exception: ${error.message ?: error::class.java.simpleName}")
+                    State.markProxyStopped("start_failed")
                     unregisterNetworkCallback()
                     releaseWakeLock()
                     stopWatchdog()
@@ -129,16 +148,17 @@ class ProxyForegroundService : Service() {
         }
     }
 
-    private fun stopProxyAsync() {
+    private fun stopProxyAsync(stopReason: String) {
         executor.execute {
-            stopProxyBlocking()
+            stopProxyBlocking(stopReason)
             stopForegroundCompat()
             stopSelf()
         }
     }
 
-    private fun stopProxyBlocking() {
+    private fun stopProxyBlocking(stopReason: String = "service_stop") {
         stopWatchdog()
+        val wasRunning = State.running
         val server = synchronized(lock) {
             proxyServer.also { proxyServer = null }
         }
@@ -153,6 +173,7 @@ class ProxyForegroundService : Service() {
         releaseWakeLock()
         unregisterNetworkCallback()
         State.setRunning(false, "Proxy stopped")
+        if (wasRunning || server != null) State.markProxyStopped(stopReason)
     }
 
     private fun ensureNotificationChannel() {
@@ -176,7 +197,7 @@ class ProxyForegroundService : Service() {
             activityIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
-        val stopIntent = Intent(this, ProxyForegroundService::class.java).setAction(ACTION_STOP)
+        val stopIntent = Intent(this, ProxyForegroundService::class.java).setAction(ACTION_STOP_FROM_NOTIFICATION)
         val stopPendingIntent = PendingIntent.getService(
             this,
             1,
@@ -336,23 +357,40 @@ class ProxyForegroundService : Service() {
         "stats=unknown"
     } else {
         "active=${stats.connectionsActive} total=${stats.connectionsTotal} wsErr=${stats.wsConnectErrors} " +
-            "cf=${stats.cfProxyConnections}/${stats.cfProxyErrors} pool=${stats.poolHits}/${stats.poolMisses}/${stats.poolRefillErrors}"
+            "sessionTimeouts=${stats.sessionTimeouts} sessionEof=${stats.sessionEof} " +
+            "sessionClientClosed=${stats.sessionClientClosed} sessionSocketClosed=${stats.sessionSocketClosed} " +
+            "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors} cf=${stats.cfProxyConnections}/${stats.cfProxyErrors} " +
+            "pool=${stats.poolHits}/${stats.poolMisses}/${stats.poolRefillErrors}"
     }
 
     companion object {
         const val ACTION_START = "com.flowseal.tgwsandroid.action.START_PROXY"
-        const val ACTION_STOP = "com.flowseal.tgwsandroid.action.STOP_PROXY"
+        const val ACTION_STOP_LEGACY = "com.flowseal.tgwsandroid.action.STOP_PROXY"
+        const val ACTION_STOP_FROM_UI = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_UI"
+        const val ACTION_STOP_FROM_NOTIFICATION = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_NOTIFICATION"
         private const val CHANNEL_ID = "proxy_foreground"
         private const val NOTIFICATION_ID = 1001
         private const val WATCHDOG_INTERVAL_SECONDS = 45L
 
         fun startIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_START)
 
-        fun stopIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_STOP)
+        fun stopIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_STOP_FROM_UI)
+
+        data class StopSource(val logSource: String, val markerReason: String, val logMessage: String)
+
+        fun stopSourceForAction(action: String?): StopSource = when (action) {
+            ACTION_STOP_FROM_UI -> StopSource("ui", "ui", "stop command received from UI")
+            ACTION_STOP_FROM_NOTIFICATION -> StopSource("notification", "notification", "stop command received from notification")
+            else -> StopSource("service", "legacy_unknown", "stop command received from legacy/unknown action")
+        }
     }
 
     object State {
         private val logStore = RuntimeLogStore()
+        private val initLock = Any()
+        private var persistenceConfigured = false
+        private var crashHandlerInstalled = false
+        private var runMarker: ProxyRunMarker? = null
 
         @Volatile
         var running: Boolean = false
@@ -368,6 +406,68 @@ class ProxyForegroundService : Service() {
             private set
         @Volatile
         private var statsSnapshot: ProxyServerStats? = null
+
+        fun initialize(context: Context, openedBy: String) {
+            synchronized(initLock) {
+                if (!persistenceConfigured) {
+                    val runtimeDir = File(context.filesDir, "runtime_logs")
+                    val restored = logStore.configurePersistence(FileRuntimeLogPersistence(File(runtimeDir, "current.log")))
+                    runMarker = ProxyRunMarker(File(runtimeDir, "proxy_run.marker"))
+                    persistenceConfigured = true
+                    installCrashHandlerLocked()
+                    addLog("app process diagnostics initialized", LogSeverity.INFO, "process")
+                    addLog("=== Process started ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, "process")
+                    if (restored > 0) addLog("Restored $restored persisted log lines", LogSeverity.INFO, "process")
+                    inspectPreviousRunLocked()
+                }
+            }
+            addLog("=== App opened ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} by $openedBy ===", LogSeverity.INFO, "ui")
+        }
+
+        private fun installCrashHandlerLocked() {
+            if (crashHandlerInstalled) return
+            val previous = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { thread, error ->
+                addLog(
+                    "unhandled exception on ${thread.name}: ${error.javaClass.simpleName}: ${error.message ?: "no message"}",
+                    LogSeverity.ERROR,
+                    "crash",
+                )
+                error.stackTrace.take(6).forEach { frame -> addLog("  at $frame", LogSeverity.ERROR, "crash") }
+                if (previous != null) {
+                    previous.uncaughtException(thread, error)
+                } else {
+                    throw error
+                }
+            }
+            crashHandlerInstalled = true
+        }
+
+        private fun inspectPreviousRunLocked() {
+            val previous = runMarker?.inspectPreviousRun() ?: return
+            addLog("previous run marker loaded: running=${previous.wasRunning} run_id=${previous.runId ?: "unknown"}", LogSeverity.INFO, "service")
+            if (previous.wasUnexpected) {
+                running = false
+                lastStatus = "Previous proxy run ended unexpectedly; proxy is stopped"
+                addLog(
+                    "previous proxy run appears to have ended unexpectedly: run_id=${previous.runId ?: "unknown"} started_at=${previous.startedAt ?: "unknown"}",
+                    LogSeverity.WARN,
+                    "service",
+                )
+            } else if (previous.hadMarker) {
+                addLog("previous proxy run was graceful: reason=${previous.lastStopReason ?: "unknown"}", LogSeverity.INFO, "service")
+            }
+        }
+
+        fun markProxyStarted() {
+            val runId = runMarker?.markStarted() ?: return
+            addLog("proxy run marker started: run_id=$runId", LogSeverity.INFO, "service")
+        }
+
+        fun markProxyStopped(reason: String) {
+            runMarker?.markStopped(reason)
+            addLog("proxy run marker stopped: reason=$reason", LogSeverity.INFO, "service")
+        }
 
         fun setRunning(isRunning: Boolean, status: String) {
             running = isRunning

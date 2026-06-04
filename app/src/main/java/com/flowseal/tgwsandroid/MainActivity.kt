@@ -54,6 +54,7 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ProxyForegroundService.State.initialize(applicationContext, "activity")
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(buildContentView())
         startButton.setOnClickListener {

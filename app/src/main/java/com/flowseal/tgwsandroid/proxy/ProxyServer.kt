@@ -69,6 +69,11 @@ data class ProxyServerStats(
     val poolHits: Long,
     val poolMisses: Long,
     val poolRefillErrors: Long,
+    val sessionTimeouts: Long = 0,
+    val sessionEof: Long = 0,
+    val sessionClientClosed: Long = 0,
+    val sessionSocketClosed: Long = 0,
+    val sessionUnexpectedErrors: Long = 0,
 )
 
 fun interface ProxyLogger {
@@ -147,6 +152,11 @@ class ProxyServer(
     private val cfProxyErrors = AtomicLong(0)
     private val bytesUp = AtomicLong(0)
     private val bytesDown = AtomicLong(0)
+    private val sessionTimeouts = AtomicLong(0)
+    private val sessionEof = AtomicLong(0)
+    private val sessionClientClosed = AtomicLong(0)
+    private val sessionSocketClosed = AtomicLong(0)
+    private val sessionUnexpectedErrors = AtomicLong(0)
     private val poolHits = AtomicLong(0)
     private val poolMisses = AtomicLong(0)
     private val poolRefillErrors = AtomicLong(0)
@@ -197,6 +207,11 @@ class ProxyServer(
         cfProxyErrors = cfProxyErrors.get(),
         bytesUp = bytesUp.get(),
         bytesDown = bytesDown.get(),
+        sessionTimeouts = sessionTimeouts.get(),
+        sessionEof = sessionEof.get(),
+        sessionClientClosed = sessionClientClosed.get(),
+        sessionSocketClosed = sessionSocketClosed.get(),
+        sessionUnexpectedErrors = sessionUnexpectedErrors.get(),
         poolHits = poolHits.get(),
         poolMisses = poolMisses.get(),
         poolRefillErrors = poolRefillErrors.get(),
@@ -405,6 +420,7 @@ class ProxyServer(
             val reason = counters.closeReason
                 ?: routeFailure?.let { bridgeExceptionReason(it) }
                 ?: "completed"
+            recordSessionEnd(reason)
             logger.log(
                 "${client.remoteLabel} session ended: DC${parsed.dcId} media=${parsed.isMedia} " +
                     "route=${route.type} durationMs=$durationMs bytesUp=${counters.bytesUp} " +
@@ -415,6 +431,17 @@ class ProxyServer(
             } catch (_: Throwable) {
                 // Best-effort close.
             }
+        }
+    }
+
+    private fun recordSessionEnd(reason: String) {
+        val lower = reason.lowercase()
+        when {
+            lower.contains("sockettimeoutexception") || lower.contains("read timed out") -> sessionTimeouts.incrementAndGet()
+            lower.contains("eofexception") || lower.contains("eof") -> sessionEof.incrementAndGet()
+            lower.contains("client closed") -> sessionClientClosed.incrementAndGet()
+            lower.contains("websocket closed") || lower.contains("socket closed") -> sessionSocketClosed.incrementAndGet()
+            lower.contains("exception:") -> sessionUnexpectedErrors.incrementAndGet()
         }
     }
 

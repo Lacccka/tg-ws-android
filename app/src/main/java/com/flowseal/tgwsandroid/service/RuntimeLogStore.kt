@@ -1,7 +1,9 @@
 package com.flowseal.tgwsandroid.service
 
 import java.time.Clock
+import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
@@ -27,6 +29,7 @@ class RuntimeLogStore(
     private val maxLines: Int = DEFAULT_MAX_LINES,
     private val maxChars: Int = DEFAULT_MAX_CHARS,
     private val clock: Clock = Clock.systemDefaultZone(),
+    private var persistence: RuntimeLogPersistence? = null,
 ) {
     init {
         require(maxLines > 0) { "maxLines must be positive" }
@@ -48,11 +51,13 @@ class RuntimeLogStore(
             source = source.ifBlank { "unknown" },
             message = message,
         )
+        val line = entry.formatLine()
         synchronized(lock) {
             entries.addLast(entry)
-            currentChars += entry.formatLine().length
+            currentChars += line.length
             trimLocked()
         }
+        runCatching { persistence?.appendLine(line) }
         return entry
     }
 
@@ -68,11 +73,27 @@ class RuntimeLogStore(
         source = "service",
     )
 
+    fun configurePersistence(newPersistence: RuntimeLogPersistence): Int {
+        val restoredLines = newPersistence.readTailLines()
+        synchronized(lock) {
+            persistence = newPersistence
+            entries.clear()
+            currentChars = 0
+            for (line in restoredLines) {
+                entries.addLast(parsePersistedLine(line))
+                currentChars += line.length
+            }
+            trimLocked()
+        }
+        return restoredLines.size
+    }
+
     fun clear() {
         synchronized(lock) {
             entries.clear()
             currentChars = 0
         }
+        runCatching { persistence?.clear() }
     }
 
     fun snapshot(): List<RuntimeLogEntry> = synchronized(lock) { entries.toList() }
@@ -93,6 +114,23 @@ class RuntimeLogStore(
         const val DEFAULT_MAX_LINES = 400
         const val DEFAULT_MAX_CHARS = 80_000
         val TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.US)
+
+        private fun parsePersistedLine(line: String): RuntimeLogEntry {
+            val parts = line.split(' ', limit = 4)
+            if (parts.size == 4) {
+                val severity = runCatching { LogSeverity.valueOf(parts[1]) }.getOrNull()
+                val time = runCatching { LocalTime.parse(parts[0], TIME_FORMATTER) }.getOrNull()
+                if (severity != null && time != null) {
+                    return RuntimeLogEntry(
+                        timestamp = LocalDateTime.of(LocalDate.now(), time),
+                        severity = severity,
+                        source = parts[2].ifBlank { "restored" },
+                        message = parts[3],
+                    )
+                }
+            }
+            return RuntimeLogEntry(LocalDateTime.now(), LogSeverity.INFO, "restored", line)
+        }
 
         fun classifySeverity(message: String): LogSeverity {
             val lower = message.lowercase(Locale.US)
@@ -115,7 +153,8 @@ class RuntimeLogStore(
                     (lower.contains("direct") && lower.contains("failed") && lower.contains("fallback")) ||
                     lower.contains("attempt via") && lower.contains("failed") ||
                     lower.contains("accept failed") ||
-                    lower.contains("stop failed") -> LogSeverity.WARN
+                    lower.contains("stop failed") ||
+                    lower.contains("ended unexpectedly") -> LogSeverity.WARN
 
                 lower.contains("service created") ||
                     lower.contains("service destroyed") ||
@@ -131,7 +170,13 @@ class RuntimeLogStore(
                     lower.contains("pool warmup started") ||
                     lower.contains("pool hit") ||
                     lower.contains("pool miss") ||
-                    lower.contains("logs cleared") -> LogSeverity.INFO
+                    lower.contains("logs cleared") ||
+                    lower.contains("app process diagnostics initialized") ||
+                    lower.contains("process started") ||
+                    lower.contains("app opened") ||
+                    lower.contains("previous run marker loaded") ||
+                    lower.contains("previous proxy run was graceful") ||
+                    lower.contains("restored") && lower.contains("persisted log lines") -> LogSeverity.INFO
 
                 else -> LogSeverity.DEBUG
             }
