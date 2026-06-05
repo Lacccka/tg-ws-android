@@ -101,6 +101,11 @@ object DiagnosticReportFormatter {
             "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}, " +
             "poolRefillsCancelled=${stats.poolRefillsCancelled}, " +
             "poolResultsDiscardedAfterRouteChange=${stats.poolResultsDiscardedAfterRouteChange}, " +
-            "routeChangesImmediate=${stats.routeChangesImmediate}, networkNoneEvents=${stats.networkNoneEvents}"
+            "routeChangesImmediate=${stats.routeChangesImmediate}, networkNoneEvents=${stats.networkNoneEvents}, " +
+            "directHealthState=${stats.directHealthState}, directHealthSuccesses=${stats.directHealthSuccesses}, " +
+            "directHealthFailures=${stats.directHealthFailures}, directDowngrades=${stats.directDowngrades}, " +
+            "directPromotions=${stats.directPromotions}, directCooldownUntil=${stats.directCooldownUntil}, " +
+            "routeSettlingUntil=${stats.routeSettlingUntil}, directProbeLastError=${stats.directProbeLastError ?: "none"}, " +
+            "directProbeLastSuccessTime=${stats.directProbeLastSuccessTime ?: "none"}"
     }
 }

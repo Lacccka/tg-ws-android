@@ -3,6 +3,7 @@ package com.flowseal.tgwsandroid.proxy
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 class RouteStateTest {
@@ -14,10 +15,10 @@ class RouteStateTest {
     }
 
     @Test
-    fun autoWifiResolvesToDirectFirst() {
+    fun autoWifiResolvesToCfFirstBeforeDirectHealthPromotion() {
         val state = RouteState(NetworkRouteMode.AUTO, "Wi-Fi")
 
-        assertEquals(NetworkRouteMode.DIRECT_FIRST, state.effectiveRouteMode)
+        assertEquals(NetworkRouteMode.CF_FIRST, state.effectiveRouteMode)
     }
 
     @Test
@@ -39,15 +40,15 @@ class RouteStateTest {
     }
 
     @Test
-    fun autoMobileToWifiRecordsPreviousAndReason() {
+    fun autoMobileToWifiStaysCfFirstAndRecordsUnchangedSafeRoute() {
         val state = RouteState(NetworkRouteMode.AUTO, "mobile")
 
         val result = state.applyNetwork("Wi-Fi")
 
-        assertTrue(result.changed)
+        assertFalse(result.changed)
         assertEquals(NetworkRouteMode.CF_FIRST, result.previous)
-        assertEquals(NetworkRouteMode.DIRECT_FIRST, result.current)
-        assertEquals(NetworkRouteMode.CF_FIRST, state.snapshot().previousEffectiveRouteMode)
+        assertEquals(NetworkRouteMode.CF_FIRST, result.current)
+        assertNull(state.snapshot().previousEffectiveRouteMode)
         assertEquals("network=Wi-Fi", state.snapshot().lastRouteChangeReason)
         assertEquals("Wi-Fi", state.snapshot().networkAtLastRouteChange)
     }

@@ -5,6 +5,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertNull
 import org.junit.Test
 import java.io.IOException
 import java.net.SocketException
@@ -897,10 +898,10 @@ class ProxyServerTest {
 
 
     @Test
-    fun autoRouteModeResolvesWifiToDirectFirst() {
+    fun autoRouteModeResolvesWifiToCfFirstBeforeDirectHealthPromotion() {
         val config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi")
 
-        assertEquals(NetworkRouteMode.DIRECT_FIRST, config.effectiveRouteMode)
+        assertEquals(NetworkRouteMode.CF_FIRST, config.effectiveRouteMode)
     }
 
     @Test
@@ -985,25 +986,27 @@ class ProxyServerTest {
 
 
     @Test
-    fun networkChangeMobileToWifiUpdatesEffectiveRouteWithoutRecreatingProxyServer() {
+    fun networkChangeMobileToWifiKeepsCfFirstUntilDirectHealthSucceeds() {
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
         val proxy = newProxy(
             server = server,
             config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "mobile"),
+            connector = RawWebSocketConnector { _, domain, _, _ -> throw IOException("probe blocked for $domain") },
             logger = ProxyLogger { logs.add(it) },
         )
 
         proxy.start()
         val before = proxy
         val result = proxy.applyNetworkRoute("Wi-Fi")
+        waitUntil { proxy.stats().directHealthFailures > 0L }
         proxy.stop()
 
-        assertTrue(result.changed)
+        assertFalse(result.changed)
         assertTrue(before === proxy)
-        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
-        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().previousEffectiveRouteMode)
-        assertTrue(logs.any { it.contains("effective route changed: cf_first -> direct_first because network=Wi-Fi") })
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertNull(proxy.stats().previousEffectiveRouteMode)
+        assertTrue(logs.any { it.contains("direct health probe failed") })
     }
 
     @Test
@@ -1017,6 +1020,7 @@ class ProxyServerTest {
         )
 
         proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
         val result = proxy.applyNetworkRoute("mobile")
         proxy.stop()
 
@@ -1036,7 +1040,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(
-                poolSize = 1,
+                poolSize = 3,
                 routeMode = NetworkRouteMode.AUTO,
                 networkStatus = "Wi-Fi",
                 cfProxyDomains = listOf("cf.example"),
@@ -1061,7 +1065,7 @@ class ProxyServerTest {
     fun routeSwitchToDirectFirstAllowsPoolWarmup() {
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
-        val connector = RawWebSocketConnector { _, _, _, _ -> throw IOException("warmup blocked") }
+        val connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() }
         val proxy = newProxy(
             server = server,
             connector = connector,
@@ -1076,10 +1080,11 @@ class ProxyServerTest {
 
         proxy.start()
         proxy.applyNetworkRoute("Wi-Fi")
-        waitUntil { logs.any { it.contains("Direct WS pool warmup started because effective route mode direct_first") } }
+        waitUntil { proxy.stats().directPromotions > 0L }
         proxy.stop()
 
         assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertTrue(logs.any { it.contains("direct promoted: cf_first -> direct_first") })
         assertTrue(logs.any { it.contains("WS pool warmup started") })
     }
 
@@ -1095,6 +1100,7 @@ class ProxyServerTest {
         )
 
         proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
         val result = proxy.applyNetworkRouteImmediately("none")
         proxy.stop()
 
@@ -1120,6 +1126,7 @@ class ProxyServerTest {
         )
 
         proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
         waitUntil { proxy.stats().directAttempts >= 4L }
         val result = proxy.applyNetworkRouteImmediately("none")
         proxy.stop()
@@ -1152,6 +1159,7 @@ class ProxyServerTest {
         )
 
         proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
         assertTrue(connectorStarted.await(2, TimeUnit.SECONDS))
         proxy.applyNetworkRouteImmediately("none")
         allowConnect.countDown()
@@ -1179,6 +1187,7 @@ class ProxyServerTest {
         )
 
         proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
         waitUntil { proxy.stats().directAttempts >= 4L }
         val directDomainsBefore = connector.domains.count { it.endsWith(".web.telegram.org") }
         proxy.applyNetworkRouteImmediately("none")
@@ -1190,6 +1199,174 @@ class ProxyServerTest {
         assertEquals(directDomainsBefore, directDomainsAfter)
         assertEquals(0L, proxy.stats().poolHits)
         assertTrue(connector.domains.any { it == "kws2.cf.example" })
+    }
+
+
+
+
+    @Test
+    fun poolStaleThresholdDowngradesAutoDirectFirstToCfFirst() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            connector = MultiSocketRecordingConnector(),
+            config = baseConfig().copy(
+                poolSize = 3,
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                dcRedirects = mapOf(2 to "203.0.113.2"),
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
+                counters.finish("exception: EOFException: no frame")
+            },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
+        waitUntil { proxy.stats().directAttempts >= 6L }
+        repeat(3) {
+            val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+            server.enqueue(client)
+            waitUntil { client.closed }
+        }
+        waitUntil { proxy.stats().directDowngrades > 0L }
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertTrue(proxy.stats().poolStale >= 3L)
+        assertEquals(DirectHealthState.COOLDOWN.configValue, proxy.stats().directHealthState)
+        assertTrue(logs.any { it.contains("direct route downgraded to cf_first because health degraded") })
+    }
+
+    @Test
+    fun autoWifiPromotesToDirectFirstAfterRequiredSuccessfulHealthProbes() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val attempts = AtomicInteger(0)
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ ->
+                attempts.incrementAndGet()
+                FakeWebSocketBinaryStream()
+            },
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", poolSize = 0),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().directPromotions == 1L }
+        proxy.stop()
+
+        assertTrue(attempts.get() >= 2)
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(2L, proxy.stats().directHealthSuccesses)
+        assertTrue(logs.any { it.contains("direct promoted: cf_first -> direct_first") })
+    }
+
+    @Test
+    fun failedAutoWifiHealthProbeKeepsCfFirst() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, domain, _, _ -> throw IOException("direct unavailable $domain") },
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", poolSize = 0),
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().directHealthFailures > 0L }
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(0L, proxy.stats().directPromotions)
+        assertEquals(DirectHealthState.UNHEALTHY.configValue, proxy.stats().directHealthState)
+    }
+
+    @Test
+    fun mobileAutoRouteRemainsCfFirstAndNeverPromotesDirect() {
+        val server = FakeTcpServerTransport()
+        val attempts = AtomicInteger(0)
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ ->
+                attempts.incrementAndGet()
+                FakeWebSocketBinaryStream()
+            },
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "mobile"),
+        )
+
+        proxy.start()
+        Thread.sleep(100)
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(0L, proxy.stats().directPromotions)
+        assertEquals(0, attempts.get())
+    }
+
+
+    @Test
+    fun stalePoolRetrySkipsColdDirectAfterRouteGenerationChanges() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        var proxy: ProxyServer? = null
+        proxy = newProxy(
+            server = server,
+            connector = MultiSocketRecordingConnector(),
+            config = baseConfig().copy(
+                poolSize = 1,
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                dcRedirects = mapOf(2 to "203.0.113.2"),
+                cfproxyEnabled = false,
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
+                counters.finish("exception: EOFException: no frame")
+                proxy!!.applyNetworkRouteImmediately("none")
+            },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy!!.start()
+        proxy!!.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
+        waitUntil { logs.any { it.contains("WS pool refilled DC2: 1 ready") } }
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy!!.stop()
+
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy!!.stats().effectiveRouteMode)
+        assertEquals(1L, proxy!!.stats().poolStale)
+        assertTrue(proxy!!.stats().directAttemptsSkippedBecauseRoute > 0L)
+        assertTrue(logs.any { it.contains("cold direct retry skipped after stale pool because route/network changed") })
+        assertFalse(logs.any { it.contains("retrying with cold direct route after stale pool") })
+    }
+
+    @Test
+    fun networkNoneDisablesDirectAndPreventsColdDirectRetry() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", cfproxyEnabled = false),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
+        proxy.applyNetworkRouteImmediately("none")
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(0, connector.domains.size)
+        assertTrue(proxy.stats().directAttemptsSkippedBecauseRoute > 0L)
+        assertTrue(logs.any { it.contains("direct fallback skipped") || it.contains("no route available after CF-first attempts") })
     }
 
     @Test

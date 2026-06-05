@@ -409,7 +409,8 @@ class ProxyForegroundService : Service() {
             "sessionTimeouts=${stats.sessionTimeouts} sessionEof=${stats.sessionEof} " +
             "sessionClientClosed=${stats.sessionClientClosed} sessionSocketClosed=${stats.sessionSocketClosed} " +
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors} cf=${stats.cfProxyConnections}/${stats.cfProxyErrors} " +
-            "pool=${stats.poolHits}/${stats.poolMisses}/${stats.poolRefillErrors} poolStale=${stats.poolStale} route=${stats.effectiveRouteMode} lastRoute=${stats.lastRouteUsed ?: "none"}"
+            "pool=${stats.poolHits}/${stats.poolMisses}/${stats.poolRefillErrors} poolStale=${stats.poolStale} " +
+            "directHealth=${stats.directHealthState} route=${stats.effectiveRouteMode} lastRoute=${stats.lastRouteUsed ?: "none"}"
     }
 
     companion object {

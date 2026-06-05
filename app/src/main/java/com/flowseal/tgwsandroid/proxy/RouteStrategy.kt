@@ -72,15 +72,24 @@ class RouteState(
         while (true) {
             val current = state.get()
             if (current.effectiveRouteMode == desiredEffectiveRouteMode) {
-                return RouteChangeResult(
-                    changed = false,
-                    previous = current.effectiveRouteMode,
-                    current = current.effectiveRouteMode,
-                    snapshot = current,
-                    reason = reason,
-                    networkStatus = networkStatus,
-                    source = source,
+                val updated = current.copy(
+                    lastRouteChangeReason = reason,
+                    lastRouteChangeSource = source,
+                    lastRouteChangeTimeMs = clock.millis(),
+                    networkAtLastRouteChange = networkStatus.ifBlank { "unknown" },
                 )
+                if (state.compareAndSet(current, updated)) {
+                    return RouteChangeResult(
+                        changed = false,
+                        previous = current.effectiveRouteMode,
+                        current = current.effectiveRouteMode,
+                        snapshot = updated,
+                        reason = reason,
+                        networkStatus = networkStatus,
+                        source = source,
+                    )
+                }
+                continue
             }
             val updated = current.copy(
                 effectiveRouteMode = desiredEffectiveRouteMode,
@@ -123,10 +132,10 @@ object RouteStrategy {
         NetworkRouteMode.AUTO -> when {
             networkStatus.equals("mobile", ignoreCase = true) -> NetworkRouteMode.CF_FIRST
             networkStatus.equals("cellular", ignoreCase = true) -> NetworkRouteMode.CF_FIRST
-            networkStatus.equals("Wi-Fi", ignoreCase = true) -> NetworkRouteMode.DIRECT_FIRST
-            networkStatus.equals("wifi", ignoreCase = true) -> NetworkRouteMode.DIRECT_FIRST
+            networkStatus.equals("Wi-Fi", ignoreCase = true) -> NetworkRouteMode.CF_FIRST
+            networkStatus.equals("wifi", ignoreCase = true) -> NetworkRouteMode.CF_FIRST
             networkStatus.equals("none", ignoreCase = true) -> NetworkRouteMode.CF_FIRST
-            else -> NetworkRouteMode.DIRECT_FIRST
+            else -> NetworkRouteMode.CF_FIRST
         }
         else -> configuredMode
     }
