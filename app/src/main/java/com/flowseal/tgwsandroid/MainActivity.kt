@@ -364,10 +364,10 @@ class MainActivity : Activity() {
         hintsContainer.removeAllViews()
         val candidates = buildList {
             if (!prefs.getBoolean(PREF_HINT_FIRST_START_DISMISSED, false) && !prefs.getBoolean(PREF_PROXY_EVER_STARTED, false)) {
-                add(HintCard("Начните с запуска прокси", "Нажмите «Запустить», затем «Подключить Telegram».", "Понятно") {
+                add(HintCard("Начните с запуска прокси", "Нажмите «Запустить», затем «Подключить Telegram».", "Понятно", onPrimary = {
                     prefs.edit().putBoolean(PREF_HINT_FIRST_START_DISMISSED, true).apply()
                     refreshHints()
-                })
+                }))
             }
             if (!prefs.getBoolean(PREF_HINT_BATTERY_DISMISSED, false) && detectBatteryOptimizationStatus() != "unrestricted") {
                 add(HintCard("Разрешите работу в фоне", "Чтобы прокси не останавливался, отключите ограничения батареи для приложения.", "Открыть настройки", {
@@ -390,10 +390,10 @@ class MainActivity : Activity() {
                 })
             }
             if (!prefs.getBoolean(PREF_HINT_MOBILE_DISMISSED, false) && ProxyForegroundService.State.networkStatus.equals("mobile", ignoreCase = true)) {
-                add(HintCard("Мобильная сеть", "На мобильной сети используется совместимый маршрут. Ping может быть выше, чем на Wi-Fi.", "Понятно") {
+                add(HintCard("Мобильная сеть", "На мобильной сети используется совместимый маршрут. Ping может быть выше, чем на Wi-Fi.", "Понятно", onPrimary = {
                     prefs.edit().putBoolean(PREF_HINT_MOBILE_DISMISSED, true).apply()
                     refreshHints()
-                })
+                }))
             }
         }.take(MAX_HINTS)
         candidates.forEach { hintsContainer.addView(createHintCard(it), cardParams(bottomMargin = (8 * resources.displayMetrics.density).toInt())) }
