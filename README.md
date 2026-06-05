@@ -115,3 +115,13 @@ Runtime logs are stored in private app storage and restored after activity/servi
 WebSocket timeout handling follows upstream parity: connect and HTTP WebSocket handshake reads are bounded, but post-handshake WebSocket frame reads do not use a fixed 10-second idle timeout. Unexpected previous proxy termination is detected from a private run marker and logged on the next app/service initialization.
 
 Recommended issue capture: Clear logs, Start proxy, reproduce the issue, Share logs, then send the exported `.txt` file.
+
+### Upstream file preparedness
+
+Android-specific changes must not modify the mirrored upstream proxy files. The upstream mirror is tracked by `tools/upstream_manifest.json`; after changes, run:
+
+```bash
+python tools/check_upstream.py
+```
+
+The developer section in the app intentionally does not download or update upstream code. It points developers to this check so critical upstream updates can be reviewed separately without mixing Android UI changes into the upstream mirror.

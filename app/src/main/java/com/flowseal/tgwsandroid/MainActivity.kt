@@ -25,6 +25,8 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.CheckBox
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -42,38 +44,40 @@ import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
 class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
 
+    private lateinit var contentHost: FrameLayout
+    private lateinit var homeNavButton: Button
+    private lateinit var settingsNavButton: Button
+
     private lateinit var statusText: TextView
     private lateinit var networkText: TextView
-    private lateinit var batteryText: TextView
-    private lateinit var lastStatusText: TextView
-    private lateinit var endpointText: TextView
-    private lateinit var secretText: TextView
-    private lateinit var dcText: TextView
-    private lateinit var cfFallbackText: TextView
-    private lateinit var routeModeText: TextView
-    private lateinit var lastRouteChangeText: TextView
-    private lateinit var statsText: TextView
-    private lateinit var logsText: TextView
+    private lateinit var routeText: TextView
+    private lateinit var qualityText: TextView
     private lateinit var restartRequiredText: TextView
     private lateinit var telegramCleanupHintText: TextView
-    private lateinit var advancedCard: LinearLayout
+    private lateinit var hintsContainer: LinearLayout
+    private lateinit var primaryControlButton: Button
+    private lateinit var connectTelegramButton: Button
+    private lateinit var restartPendingButton: Button
 
+    private lateinit var batteryStatusText: TextView
+    private lateinit var routeModeValueText: TextView
+    private lateinit var secretStateText: TextView
+    private lateinit var restartProxyButton: Button
+    private lateinit var restartProxyHintText: TextView
+    private lateinit var developerModeCheckBox: CheckBox
+    private lateinit var developerSection: LinearLayout
+    private lateinit var logsText: TextView
+    private lateinit var rawRouteDetailsText: TextView
+    private lateinit var cfDetailsText: TextView
+    private lateinit var directDetailsText: TextView
+    private lateinit var upstreamStatusText: TextView
+
+    private var currentScreen: Screen = Screen.HOME
     private var pendingRestartRequired: Boolean = false
     private var showTelegramCleanupHint: Boolean = false
-    private var advancedExpanded: Boolean = false
+    private var transitionStatus: TransitionStatus = TransitionStatus.NONE
 
-    private lateinit var primaryControlButton: Button
-    private lateinit var restartDashboardButton: Button
-    private lateinit var restartAdvancedButton: Button
-    private lateinit var resetSecretButton: Button
-    private lateinit var routeModeButton: Button
-    private lateinit var connectTelegramButton: Button
-    private lateinit var advancedToggleButton: Button
-    private lateinit var copyProxyLinkButton: Button
-    private lateinit var clearLogsButton: Button
-    private lateinit var copyDiagnosticsButton: Button
-    private lateinit var shareDiagnosticsButton: Button
-    private lateinit var batterySettingsButton: Button
+    private val prefs by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
 
     private val refreshRunnable = object : Runnable {
         override fun run() {
@@ -88,38 +92,10 @@ class MainActivity : Activity() {
         ProxyForegroundService.State.initialize(applicationContext, "activity")
         pendingRestartRequired = savedInstanceState?.getBoolean(KEY_PENDING_RESTART_REQUIRED) ?: false
         showTelegramCleanupHint = savedInstanceState?.getBoolean(KEY_SHOW_TELEGRAM_CLEANUP_HINT) ?: false
-        advancedExpanded = savedInstanceState?.getBoolean(KEY_ADVANCED_EXPANDED) ?: false
+        currentScreen = Screen.valueOf(savedInstanceState?.getString(KEY_CURRENT_SCREEN) ?: Screen.HOME.name)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        setContentView(buildContentView())
-
-        primaryControlButton.setOnClickListener {
-            if (ProxyForegroundService.State.running) {
-                startService(ProxyForegroundService.stopIntent(this))
-            } else {
-                requestNotificationPermissionIfNeeded()
-                startProxyService()
-            }
-        }
-        restartDashboardButton.setOnClickListener { restartProxyService() }
-        restartAdvancedButton.setOnClickListener { restartProxyService() }
-        resetSecretButton.setOnClickListener { confirmResetSecret() }
-        routeModeButton.setOnClickListener { showRouteModeDialog() }
-        connectTelegramButton.setOnClickListener { openTelegramProxyLink() }
-        advancedToggleButton.setOnClickListener {
-            advancedExpanded = !advancedExpanded
-            refreshState()
-        }
-        copyProxyLinkButton.setOnClickListener {
-            copyProxyLink()
-            Toast.makeText(this, "Proxy link copied", Toast.LENGTH_SHORT).show()
-        }
-        clearLogsButton.setOnClickListener {
-            ProxyForegroundService.State.clearLogs()
-            refreshState()
-        }
-        copyDiagnosticsButton.setOnClickListener { copyDiagnostics() }
-        shareDiagnosticsButton.setOnClickListener { shareDiagnostics() }
-        batterySettingsButton.setOnClickListener { openBatterySettings() }
+        setContentView(buildRootView())
+        showScreen(currentScreen)
         refreshState()
     }
 
@@ -131,7 +107,7 @@ class MainActivity : Activity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(KEY_PENDING_RESTART_REQUIRED, pendingRestartRequired)
         outState.putBoolean(KEY_SHOW_TELEGRAM_CLEANUP_HINT, showTelegramCleanupHint)
-        outState.putBoolean(KEY_ADVANCED_EXPANDED, advancedExpanded)
+        outState.putString(KEY_CURRENT_SCREEN, currentScreen.name)
         super.onSaveInstanceState(outState)
     }
 
@@ -140,205 +116,363 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
-    private fun buildContentView(): ScrollView {
+    private fun buildRootView(): LinearLayout {
         val density = resources.displayMetrics.density
         val padding = (16 * density).toInt()
-        val smallPadding = (8 * density).toInt()
-        val rowGap = (6 * density).toInt()
+        contentHost = FrameLayout(this).apply { setBackgroundColor(COLOR_BACKGROUND) }
+        homeNavButton = createNavButton("Главная") { showScreen(Screen.HOME) }
+        settingsNavButton = createNavButton("Настройки") { showScreen(Screen.SETTINGS) }
+        val nav = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setBackgroundColor(Color.WHITE)
+            setPadding(padding / 2, padding / 2, padding / 2, padding / 2)
+            addView(homeNavButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(settingsNavButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(COLOR_BACKGROUND)
+            applySystemInsetsPadding(basePadding = 0)
+            addView(contentHost, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
+            addView(nav, matchWrapParams())
+        }
+    }
 
+    private fun showScreen(screen: Screen) {
+        currentScreen = screen
+        contentHost.removeAllViews()
+        val view = when (screen) {
+            Screen.HOME -> buildHomeScreen()
+            Screen.SETTINGS -> buildSettingsScreen()
+        }
+        contentHost.addView(view, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        homeNavButton.isSelected = screen == Screen.HOME
+        settingsNavButton.isSelected = screen == Screen.SETTINGS
+        homeNavButton.setTextColor(if (screen == Screen.HOME) COLOR_ACCENT else COLOR_TEXT_PRIMARY)
+        settingsNavButton.setTextColor(if (screen == Screen.SETTINGS) COLOR_ACCENT else COLOR_TEXT_PRIMARY)
+        refreshState()
+    }
+
+    private fun buildHomeScreen(): ScrollView {
+        val density = resources.displayMetrics.density
+        val padding = (16 * density).toInt()
+        val rowGap = (8 * density).toInt()
         statusText = createValueText(textSize = 22f, bold = true)
         networkText = createValueText()
-        batteryText = createValueText()
-        lastStatusText = createValueText()
-        endpointText = createValueText()
-        secretText = createValueText()
-        dcText = createValueText()
-        cfFallbackText = createValueText()
-        routeModeText = createValueText()
-        lastRouteChangeText = createValueText()
-        statsText = createValueText()
-        logsText = TextView(this).apply {
-            text = "No logs yet"
-            setTextColor(COLOR_TEXT_SECONDARY)
-            textSize = 13f
-            setTextIsSelectable(true)
-        }
+        routeText = createValueText()
+        qualityText = createValueText()
         restartRequiredText = createValueText().apply {
-            text = "Restart required to apply new secret"
+            text = "Нужно перезагрузить прокси, чтобы применить изменения."
             setTextColor(COLOR_WARNING)
             typeface = Typeface.DEFAULT_BOLD
         }
         telegramCleanupHintText = createValueText().apply {
-            text = "If Telegram keeps reconnecting, remove old 127.0.0.1:1443 proxy entries and connect again."
+            text = "Секрет обновлён. Подключите Telegram заново."
             setTextColor(COLOR_TEXT_SECONDARY)
         }
-
-        primaryControlButton = createButton("Start proxy")
-        restartDashboardButton = createButton("Restart proxy")
-        restartAdvancedButton = createButton("Restart proxy")
-        resetSecretButton = createButton("Reset secret")
-        routeModeButton = createButton("Route mode")
-        connectTelegramButton = createButton("Connect in Telegram")
-        advancedToggleButton = createButton("Diagnostics / Advanced")
-        copyProxyLinkButton = createButton("Copy proxy link")
-        clearLogsButton = createButton("Clear logs")
-        copyDiagnosticsButton = createButton("Copy diagnostics")
-        shareDiagnosticsButton = createButton("Share diagnostics")
-        batterySettingsButton = createButton("Battery settings")
-
+        primaryControlButton = createButton("Запустить") {
+            if (ProxyForegroundService.State.running) {
+                transitionStatus = TransitionStatus.STOPPING
+                startService(ProxyForegroundService.stopIntent(this))
+            } else {
+                transitionStatus = TransitionStatus.STARTING
+                requestNotificationPermissionIfNeeded()
+                startProxyService()
+            }
+            refreshState()
+        }
+        connectTelegramButton = createButton("Подключить Telegram") { openTelegramProxyLink() }
+        restartPendingButton = createButton("Перезагрузить прокси") { restartProxyService() }
+        hintsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(padding, padding, padding, padding)
             setBackgroundColor(COLOR_BACKGROUND)
-            applySystemInsetsPadding(basePadding = padding)
-
-            addView(TextView(this@MainActivity).apply {
-                text = "TG WS Android"
-                textSize = 26f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(COLOR_TEXT_PRIMARY)
-            }, matchWrapParams())
-            addView(TextView(this@MainActivity).apply {
-                text = "Local Telegram WebSocket proxy"
-                textSize = 15f
-                setTextColor(COLOR_TEXT_SECONDARY)
-                setPadding(0, smallPadding / 2, 0, smallPadding)
-            }, matchWrapParams())
-
-            addView(createCard("Dashboard") {
-                addView(createTextRow("Status", statusText), matchWrapParams())
-                addView(createTextRow("Network", networkText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Route", routeModeText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Last route change", lastRouteChangeText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Battery optimization", batteryText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Endpoint", endpointText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Last status", lastStatusText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Stats", statsText), matchWrapParams(topMargin = rowGap))
-                addView(restartRequiredText, matchWrapParams(topMargin = smallPadding))
+            addHeader()
+            addView(hintsContainer, matchWrapParams(bottomMargin = rowGap))
+            addView(createCard("Главная") {
+                addView(createTextRow("Статус", statusText), matchWrapParams())
+                addView(createTextRow("Текущая сеть", networkText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Маршрут", routeText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Качество подключения", qualityText), matchWrapParams(topMargin = rowGap))
+                addView(restartRequiredText, matchWrapParams(topMargin = rowGap))
                 addView(telegramCleanupHintText, matchWrapParams(topMargin = rowGap))
-                addView(primaryControlButton, matchWrapParams(topMargin = smallPadding))
-                addView(restartDashboardButton, matchWrapParams(topMargin = rowGap))
+                addView(primaryControlButton, matchWrapParams(topMargin = rowGap))
+                addView(restartPendingButton, matchWrapParams(topMargin = rowGap))
                 addView(connectTelegramButton, matchWrapParams(topMargin = rowGap))
-                addView(advancedToggleButton, matchWrapParams(topMargin = rowGap))
-            }, cardParams(topMargin = smallPadding))
-
-            advancedCard = createCard("Diagnostics / Advanced") {
-                addView(createTextRow("Secret", secretText), matchWrapParams())
-                addView(createTextRow("DC summary", dcText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("CF fallback", cfFallbackText), matchWrapParams(topMargin = rowGap))
-                addView(routeModeButton, matchWrapParams(topMargin = rowGap))
-                addView(createSectionTitle("Actions"), matchWrapParams(topMargin = smallPadding))
-                addView(batterySettingsButton, matchWrapParams(topMargin = rowGap))
-                addView(copyProxyLinkButton, matchWrapParams(topMargin = rowGap))
-                addView(copyDiagnosticsButton, matchWrapParams(topMargin = rowGap))
-                addView(shareDiagnosticsButton, matchWrapParams(topMargin = rowGap))
-                addView(clearLogsButton, matchWrapParams(topMargin = rowGap))
-                addView(resetSecretButton, matchWrapParams(topMargin = rowGap))
-                addView(restartAdvancedButton, matchWrapParams(topMargin = rowGap))
-                addView(createSectionTitle("Recent logs"), matchWrapParams(topMargin = smallPadding))
-                addView(logsText, matchWrapParams(topMargin = rowGap))
-            }
-            addView(advancedCard, cardParams(topMargin = padding, bottomMargin = padding))
+            }, cardParams())
         }
-
         return ScrollView(this).apply {
             setBackgroundColor(COLOR_BACKGROUND)
             addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
     }
 
-    private fun createCard(title: String, body: LinearLayout.() -> Unit): LinearLayout =
-        LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.RECTANGLE
-                setColor(Color.WHITE)
-                cornerRadius = 16 * resources.displayMetrics.density
-                setStroke((1 * resources.displayMetrics.density).toInt().coerceAtLeast(1), COLOR_CARD_STROKE)
+    private fun buildSettingsScreen(): ScrollView {
+        val density = resources.displayMetrics.density
+        val padding = (16 * density).toInt()
+        val rowGap = (8 * density).toInt()
+        routeModeValueText = createValueText()
+        batteryStatusText = createValueText()
+        secretStateText = createValueText().apply { setTextColor(COLOR_SUCCESS) }
+        restartProxyHintText = createValueText().apply { setTextColor(COLOR_TEXT_SECONDARY) }
+        restartProxyButton = createButton("Перезагрузить прокси") { restartProxyService() }
+        developerModeCheckBox = CheckBox(this).apply {
+            text = "Режим разработчика"
+            isAllCaps = false
+            isChecked = developerModeEnabled()
+            setTextColor(COLOR_TEXT_PRIMARY)
+            setOnCheckedChangeListener { _, enabled ->
+                prefs.edit().putBoolean(PREF_DEVELOPER_MODE, enabled).apply()
+                developerSection.visibility = if (enabled) View.VISIBLE else View.GONE
+                refreshState()
             }
-            val innerPadding = (16 * resources.displayMetrics.density).toInt()
-            setPadding(innerPadding, innerPadding, innerPadding, innerPadding)
-            addView(createSectionTitle(title), matchWrapParams(bottomMargin = (8 * resources.displayMetrics.density).toInt()))
-            body()
         }
-
-    private fun createSectionTitle(title: String): TextView = TextView(this).apply {
-        text = title
-        textSize = 17f
-        typeface = Typeface.DEFAULT_BOLD
-        setTextColor(COLOR_TEXT_PRIMARY)
-    }
-
-    private fun createButton(label: String): Button = Button(this).apply {
-        text = label
-        isAllCaps = false
-    }
-
-    private fun createTextRow(label: String, value: TextView): LinearLayout =
-        LinearLayout(this).apply {
+        logsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        upstreamStatusText = createValueText()
+        developerSection = createCard("Режим разработчика") {
+            addView(createTextRow("Статус upstream-файлов", upstreamStatusText), matchWrapParams())
+            addView(createTextRow("Подробности маршрута", rawRouteDetailsText), matchWrapParams(topMargin = rowGap))
+            addView(createTextRow("Состояние резервных доменов", cfDetailsText), matchWrapParams(topMargin = rowGap))
+            addView(createTextRow("Состояние прямого маршрута", directDetailsText), matchWrapParams(topMargin = rowGap))
+            addView(createSectionTitle("Действия"), matchWrapParams(topMargin = rowGap))
+            addView(createButton("Копировать диагностику") { copyDiagnostics() }, matchWrapParams(topMargin = rowGap))
+            addView(createButton("Очистить логи") {
+                ProxyForegroundService.State.clearLogs()
+                refreshState()
+            }, matchWrapParams(topMargin = rowGap))
+            addView(createButton("Копировать ссылку прокси") {
+                copyProxyLink()
+                Toast.makeText(this@MainActivity, "Ссылка прокси скопирована", Toast.LENGTH_SHORT).show()
+            }, matchWrapParams(topMargin = rowGap))
+            addView(createButton("Поделиться диагностикой") { shareDiagnostics() }, matchWrapParams(topMargin = rowGap))
+            addView(createSectionTitle("Логи"), matchWrapParams(topMargin = rowGap))
+            addView(logsText, matchWrapParams(topMargin = rowGap))
+        }
+        val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            addView(TextView(this@MainActivity).apply {
-                text = label
-                textSize = 12f
-                setTextColor(COLOR_TEXT_MUTED)
-                typeface = Typeface.DEFAULT_BOLD
-            }, matchWrapParams())
-            addView(value, matchWrapParams(topMargin = 2))
+            setPadding(padding, padding, padding, padding)
+            setBackgroundColor(COLOR_BACKGROUND)
+            addHeader()
+            addView(createCard("Режим подключения") {
+                addView(createTextRow("Выбранный режим", routeModeValueText), matchWrapParams())
+                UserRouteModes.normalOptions.forEach { option ->
+                    addView(createRouteModeButton(option), matchWrapParams(topMargin = rowGap))
+                }
+            }, cardParams())
+            addView(createCard("Батарея") {
+                addView(createTextRow("Статус", batteryStatusText), matchWrapParams())
+                addView(createButton("Открыть настройки батареи") { openBatterySettings() }, matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding))
+            addView(createCard("Telegram") {
+                addView(createButton("Обновить секрет") { confirmResetSecret() }, matchWrapParams())
+                addView(secretStateText, matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding))
+            addView(createCard("Прокси") {
+                addView(restartProxyButton, matchWrapParams())
+                addView(restartProxyHintText, matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding))
+            addView(createCard("Дополнительно") {
+                addView(developerModeCheckBox, matchWrapParams())
+            }, cardParams(topMargin = padding))
+            addView(developerSection, cardParams(topMargin = padding, bottomMargin = padding))
         }
-
-    private fun createValueText(textSize: Float = 14f, bold: Boolean = false): TextView = TextView(this).apply {
-        this.textSize = textSize
-        setTextColor(COLOR_TEXT_PRIMARY)
-        if (bold) typeface = Typeface.DEFAULT_BOLD
+        return ScrollView(this).apply {
+            setBackgroundColor(COLOR_BACKGROUND)
+            addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
     }
 
-    private fun matchWrapParams(topMargin: Int = 0, bottomMargin: Int = 0): LinearLayout.LayoutParams =
-        LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-            this.topMargin = topMargin
-            this.bottomMargin = bottomMargin
+    private fun LinearLayout.addHeader() {
+        val smallPadding = (8 * resources.displayMetrics.density).toInt()
+        addView(TextView(this@MainActivity).apply {
+            text = "TG WS Android"
+            textSize = 26f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(COLOR_TEXT_PRIMARY)
+        }, matchWrapParams())
+        addView(TextView(this@MainActivity).apply {
+            text = "Локальный прокси для Telegram"
+            textSize = 15f
+            setTextColor(COLOR_TEXT_SECONDARY)
+            setPadding(0, smallPadding / 2, 0, smallPadding)
+        }, matchWrapParams())
+    }
+
+    private fun createRouteModeButton(option: UserRouteModeOption): Button = createButton(
+        "${option.title}\n${option.description}",
+    ) {
+        val store = AppConfigStore.from(applicationContext)
+        store.saveConfig(store.loadConfig().copy(routeMode = option.routeMode))
+        ProxyRuntimeConfig.initialize(applicationContext)
+        pendingRestartRequired = true
+        ProxyForegroundService.State.addLog("route mode changed to ${option.routeMode.configValue}; restart required", LogSeverity.INFO, "ui")
+        refreshState()
+    }
+
+    private fun refreshState() {
+        ProxyRuntimeConfig.initialize(applicationContext)
+        refreshLocalDiagnostics()
+        val running = ProxyForegroundService.State.running
+        if (transitionStatus == TransitionStatus.STARTING && running) transitionStatus = TransitionStatus.NONE
+        if (transitionStatus == TransitionStatus.STOPPING && !running) transitionStatus = TransitionStatus.NONE
+        val failed = ProxyForegroundService.State.lastStatus.contains("failed", ignoreCase = true) ||
+            ProxyForegroundService.State.lastStatus.contains("error", ignoreCase = true)
+
+        if (::statusText.isInitialized) {
+            statusText.text = when {
+                failed -> "Есть проблема"
+                transitionStatus == TransitionStatus.STARTING -> "Запускается..."
+                transitionStatus == TransitionStatus.STOPPING -> "Останавливается..."
+                running -> "Прокси работает"
+                else -> "Прокси остановлен"
+            }
+            networkText.text = userNetworkLabel(ProxyForegroundService.State.networkStatus)
+            routeText.text = userRouteLabel()
+            qualityText.text = ConnectionQualityMapper.quality(running, ProxyForegroundService.State.networkStatus, ProxyForegroundService.State.stats())
+            primaryControlButton.text = if (running) "Остановить" else "Запустить"
+            restartRequiredText.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE
+            restartPendingButton.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE
+            telegramCleanupHintText.visibility = if (showTelegramCleanupHint) View.VISIBLE else View.GONE
+            refreshHints()
         }
 
-    private fun cardParams(topMargin: Int = 0, bottomMargin: Int = 0): LinearLayout.LayoutParams =
-        matchWrapParams(topMargin, bottomMargin)
-
-    private fun LinearLayout.applySystemInsetsPadding(basePadding: Int) {
-        setPadding(basePadding, basePadding, basePadding, basePadding)
-        ViewCompat.setOnApplyWindowInsetsListener(this) { view, insets ->
-            val systemInsets = insets.getInsets(
-                WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout(),
-            )
-            view.updatePadding(
-                left = basePadding + systemInsets.left,
-                top = basePadding + systemInsets.top,
-                right = basePadding + systemInsets.right,
-                bottom = basePadding + systemInsets.bottom,
-            )
-            insets
+        if (::routeModeValueText.isInitialized) {
+            val config = ProxyRuntimeConfig.appConfig(applicationContext)
+            routeModeValueText.text = UserRouteModes.labelFor(config.routeMode)
+            batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
+            developerModeCheckBox.isChecked = developerModeEnabled()
+            developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+            restartProxyButton.isEnabled = running
+            restartProxyHintText.text = if (running) "" else "Доступно после запуска прокси"
+            upstreamStatusText.text = "Неизвестно — проверьте командой python tools/check_upstream.py"
+            rawRouteDetailsText.text = routeDetailsLine()
+            cfDetailsText.text = cfDetailsLine()
+            directDetailsText.text = directDetailsLine()
+            logsText.text = ProxyForegroundService.State.recentLogs()
+                .takeLast(MAX_VISIBLE_LOG_LINES)
+                .takeIf { it.isNotEmpty() }
+                ?.joinToString("\n")
+                ?: "Логов пока нет"
         }
+    }
+
+    private fun refreshHints() {
+        hintsContainer.removeAllViews()
+        val candidates = buildList {
+            if (!prefs.getBoolean(PREF_HINT_FIRST_START_DISMISSED, false) && !prefs.getBoolean(PREF_PROXY_EVER_STARTED, false)) {
+                add(HintCard("Начните с запуска прокси", "Нажмите «Запустить», затем «Подключить Telegram».", "Понятно") {
+                    prefs.edit().putBoolean(PREF_HINT_FIRST_START_DISMISSED, true).apply()
+                    refreshHints()
+                })
+            }
+            if (!prefs.getBoolean(PREF_HINT_BATTERY_DISMISSED, false) && detectBatteryOptimizationStatus() != "unrestricted") {
+                add(HintCard("Разрешите работу в фоне", "Чтобы прокси не останавливался, отключите ограничения батареи для приложения.", "Открыть настройки", {
+                    openBatterySettings()
+                    prefs.edit().putBoolean(PREF_HINT_BATTERY_DISMISSED, true).apply()
+                    refreshHints()
+                }, "Позже") {
+                    prefs.edit().putBoolean(PREF_HINT_BATTERY_DISMISSED, true).apply()
+                    refreshHints()
+                })
+            }
+            if (!prefs.getBoolean(PREF_HINT_NOTIFICATION_DISMISSED, false) && notificationPermissionMissing()) {
+                add(HintCard("Разрешите уведомление", "Уведомление нужно, чтобы прокси стабильно работал в фоне и им можно было управлять из шторки.", "Разрешить", {
+                    requestNotificationPermissionIfNeeded()
+                    prefs.edit().putBoolean(PREF_HINT_NOTIFICATION_DISMISSED, true).apply()
+                    refreshHints()
+                }, "Позже") {
+                    prefs.edit().putBoolean(PREF_HINT_NOTIFICATION_DISMISSED, true).apply()
+                    refreshHints()
+                })
+            }
+            if (!prefs.getBoolean(PREF_HINT_MOBILE_DISMISSED, false) && ProxyForegroundService.State.networkStatus.equals("mobile", ignoreCase = true)) {
+                add(HintCard("Мобильная сеть", "На мобильной сети используется совместимый маршрут. Ping может быть выше, чем на Wi-Fi.", "Понятно") {
+                    prefs.edit().putBoolean(PREF_HINT_MOBILE_DISMISSED, true).apply()
+                    refreshHints()
+                })
+            }
+        }.take(MAX_HINTS)
+        candidates.forEach { hintsContainer.addView(createHintCard(it), cardParams(bottomMargin = (8 * resources.displayMetrics.density).toInt())) }
+    }
+
+    private fun createHintCard(hint: HintCard): LinearLayout = createCard(hint.title) {
+        addView(createValueText().apply {
+            text = hint.text
+            setTextColor(COLOR_TEXT_SECONDARY)
+        }, matchWrapParams())
+        addView(createButton(hint.primaryAction, hint.onPrimary), matchWrapParams(topMargin = (8 * resources.displayMetrics.density).toInt()))
+        if (hint.secondaryAction != null && hint.onSecondary != null) {
+            addView(createButton(hint.secondaryAction, hint.onSecondary), matchWrapParams(topMargin = (6 * resources.displayMetrics.density).toInt()))
+        }
+    }
+
+    private fun userNetworkLabel(network: String): String = when {
+        network.equals("Wi-Fi", ignoreCase = true) || network.equals("wifi", ignoreCase = true) -> "Wi-Fi"
+        network.equals("mobile", ignoreCase = true) || network.equals("cellular", ignoreCase = true) -> "Мобильная сеть"
+        network.equals("none", ignoreCase = true) -> "Нет сети"
+        network.equals("unknown", ignoreCase = true) || network.isBlank() -> "Неизвестно"
+        else -> "Неизвестно"
+    }
+
+    private fun userRouteLabel(): String {
+        val config = ProxyRuntimeConfig.appConfig(applicationContext)
+        val stats = ProxyForegroundService.State.stats()
+        if (config.routeMode == NetworkRouteMode.AUTO && stats == null) return "Автоматический выбор"
+        val effective = stats?.effectiveRouteMode ?: ProxyRuntimeConfig.proxyServerConfig(config, ProxyForegroundService.State.networkStatus).effectiveRouteMode.configValue
+        return when {
+            effective.equals(NetworkRouteMode.DIRECT_FIRST.configValue, ignoreCase = true) -> "Быстрый маршрут"
+            effective.equals(NetworkRouteMode.CF_FIRST.configValue, ignoreCase = true) ||
+                effective.equals(NetworkRouteMode.CF_ONLY.configValue, ignoreCase = true) -> "Совместимый маршрут"
+            config.routeMode == NetworkRouteMode.AUTO -> "Автоматический выбор"
+            else -> "Маршрут неизвестен"
+        }
+    }
+
+    private fun userBatteryLabel(status: String): String = when (status) {
+        "unrestricted" -> "Без ограничений"
+        "optimized" -> "Может ограничиваться системой"
+        else -> "Неизвестно"
+    }
+
+    private fun routeDetailsLine(): String {
+        val config = ProxyRuntimeConfig.appConfig(applicationContext)
+        val stats = ProxyForegroundService.State.stats()
+        return "configured=${config.routeMode.name}/${config.routeMode.configValue}, effective=${stats?.effectiveRouteMode ?: "unknown"}, previous=${stats?.previousEffectiveRouteMode ?: "none"}, state=${stats?.lastRouteChangeReason ?: "unknown"}"
+    }
+
+    private fun cfDetailsLine(): String {
+        val stats = ProxyForegroundService.State.stats() ?: return "CF health: unknown"
+        return "CF health=${stats.cfHealthEnabled}, domains=${stats.cfDomainsTotal}, cooldown=${stats.cfDomainsInCooldown}, 429=${stats.cf429Count}, queueFailures=${stats.cfQueueControlledFailures}, pool=${stats.poolHits}/${stats.poolMisses}"
+    }
+
+    private fun directDetailsLine(): String {
+        val stats = ProxyForegroundService.State.stats() ?: return "direct health: unknown"
+        return "direct health=${stats.directHealthState}, attempts=${stats.directAttempts}, failures=${stats.directHealthFailures}, cooldownUntil=${stats.directCooldownUntil}, route state=${stats.lastRouteUsed ?: "none"}"
     }
 
     private fun startProxyService() {
+        prefs.edit().putBoolean(PREF_PROXY_EVER_STARTED, true).apply()
         val intent = ProxyForegroundService.startIntent(this)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            startForegroundService(intent)
-        } else {
-            startService(intent)
-        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(intent) else startService(intent)
     }
 
     private fun restartProxyService() {
+        if (!ProxyForegroundService.State.running) {
+            Toast.makeText(this, "Доступно после запуска прокси", Toast.LENGTH_SHORT).show()
+            refreshState()
+            return
+        }
         requestNotificationPermissionIfNeeded()
         val hadPendingRestart = pendingRestartRequired
         pendingRestartRequired = false
         if (hadPendingRestart) showTelegramCleanupHint = true
-        if (!ProxyForegroundService.State.running) {
-            startProxyService()
-            refreshState()
-            return
-        }
-
         startService(ProxyForegroundService.stopIntent(this))
         handler.postDelayed({
+            transitionStatus = TransitionStatus.STARTING
             startProxyService()
             refreshState()
         }, RESTART_DELAY_MS)
@@ -347,31 +481,30 @@ class MainActivity : Activity() {
 
     private fun confirmResetSecret() {
         AlertDialog.Builder(this)
-            .setTitle("Reset secret?")
-            .setMessage("Reset secret changes Telegram proxy link. You will need to reconnect Telegram.")
-            .setNegativeButton("Cancel", null)
-            .setPositiveButton("Reset") { _, _ -> resetSecret() }
+            .setTitle("Обновить секрет?")
+            .setMessage("После обновления секрета нужно заново подключить Telegram. Старое подключение перестанет работать.")
+            .setPositiveButton("Обновить") { _, _ -> resetSecret() }
+            .setNegativeButton("Отмена", null)
             .show()
     }
 
     private fun resetSecret() {
         ProxyRuntimeConfig.resetSecret(applicationContext)
         pendingRestartRequired = true
-        showTelegramCleanupHint = false
+        showTelegramCleanupHint = true
         ProxyForegroundService.State.addLog("proxy secret reset; restart required to apply new secret", LogSeverity.INFO, "ui")
+        secretStateText.text = "Секрет обновлён. Подключите Telegram заново."
+        Toast.makeText(this, "Секрет обновлён. Подключите Telegram заново.", Toast.LENGTH_LONG).show()
         refreshState()
-        Toast.makeText(this, "Restart required to apply new secret", Toast.LENGTH_LONG).show()
     }
 
     private fun openTelegramProxyLink() {
         val telegramIntent = Intent(Intent.ACTION_VIEW, Uri.parse(ProxyRuntimeConfig.telegramProxyUri(this)))
         if (tryStartActivity(telegramIntent)) return
-
         val fallbackIntent = Intent(Intent.ACTION_VIEW, Uri.parse(ProxyRuntimeConfig.telegramProxyUrl(this)))
         if (tryStartActivity(fallbackIntent)) return
-
         copyProxyLink()
-        Toast.makeText(this, "No app can open the proxy link; copied instead", Toast.LENGTH_LONG).show()
+        Toast.makeText(this, "Не удалось открыть ссылку. Ссылка скопирована.", Toast.LENGTH_LONG).show()
     }
 
     private fun tryStartActivity(intent: Intent): Boolean = try {
@@ -383,35 +516,34 @@ class MainActivity : Activity() {
 
     private fun copyProxyLink() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Telegram proxy link", ProxyRuntimeConfig.telegramProxyUrl(this)))
+        clipboard.setPrimaryClip(ClipData.newPlainText("Ссылка прокси Telegram", ProxyRuntimeConfig.telegramProxyUrl(this)))
     }
 
     private fun copyDiagnostics() {
         if (!ProxyForegroundService.State.hasLogs()) {
-            Toast.makeText(this, "No diagnostics to copy", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Диагностики пока нет", Toast.LENGTH_SHORT).show()
             return
         }
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("TG WS Android diagnostics", ProxyForegroundService.State.diagnosticReport()))
-        Toast.makeText(this, "Diagnostics copied", Toast.LENGTH_SHORT).show()
+        clipboard.setPrimaryClip(ClipData.newPlainText("Диагностика TG WS Android", ProxyForegroundService.State.diagnosticReport()))
+        Toast.makeText(this, "Диагностика скопирована", Toast.LENGTH_SHORT).show()
     }
 
     private fun copyDiagnosticsToClipboard(diagnosticsReport: String) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("TG WS Android diagnostics", diagnosticsReport))
+        clipboard.setPrimaryClip(ClipData.newPlainText("Диагностика TG WS Android", diagnosticsReport))
     }
 
     private fun shareDiagnostics() {
         if (!ProxyForegroundService.State.hasLogs()) {
-            Toast.makeText(this, "No diagnostics to share", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Диагностики пока нет", Toast.LENGTH_SHORT).show()
             return
         }
         val diagnosticsReport = ProxyForegroundService.State.diagnosticReport()
         if (diagnosticsReport.isBlank()) {
-            Toast.makeText(this, "No diagnostics to share", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Диагностики пока нет", Toast.LENGTH_SHORT).show()
             return
         }
-
         val export = try {
             DiagnosticsFileExporter(this).exportWithFile(diagnosticsReport)
         } catch (error: Throwable) {
@@ -421,45 +553,23 @@ class MainActivity : Activity() {
                 "ui",
             )
             copyDiagnosticsToClipboard(diagnosticsReport)
-            Toast.makeText(this, "Failed to share file; diagnostics copied", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Не удалось поделиться файлом. Диагностика скопирована.", Toast.LENGTH_LONG).show()
             return
         }
-
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "TG WS Android diagnostics")
-            putExtra(Intent.EXTRA_TEXT, "TG WS Android diagnostics log attached.")
+            putExtra(Intent.EXTRA_SUBJECT, "Диагностика TG WS Android")
+            putExtra(Intent.EXTRA_TEXT, "Файл диагностики TG WS Android во вложении.")
             putExtra(Intent.EXTRA_STREAM, export.uri)
             clipData = ClipData.newUri(contentResolver, export.file.name, export.uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         try {
-            startActivity(Intent.createChooser(intent, "Share TG WS Android diagnostics"))
+            startActivity(Intent.createChooser(intent, "Поделиться диагностикой"))
         } catch (_: ActivityNotFoundException) {
             ProxyForegroundService.State.addLog("No app can share diagnostics", LogSeverity.WARN, "ui")
-            Toast.makeText(this, "No app can share diagnostics", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Нет приложения для отправки диагностики", Toast.LENGTH_LONG).show()
         }
-    }
-
-    private fun showRouteModeDialog() {
-        val current = ProxyRuntimeConfig.appConfig(applicationContext).routeMode
-        val modes = NetworkRouteMode.entries.toTypedArray()
-        val labels = modes.map { it.displayName }.toTypedArray()
-        AlertDialog.Builder(this)
-            .setTitle("Route mode")
-            .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
-                val selected = modes[which]
-                val store = AppConfigStore.from(applicationContext)
-                val updated = store.loadConfig().copy(routeMode = selected)
-                store.saveConfig(updated)
-                ProxyRuntimeConfig.initialize(applicationContext)
-                pendingRestartRequired = true
-                ProxyForegroundService.State.addLog("route mode changed to ${selected.configValue}; restart required", LogSeverity.INFO, "ui")
-                dialog.dismiss()
-                refreshState()
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
     }
 
     private fun openBatterySettings() {
@@ -468,79 +578,14 @@ class MainActivity : Activity() {
             val requestIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, packageUri)
             if (tryStartActivity(requestIntent)) return
         }
-
         val settingsIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
         if (tryStartActivity(settingsIntent)) return
-
-        Toast.makeText(this, "Battery settings cannot be opened", Toast.LENGTH_LONG).show()
-    }
-
-    private fun refreshState() {
-        ProxyRuntimeConfig.initialize(applicationContext)
-        refreshLocalDiagnostics()
-        val running = ProxyForegroundService.State.running
-        val failed = ProxyForegroundService.State.lastStatus.contains("failed", ignoreCase = true) ||
-            ProxyForegroundService.State.lastStatus.contains("error", ignoreCase = true)
-        statusText.text = when {
-            running -> "Running"
-            failed -> "Error"
-            else -> "Stopped"
-        }
-        networkText.text = ProxyForegroundService.State.networkStatus
-        batteryText.text = ProxyForegroundService.State.batteryOptimizationStatus
-        lastStatusText.text = ProxyForegroundService.State.lastStatus
-        endpointText.text = ProxyRuntimeConfig.endpointSummary()
-        secretText.text = ProxyRuntimeConfig.partialTelegramSecret()
-        dcText.text = ProxyRuntimeConfig.dcSummary()
-        cfFallbackText.text = ProxyRuntimeConfig.cfFallbackSummary()
-        routeModeText.text = routeSummaryLine()
-        lastRouteChangeText.text = lastRouteChangeLine()
-        statsText.text = conciseStatsLine()
-        primaryControlButton.text = if (running) "Stop proxy" else "Start proxy"
-        restartRequiredText.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE
-        restartDashboardButton.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE
-        telegramCleanupHintText.visibility = if (showTelegramCleanupHint) View.VISIBLE else View.GONE
-        advancedCard.visibility = if (advancedExpanded) View.VISIBLE else View.GONE
-        advancedToggleButton.text = if (advancedExpanded) "Hide Diagnostics / Advanced" else "Diagnostics / Advanced"
-        restartDashboardButton.isEnabled = true
-        restartAdvancedButton.isEnabled = true
-        connectTelegramButton.isEnabled = true
-        logsText.text = ProxyForegroundService.State.recentLogs()
-            .takeLast(MAX_VISIBLE_LOG_LINES)
-            .takeIf { it.isNotEmpty() }
-            ?.joinToString("\n")
-            ?: "No logs yet"
-    }
-
-    private fun routeSummaryLine(): String {
-        val config = ProxyRuntimeConfig.appConfig()
-        val stats = ProxyForegroundService.State.stats()
-        val effective = stats?.effectiveRouteMode
-            ?: ProxyRuntimeConfig.proxyServerConfig(config, ProxyForegroundService.State.networkStatus).effectiveRouteMode.configValue
-        return if (config.routeMode == NetworkRouteMode.AUTO) {
-            "Auto → $effective"
-        } else {
-            "${config.routeMode.configValue} (manual mode overrides network auto)"
-        }
-    }
-
-    private fun lastRouteChangeLine(): String {
-        val stats = ProxyForegroundService.State.stats() ?: return "none"
-        val previous = stats.previousEffectiveRouteMode ?: "none"
-        return "${stats.networkAtLastRouteChange}: $previous → ${stats.effectiveRouteMode} (${stats.lastRouteChangeReason})"
-    }
-
-    private fun conciseStatsLine(): String {
-        val stats = ProxyForegroundService.State.stats() ?: return "active=0, total=0, bad=0, wsErrors=0, timeouts=0"
-        return "active=${stats.connectionsActive}, total=${stats.connectionsTotal}, bad=${stats.connectionsBad}, " +
-            "wsErrors=${stats.wsConnectErrors}, timeouts=${stats.sessionTimeouts}"
+        Toast.makeText(this, "Не удалось открыть настройки батареи", Toast.LENGTH_LONG).show()
     }
 
     private fun refreshLocalDiagnostics() {
         ProxyForegroundService.State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
-        if (!ProxyForegroundService.State.running) {
-            ProxyForegroundService.State.setNetworkStatus(detectNetworkStatus())
-        }
+        if (!ProxyForegroundService.State.running) ProxyForegroundService.State.setNetworkStatus(detectNetworkStatus())
     }
 
     private fun detectBatteryOptimizationStatus(): String = try {
@@ -564,11 +609,95 @@ class MainActivity : Activity() {
         "unknown"
     }
 
+    private fun notificationPermissionMissing(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+        checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+
     private fun requestNotificationPermissionIfNeeded() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
-        if (checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) return
+        if (!notificationPermissionMissing()) return
         requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQUEST_POST_NOTIFICATIONS)
     }
+
+    private fun developerModeEnabled(): Boolean = prefs.getBoolean(PREF_DEVELOPER_MODE, false)
+
+    private fun createCard(title: String, body: LinearLayout.() -> Unit): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            setColor(Color.WHITE)
+            cornerRadius = 16 * resources.displayMetrics.density
+            setStroke((1 * resources.displayMetrics.density).toInt().coerceAtLeast(1), COLOR_CARD_STROKE)
+        }
+        val innerPadding = (16 * resources.displayMetrics.density).toInt()
+        setPadding(innerPadding, innerPadding, innerPadding, innerPadding)
+        addView(createSectionTitle(title), matchWrapParams(bottomMargin = (8 * resources.displayMetrics.density).toInt()))
+        body()
+    }
+
+    private fun createSectionTitle(title: String): TextView = TextView(this).apply {
+        text = title
+        textSize = 17f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(COLOR_TEXT_PRIMARY)
+    }
+
+    private fun createButton(label: String, onClick: (View) -> Unit = {}): Button = Button(this).apply {
+        text = label
+        isAllCaps = false
+        setOnClickListener(onClick)
+    }
+
+    private fun createNavButton(label: String, onClick: (View) -> Unit): Button = createButton(label, onClick)
+
+    private fun createTextRow(label: String, value: TextView): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        addView(TextView(this@MainActivity).apply {
+            text = label
+            textSize = 12f
+            setTextColor(COLOR_TEXT_MUTED)
+            typeface = Typeface.DEFAULT_BOLD
+        }, matchWrapParams())
+        addView(value, matchWrapParams(topMargin = 2))
+    }
+
+    private fun createValueText(textSize: Float = 14f, bold: Boolean = false): TextView = TextView(this).apply {
+        this.textSize = textSize
+        setTextColor(COLOR_TEXT_PRIMARY)
+        if (bold) typeface = Typeface.DEFAULT_BOLD
+    }
+
+    private fun matchWrapParams(topMargin: Int = 0, bottomMargin: Int = 0): LinearLayout.LayoutParams =
+        LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+            this.topMargin = topMargin
+            this.bottomMargin = bottomMargin
+        }
+
+    private fun cardParams(topMargin: Int = 0, bottomMargin: Int = 0): LinearLayout.LayoutParams = matchWrapParams(topMargin, bottomMargin)
+
+    private fun View.applySystemInsetsPadding(basePadding: Int) {
+        setPadding(basePadding, basePadding, basePadding, basePadding)
+        ViewCompat.setOnApplyWindowInsetsListener(this) { view, insets ->
+            val systemInsets = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
+            view.updatePadding(
+                left = basePadding + systemInsets.left,
+                top = basePadding + systemInsets.top,
+                right = basePadding + systemInsets.right,
+                bottom = basePadding + systemInsets.bottom,
+            )
+            insets
+        }
+    }
+
+    private enum class Screen { HOME, SETTINGS }
+    private enum class TransitionStatus { NONE, STARTING, STOPPING }
+
+    private data class HintCard(
+        val title: String,
+        val text: String,
+        val primaryAction: String,
+        val onPrimary: (View) -> Unit,
+        val secondaryAction: String? = null,
+        val onSecondary: ((View) -> Unit)? = null,
+    )
 
     companion object {
         private const val REFRESH_MS = 1_000L
@@ -576,13 +705,23 @@ class MainActivity : Activity() {
         private const val REQUEST_POST_NOTIFICATIONS = 2001
         private const val KEY_PENDING_RESTART_REQUIRED = "pending_restart_required"
         private const val KEY_SHOW_TELEGRAM_CLEANUP_HINT = "show_telegram_cleanup_hint"
-        private const val KEY_ADVANCED_EXPANDED = "advanced_expanded"
-        private const val MAX_VISIBLE_LOG_LINES = 8
+        private const val KEY_CURRENT_SCREEN = "current_screen"
+        private const val PREFS_NAME = "main_ui"
+        private const val PREF_DEVELOPER_MODE = "developer_mode"
+        private const val PREF_PROXY_EVER_STARTED = "proxy_ever_started"
+        private const val PREF_HINT_FIRST_START_DISMISSED = "hint_first_start_dismissed"
+        private const val PREF_HINT_BATTERY_DISMISSED = "hint_battery_dismissed"
+        private const val PREF_HINT_NOTIFICATION_DISMISSED = "hint_notification_dismissed"
+        private const val PREF_HINT_MOBILE_DISMISSED = "hint_mobile_dismissed"
+        private const val MAX_HINTS = 2
+        private const val MAX_VISIBLE_LOG_LINES = 12
         private const val COLOR_BACKGROUND = 0xFFF6F7FB.toInt()
         private const val COLOR_CARD_STROKE = 0xFFE5E7EB.toInt()
         private const val COLOR_TEXT_PRIMARY = 0xFF111827.toInt()
         private const val COLOR_TEXT_SECONDARY = 0xFF4B5563.toInt()
         private const val COLOR_TEXT_MUTED = 0xFF6B7280.toInt()
         private const val COLOR_WARNING = 0xFFB45309.toInt()
+        private const val COLOR_ACCENT = 0xFF2563EB.toInt()
+        private const val COLOR_SUCCESS = 0xFF047857.toInt()
     }
 }

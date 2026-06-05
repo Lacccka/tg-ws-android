@@ -188,10 +188,10 @@ class ProxyForegroundService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "TG WS Android proxy",
+            "Прокси TG WS Android",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "Foreground proxy runtime status"
+            description = "Статус фоновой работы прокси"
         }
         manager.createNotificationChannel(channel)
     }
@@ -220,10 +220,11 @@ class ProxyForegroundService : Service() {
         }
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setContentTitle("TG WS Android")
-            .setContentText("Proxy running on ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
+            .setContentText("Прокси работает: ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
             .setContentIntent(activityPendingIntent)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Stop", stopPendingIntent)
+            .addAction(android.R.drawable.ic_menu_view, "Открыть", activityPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Остановить", stopPendingIntent)
             .build()
     }
 
@@ -566,8 +567,8 @@ class ProxyForegroundService : Service() {
             val endpoint = context?.let { ProxyRuntimeConfig.endpointSummary(it) } ?: "unknown"
             val secret = context?.let { ProxyRuntimeConfig.partialTelegramSecret(it) } ?: "unknown"
             val dcSummary = context?.let { ProxyRuntimeConfig.dcSummary(it) } ?: "unknown"
-            val routeMode = context?.let { ProxyRuntimeConfig.appConfig(it).routeMode.displayName } ?: "unknown"
-            val fallbackEffectiveRouteMode = context?.let { ProxyRuntimeConfig.proxyServerConfig(it, networkStatus).effectiveRouteMode.displayName } ?: "unknown"
+            val routeMode = context?.let { ProxyRuntimeConfig.appConfig(it).routeMode.name } ?: "unknown"
+            val fallbackEffectiveRouteMode = context?.let { ProxyRuntimeConfig.proxyServerConfig(it, networkStatus).effectiveRouteMode.name } ?: "unknown"
             val stats = statsSnapshot
             val effectiveRouteMode = stats?.effectiveRouteMode ?: fallbackEffectiveRouteMode
             return DiagnosticReportFormatter.format(
