@@ -7,6 +7,9 @@ object RussianUiText {
     const val ROUTE_AUTO_RECOMMENDED = "Автоматически — рекомендуется"
     const val ROUTE_FAST_WIFI = "Быстрый Wi-Fi"
     const val ROUTE_COMPATIBLE = "Совместимый Wi-Fi + мобильная сеть"
+    const val ROUTE_AUTO_SELECTION = "Автоматический выбор"
+    const val ROUTE_COMPATIBLE_SHORT = "Совместимый"
+    const val MOBILE_COMPATIBLE_ROUTE_HELPER = "На мобильной сети используется совместимый маршрут. Ping может быть выше."
 }
 
 data class UserRouteModeOption(
@@ -42,7 +45,7 @@ object UserRouteModes {
         ),
         UserRouteModeOption(
             title = RussianUiText.ROUTE_COMPATIBLE,
-            description = "Использует совместимый маршрут через резервные домены. Работает на Wi-Fi и мобильной сети, но ping может быть выше.",
+            description = "Использует совместимый маршрут через резервные домены. Подходит для Wi-Fi и мобильной сети, но ping может быть выше.",
             routeMode = NetworkRouteMode.CF_FIRST,
         ),
     )
@@ -78,56 +81,82 @@ object ConnectionStatusMapper {
         stats: ProxyServerStats?,
         checking: Boolean = false,
     ): String {
-        if (!running && !checking) return "Неактивно"
         if (checking) return "Проверяется"
+        if (!running) return "Прокси остановлен"
         if (networkStatus.equals("none", ignoreCase = true)) return "Нет сети"
         if (stats == null) return "Проверяется"
 
-        val effective = stats.effectiveRouteMode
-        val isWifi = networkStatus.equals("Wi-Fi", ignoreCase = true) || networkStatus.equals("wifi", ignoreCase = true)
-        val isMobile = networkStatus.equals("mobile", ignoreCase = true) || networkStatus.equals("cellular", ignoreCase = true)
-        val direct = effective.equals(NetworkRouteMode.DIRECT_FIRST.configValue, ignoreCase = true) ||
-            effective.equals(NetworkRouteMode.DIRECT_FIRST.name, ignoreCase = true)
-        val compatible = effective.equals(NetworkRouteMode.CF_FIRST.configValue, ignoreCase = true) ||
-            effective.equals(NetworkRouteMode.CF_ONLY.configValue, ignoreCase = true) ||
-            effective.equals(NetworkRouteMode.CF_FIRST.name, ignoreCase = true) ||
-            effective.equals(NetworkRouteMode.CF_ONLY.name, ignoreCase = true)
-
-        val directUnavailable = stats.directHealthState.equals("unhealthy", ignoreCase = true) ||
-            stats.directHealthState.equals("cooldown", ignoreCase = true)
+        val activeSessions = stats.connectionsActive > 0
+        val hasSuccessfulConnection = stats.connectionsTotal > stats.connectionsBad ||
+            stats.cfProxyConnections > 0 ||
+            stats.directHealthSuccesses > 0
+        val hasRouteUsed = !stats.lastRouteUsed.isNullOrBlank() &&
+            !stats.lastRouteUsed.equals("none", ignoreCase = true)
         val hasCurrentSessionErrors = stats.wsConnectErrors + stats.sessionTimeouts + stats.sessionUnexpectedErrors > 0
-        val allConnectionsFailed = stats.connectionsBad > 0 && stats.connectionsBad >= stats.connectionsTotal.coerceAtLeast(1)
-        val successfulCfConnections = stats.cfProxyConnections > 0
-        val successfulConnections = stats.connectionsTotal > stats.connectionsBad || successfulCfConnections || stats.directHealthSuccesses > 0
-        val cfProblemSignals = stats.cfProxyErrors + stats.cf429Count + stats.cf429BackoffCount + stats.cfCooldownSkips +
-            stats.cfConnectQueueTimeouts + stats.cfQueueControlledFailures + stats.cfAllDomainsInCooldownFallbacks
+        val allConnectionsFailed = stats.connectionsTotal > 0 && stats.connectionsBad >= stats.connectionsTotal
+        val hasFailuresWithoutSuccess = stats.connectionsTotal > 0 &&
+            !hasSuccessfulConnection &&
+            (stats.connectionsBad > 0 || hasCurrentSessionErrors || stats.directHealthState.equals("unhealthy", ignoreCase = true))
 
-        if (isWifi && direct) {
-            return if (!directUnavailable && !hasCurrentSessionErrors && !allConnectionsFailed) {
-                "Работает быстро"
-            } else {
-                "Проблема подключения"
-            }
+        return when {
+            activeSessions -> "Подключён"
+            hasSuccessfulConnection -> "Подключён"
+            hasRouteUsed && !hasCurrentSessionErrors && !allConnectionsFailed -> "Подключён"
+            hasFailuresWithoutSuccess -> "Нестабильное соединение"
+            else -> "Ожидает подключения"
+        }
+    }
+}
+
+object HomeRouteLabelMapper {
+    fun label(
+        networkStatus: String,
+        configuredRouteMode: NetworkRouteMode,
+        stats: ProxyServerStats?,
+        fallbackEffectiveRouteMode: String? = null,
+    ): String {
+        if (networkStatus.equals("none", ignoreCase = true)) return "Нет сети"
+
+        val effective = stats?.effectiveRouteMode ?: fallbackEffectiveRouteMode
+        val routeToShow = when {
+            configuredRouteMode == NetworkRouteMode.AUTO && effective.isNullOrBlank() -> null
+            configuredRouteMode == NetworkRouteMode.AUTO && effective.equals(NetworkRouteMode.AUTO.configValue, ignoreCase = true) -> null
+            configuredRouteMode == NetworkRouteMode.AUTO && effective.equals(NetworkRouteMode.AUTO.name, ignoreCase = true) -> null
+            !effective.isNullOrBlank() -> effective
+            else -> configuredRouteMode.configValue
         }
 
-        if (isWifi && directUnavailable) return "Проблема подключения"
-
-        if (isMobile && compatible) {
-            return when {
-                successfulCfConnections && cfProblemSignals < HIGH_CF_PROBLEM_SIGNALS -> "Работает"
-                successfulConnections && cfProblemSignals < HIGH_CF_PROBLEM_SIGNALS -> "Работает"
-                successfulConnections -> "Работает медленно"
-                else -> "Проблема подключения"
-            }
+        return when {
+            routeToShow == null -> RussianUiText.ROUTE_AUTO_SELECTION
+            routeToShow.isDirectRoute() -> RussianUiText.ROUTE_FAST_WIFI
+            routeToShow.isCompatibleRoute() -> RussianUiText.ROUTE_COMPATIBLE_SHORT
+            configuredRouteMode == NetworkRouteMode.AUTO -> RussianUiText.ROUTE_AUTO_SELECTION
+            else -> RussianUiText.ROUTE_AUTO_SELECTION
         }
-
-        if (allConnectionsFailed || (hasCurrentSessionErrors && !successfulConnections)) return "Проблема подключения"
-        if (successfulConnections) return if (hasCurrentSessionErrors) "Работает медленно" else "Работает"
-        return "Неизвестно"
     }
 
-    private const val HIGH_CF_PROBLEM_SIGNALS = 5L
+    fun mobileCompatibleHelper(networkStatus: String, routeLabel: String): String? = if (
+        (networkStatus.equals("mobile", ignoreCase = true) || networkStatus.equals("cellular", ignoreCase = true)) &&
+        routeLabel == RussianUiText.ROUTE_COMPATIBLE_SHORT
+    ) {
+        RussianUiText.MOBILE_COMPATIBLE_ROUTE_HELPER
+    } else {
+        null
+    }
+
+    private fun String.isDirectRoute(): Boolean = equals(NetworkRouteMode.DIRECT_FIRST.configValue, ignoreCase = true) ||
+        equals(NetworkRouteMode.DIRECT_FIRST.name, ignoreCase = true) ||
+        equals("direct", ignoreCase = true) ||
+        startsWith("direct-", ignoreCase = true)
+
+    private fun String.isCompatibleRoute(): Boolean = equals(NetworkRouteMode.CF_FIRST.configValue, ignoreCase = true) ||
+        equals(NetworkRouteMode.CF_ONLY.configValue, ignoreCase = true) ||
+        equals(NetworkRouteMode.CF_FIRST.name, ignoreCase = true) ||
+        equals(NetworkRouteMode.CF_ONLY.name, ignoreCase = true) ||
+        equals("cf", ignoreCase = true) ||
+        startsWith("cf-", ignoreCase = true)
 }
+
 
 object SecretUpdatedMessageModel {
     const val MESSAGE = "Секрет обновлён. Подключите Telegram заново."

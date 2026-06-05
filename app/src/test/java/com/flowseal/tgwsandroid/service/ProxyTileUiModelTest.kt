@@ -12,7 +12,7 @@ class ProxyTileUiModelTest {
     @Test
     fun runningProxyMapsToActiveRussianState() {
         assertEquals(ProxyTileUiModel.STATE_ACTIVE, ProxyTileUiModel.state(running = true))
-        assertEquals("Работает", ProxyTileUiModel.subtitle(running = true))
+        assertEquals("Включён", ProxyTileUiModel.subtitle(running = true))
     }
 
     @Test

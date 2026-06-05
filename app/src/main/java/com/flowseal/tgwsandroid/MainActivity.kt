@@ -190,7 +190,7 @@ class MainActivity : Activity() {
                 addView(createTextRow("Статус", statusText), matchWrapParams())
                 addView(createTextRow("Текущая сеть", networkText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("Маршрут", routeText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Состояние подключения", qualityText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Telegram", qualityText), matchWrapParams(topMargin = rowGap))
                 addView(restartRequiredText, matchWrapParams(topMargin = rowGap))
                 addView(telegramCleanupHintText, matchWrapParams(topMargin = rowGap))
                 addView(primaryControlButton, matchWrapParams(topMargin = rowGap))
@@ -354,8 +354,9 @@ class MainActivity : Activity() {
                 running -> "Прокси работает"
                 else -> "Прокси остановлен"
             }
+            val routeLabel = userRouteLabel()
             networkText.text = userNetworkLabel(ProxyForegroundService.State.networkStatus)
-            routeText.text = userRouteLabel()
+            routeText.text = routeLabel
             qualityText.text = ConnectionStatusMapper.status(
                 running = running,
                 networkStatus = ProxyForegroundService.State.networkStatus,
@@ -366,7 +367,9 @@ class MainActivity : Activity() {
             val showRestartWarning = pendingRestartRequired && running
             restartRequiredText.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
             restartPendingButton.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
-            telegramCleanupHintText.visibility = View.GONE
+            val mobileRouteHelper = HomeRouteLabelMapper.mobileCompatibleHelper(ProxyForegroundService.State.networkStatus, routeLabel)
+            telegramCleanupHintText.text = mobileRouteHelper.orEmpty()
+            telegramCleanupHintText.visibility = if (mobileRouteHelper == null) View.GONE else View.VISIBLE
             refreshHints()
         }
 
@@ -451,15 +454,17 @@ class MainActivity : Activity() {
     private fun userRouteLabel(): String {
         val config = ProxyRuntimeConfig.appConfig(applicationContext)
         val stats = ProxyForegroundService.State.stats()
-        if (config.routeMode == NetworkRouteMode.AUTO && stats == null) return "Автоматический выбор"
-        val effective = stats?.effectiveRouteMode ?: ProxyRuntimeConfig.proxyServerConfig(config, ProxyForegroundService.State.networkStatus).effectiveRouteMode.configValue
-        return when {
-            effective.equals(NetworkRouteMode.DIRECT_FIRST.configValue, ignoreCase = true) -> "Быстрый маршрут"
-            effective.equals(NetworkRouteMode.CF_FIRST.configValue, ignoreCase = true) ||
-                effective.equals(NetworkRouteMode.CF_ONLY.configValue, ignoreCase = true) -> "Совместимый маршрут"
-            config.routeMode == NetworkRouteMode.AUTO -> "Автоматический выбор"
-            else -> "Маршрут неизвестен"
+        val fallbackEffective = if (config.routeMode == NetworkRouteMode.AUTO) {
+            null
+        } else {
+            ProxyRuntimeConfig.proxyServerConfig(config, ProxyForegroundService.State.networkStatus).effectiveRouteMode.configValue
         }
+        return HomeRouteLabelMapper.label(
+            networkStatus = ProxyForegroundService.State.networkStatus,
+            configuredRouteMode = config.routeMode,
+            stats = stats,
+            fallbackEffectiveRouteMode = fallbackEffective,
+        )
     }
 
     private fun userBatteryLabel(status: String): String = when (status) {

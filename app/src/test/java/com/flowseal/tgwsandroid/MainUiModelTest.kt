@@ -51,90 +51,90 @@ class MainUiModelTest {
     }
 
     @Test
-    fun stoppedProxyConnectionStateIsInactive() {
-        assertEquals("Неактивно", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = stats()))
+    fun stoppedProxyTelegramStatusSaysProxyStopped() {
+        assertEquals("Прокси остановлен", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = stats()))
     }
 
     @Test
-    fun startingOrUnknownConnectionStateIsChecking() {
+    fun startingOrUnknownTelegramStatusIsChecking() {
         assertEquals("Проверяется", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = null, checking = true))
         assertEquals("Проверяется", ConnectionStatusMapper.status(running = true, networkStatus = "Wi-Fi", stats = null))
     }
 
     @Test
-    fun networkNoneConnectionStateHasNoNetwork() {
+    fun runningWithoutSessionsWaitsForTelegramConnection() {
+        assertEquals("Ожидает подключения", ConnectionStatusMapper.status(running = true, networkStatus = "Wi-Fi", stats = stats()))
+    }
+
+    @Test
+    fun activeSessionsShowTelegramConnected() {
+        assertEquals(
+            "Подключён",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "Wi-Fi",
+                stats = stats(connectionsActive = 1),
+            ),
+        )
+    }
+
+    @Test
+    fun lastRouteUsedWithoutCurrentFatalErrorsShowsConnected() {
+        assertEquals(
+            "Подключён",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "Wi-Fi",
+                stats = stats(lastRouteUsed = "direct-cold"),
+            ),
+        )
+    }
+
+    @Test
+    fun networkNoneTelegramStatusHasNoNetwork() {
         assertEquals("Нет сети", ConnectionStatusMapper.status(running = true, networkStatus = "none", stats = stats()))
     }
 
     @Test
-    fun wifiDirectHealthyConnectionStateIsFast() {
-        assertEquals(
-            "Работает быстро",
-            ConnectionStatusMapper.status(
-                running = true,
-                networkStatus = "Wi-Fi",
-                stats = stats(connectionsTotal = 1, effectiveRouteMode = NetworkRouteMode.DIRECT_FIRST.configValue),
+    fun wifiDirectWithOldCfErrorsDoesNotShowProblem() {
+        val label = ConnectionStatusMapper.status(
+            running = true,
+            networkStatus = "Wi-Fi",
+            stats = stats(
+                effectiveRouteMode = NetworkRouteMode.DIRECT_FIRST.configValue,
+                lastRouteUsed = "direct-cold",
+                cfProxyErrors = 10,
+                cf429Count = 10,
+                cfCooldownSkips = 10,
             ),
         )
+
+        assertEquals("Подключён", label)
+        assertFalse(label.contains("Проблема"))
     }
 
     @Test
-    fun wifiDirectIgnoresOldCfErrors() {
+    fun mobileCompatibleWithOld429AndSuccessfulRouteShowsConnected() {
         assertEquals(
-            "Работает быстро",
-            ConnectionStatusMapper.status(
-                running = true,
-                networkStatus = "Wi-Fi",
-                stats = stats(
-                    connectionsTotal = 1,
-                    effectiveRouteMode = NetworkRouteMode.DIRECT_FIRST.configValue,
-                    cfProxyErrors = 10,
-                    cf429Count = 10,
-                    cfCooldownSkips = 10,
-                ),
-            ),
-        )
-    }
-
-    @Test
-    fun mobileCompatibleWithSuccessAndModerateCfErrorsWorks() {
-        assertEquals(
-            "Работает",
+            "Подключён",
             ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "mobile",
                 stats = stats(
-                    connectionsTotal = 3,
-                    effectiveRouteMode = NetworkRouteMode.CF_FIRST.configValue,
-                    cfProxyConnections = 2,
-                    cfProxyErrors = 2,
-                ),
-            ),
-        )
-    }
-
-    @Test
-    fun mobileCompatibleWithHighCurrentCfErrorsIsSlow() {
-        assertEquals(
-            "Работает медленно",
-            ConnectionStatusMapper.status(
-                running = true,
-                networkStatus = "mobile",
-                stats = stats(
-                    connectionsTotal = 3,
                     effectiveRouteMode = NetworkRouteMode.CF_FIRST.configValue,
                     cfProxyConnections = 2,
                     cf429Count = 3,
                     cfCooldownSkips = 2,
+                    lastRouteUsed = "cf",
                 ),
             ),
         )
     }
 
     @Test
-    fun noRouteOrCurrentFailureIsConnectionProblem() {
+    fun routeFailuresWithoutSuccessfulRouteAreUnstable() {
         assertEquals(
-            "Проблема подключения",
+            "Нестабильное соединение",
             ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "Wi-Fi",
@@ -149,18 +149,89 @@ class MainUiModelTest {
     }
 
     @Test
-    fun overloadedIsNotUsedInNormalConnectionLabels() {
+    fun normalTelegramStatusDoesNotUseOldEvaluativeLabels() {
         val labels = listOf(
-            "Неактивно",
-            "Проверяется",
-            "Работает быстро",
-            "Работает",
-            "Работает медленно",
-            "Нет сети",
-            "Проблема подключения",
-            "Неизвестно",
+            ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = stats()),
+            ConnectionStatusMapper.status(running = true, networkStatus = "Wi-Fi", stats = stats()),
+            ConnectionStatusMapper.status(running = true, networkStatus = "Wi-Fi", stats = stats(connectionsActive = 1)),
+            ConnectionStatusMapper.status(running = true, networkStatus = "Wi-Fi", stats = stats(connectionsTotal = 1, connectionsBad = 1)),
+            ConnectionStatusMapper.status(running = true, networkStatus = "none", stats = stats()),
         )
+
+        assertFalse(labels.contains("Проблема подключения"))
+        assertFalse(labels.contains("Работает быстро"))
+        assertFalse(labels.contains("Работает"))
+        assertFalse(labels.contains("Работает медленно"))
         assertFalse(labels.contains("Перегружено"))
+    }
+
+    @Test
+    fun routeLabelMapsWifiDirectToFastWifi() {
+        assertEquals(
+            "Быстрый Wi-Fi",
+            HomeRouteLabelMapper.label(
+                networkStatus = "Wi-Fi",
+                configuredRouteMode = NetworkRouteMode.DIRECT_FIRST,
+                stats = stats(effectiveRouteMode = NetworkRouteMode.DIRECT_FIRST.configValue),
+            ),
+        )
+    }
+
+    @Test
+    fun routeLabelMapsMobileCfToCompatible() {
+        assertEquals(
+            "Совместимый",
+            HomeRouteLabelMapper.label(
+                networkStatus = "mobile",
+                configuredRouteMode = NetworkRouteMode.CF_FIRST,
+                stats = stats(effectiveRouteMode = NetworkRouteMode.CF_FIRST.configValue),
+            ),
+        )
+    }
+
+    @Test
+    fun routeLabelKeepsAutoBeforeEffectiveRouteKnown() {
+        assertEquals(
+            "Автоматический выбор",
+            HomeRouteLabelMapper.label(
+                networkStatus = "Wi-Fi",
+                configuredRouteMode = NetworkRouteMode.AUTO,
+                stats = null,
+            ),
+        )
+    }
+
+    @Test
+    fun routeLabelUsesEffectiveRouteForAutoWhenKnown() {
+        assertEquals(
+            "Быстрый Wi-Fi",
+            HomeRouteLabelMapper.label(
+                networkStatus = "Wi-Fi",
+                configuredRouteMode = NetworkRouteMode.AUTO,
+                stats = stats(effectiveRouteMode = NetworkRouteMode.DIRECT_FIRST.configValue),
+            ),
+        )
+    }
+
+
+    @Test
+    fun routeLabelMapsNoNetworkToNoNetwork() {
+        assertEquals(
+            "Нет сети",
+            HomeRouteLabelMapper.label(
+                networkStatus = "none",
+                configuredRouteMode = NetworkRouteMode.AUTO,
+                stats = stats(effectiveRouteMode = NetworkRouteMode.CF_FIRST.configValue),
+            ),
+        )
+    }
+
+    @Test
+    fun mobileCompatibleRouteHelperIsSoftNonErrorText() {
+        assertEquals(
+            "На мобильной сети используется совместимый маршрут. Ping может быть выше.",
+            HomeRouteLabelMapper.mobileCompatibleHelper("mobile", "Совместимый"),
+        )
     }
 
     @Test
@@ -230,6 +301,8 @@ class MainUiModelTest {
         cf429Count: Long = 0,
         cfCooldownSkips: Long = 0,
         directHealthState: String = "healthy",
+        directHealthSuccesses: Long = 0,
+        lastRouteUsed: String? = null,
     ): ProxyServerStats = ProxyServerStats(
         connectionsTotal = connectionsTotal,
         connectionsActive = connectionsActive,
@@ -247,6 +320,8 @@ class MainUiModelTest {
         sessionUnexpectedErrors = sessionUnexpectedErrors,
         networkNoneEvents = networkNoneEvents,
         directHealthState = directHealthState,
+        directHealthSuccesses = directHealthSuccesses,
+        lastRouteUsed = lastRouteUsed,
         cf429Count = cf429Count,
         cfCooldownSkips = cfCooldownSkips,
     )
