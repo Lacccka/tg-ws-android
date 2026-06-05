@@ -1,5 +1,6 @@
 package com.flowseal.tgwsandroid.service
 
+import com.flowseal.tgwsandroid.proxy.CfDomainSnapshot
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -147,6 +148,39 @@ class RuntimeLogStoreTest {
             poolMisses = 9,
             poolRefillErrors = 10,
             poolStale = 11,
+            cfHealthEnabled = true,
+            cfDomainsTotal = 2,
+            cfDomainsInCooldown = 1,
+            cfLastSelectedDomain = "kws2.one.example",
+            cfLastSelectedReason = "last_good",
+            cfLastConnectLatencyMs = 123,
+            cfBestDomainByDc = mapOf(2 to "kws2.one.example"),
+            cf429Count = 12,
+            cf503Count = 13,
+            cfUnknownHostCount = 14,
+            cfTimeoutCount = 15,
+            cfCooldownSkips = 16,
+            cfAllDomainsInCooldownFallbacks = 17,
+            cfHealthDomains = listOf(
+                CfDomainSnapshot(
+                    dcId = 2,
+                    isMedia = false,
+                    domain = "one.example",
+                    successes = 1,
+                    failures = 0,
+                    lastSuccessTimeMs = 1,
+                    lastFailureTimeMs = 0,
+                    lastLatencyMs = 123,
+                    ewmaLatencyMs = 123,
+                    consecutiveFailures = 0,
+                    cooldownUntilMs = 0,
+                    lastErrorKind = null,
+                    total429 = 12,
+                    total503 = 13,
+                    totalUnknownHost = 14,
+                    totalTimeouts = 15,
+                ),
+            ),
         )
 
         val report = DiagnosticReportFormatter.format(
@@ -169,6 +203,10 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("Endpoint: 127.0.0.1:1443"))
         assertTrue(report.contains("Stats: total=7, active=1"))
         assertTrue(report.contains("poolStale=11"))
+        assertTrue(report.contains("cfHealthEnabled=true"))
+        assertTrue(report.contains("cf429Count=12"))
+        assertTrue(report.contains("CF health:"))
+        assertTrue(report.contains("best=kws2.one.example latency=123"))
         assertTrue(report.contains("02:45:30 INFO proxy ProxyServer listening"))
     }
 

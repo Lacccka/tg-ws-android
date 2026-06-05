@@ -114,6 +114,20 @@ data class ProxyServerStats(
     val wifiCapabilityEventsIgnored: Long = 0,
     val routeChurnAvoided: Long = 0,
     val directProbeThrottleUntil: Long = 0,
+    val cfHealthEnabled: Boolean = false,
+    val cfDomainsTotal: Int = 0,
+    val cfDomainsInCooldown: Int = 0,
+    val cfLastSelectedDomain: String? = null,
+    val cfLastSelectedReason: String? = null,
+    val cfLastConnectLatencyMs: Long? = null,
+    val cfBestDomainByDc: Map<Int, String> = emptyMap(),
+    val cf429Count: Long = 0,
+    val cf503Count: Long = 0,
+    val cfUnknownHostCount: Long = 0,
+    val cfTimeoutCount: Long = 0,
+    val cfCooldownSkips: Long = 0,
+    val cfAllDomainsInCooldownFallbacks: Long = 0,
+    val cfHealthDomains: List<CfDomainSnapshot> = emptyList(),
 )
 
 fun interface ProxyLogger {
@@ -186,6 +200,7 @@ class ProxyServer(
         BridgeSession(client, webSocket, cryptoContext, splitter, counters, config.bufferSizeBytes).runBlocking()
     },
     private val cfProxyBalancer: CfProxyBalancer = CfProxyBalancer(config.cfProxyDomains),
+    private val cfDomainHealth: CfDomainHealth = CfDomainHealth(config.cfProxyDomains),
     private val routeState: RouteState = RouteState(config.routeMode, config.networkStatus),
     private val randomBytes: RelayInit.RandomBytes = RelayInit.SecureRandomBytes,
     private val logger: ProxyLogger = ProxyLogger {},
@@ -279,6 +294,7 @@ class ProxyServer(
     fun stats(): ProxyServerStats {
         val routeSnapshot = routeState.snapshot()
         val directHealthSnapshot = directRouteHealth.snapshot()
+        val cfHealthSnapshot = cfDomainHealth.snapshot()
         return ProxyServerStats(
             connectionsTotal = connectionsTotal.get(),
             connectionsActive = connectionsActive.get(),
@@ -326,6 +342,20 @@ class ProxyServer(
             wifiCapabilityEventsIgnored = wifiCapabilityEventsIgnored.get(),
             routeChurnAvoided = routeChurnAvoided.get(),
             directProbeThrottleUntil = directHealthSnapshot.probeThrottleUntilMs,
+            cfHealthEnabled = cfHealthSnapshot.enabled,
+            cfDomainsTotal = cfHealthSnapshot.domainsTotal,
+            cfDomainsInCooldown = cfHealthSnapshot.domainsInCooldown,
+            cfLastSelectedDomain = cfHealthSnapshot.lastSelectedDomain,
+            cfLastSelectedReason = cfHealthSnapshot.lastSelectedReason,
+            cfLastConnectLatencyMs = cfHealthSnapshot.lastConnectLatencyMs,
+            cfBestDomainByDc = cfHealthSnapshot.bestDomainByDc,
+            cf429Count = cfHealthSnapshot.total429,
+            cf503Count = cfHealthSnapshot.total503,
+            cfUnknownHostCount = cfHealthSnapshot.totalUnknownHost,
+            cfTimeoutCount = cfHealthSnapshot.totalTimeouts,
+            cfCooldownSkips = cfHealthSnapshot.cooldownSkips,
+            cfAllDomainsInCooldownFallbacks = cfHealthSnapshot.allDomainsInCooldownFallbacks,
+            cfHealthDomains = cfHealthSnapshot.domains,
         )
     }
 
@@ -643,23 +673,55 @@ class ProxyServer(
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
     ): Boolean {
+        val selectionPlan = cfDomainHealth.selectDomains(parsed.dcId, parsed.isMedia)
+        for (skipped in selectionPlan.skippedCooldown) {
+            logger.log(
+                "CF domain skipped because cooldown DC${parsed.dcId} ${skipped.domain} until=${skipped.cooldownUntilMs}",
+            )
+        }
+        if (selectionPlan.allDomainsInCooldownFallback) {
+            logger.log("CF all domains in cooldown; trying least-bad domain for DC${parsed.dcId}")
+        }
+
         var attempted = false
-        for (baseDomain in cfProxyBalancer.getDomainsForDc(parsed.dcId)) {
+        for (selection in selectionPlan.ordered) {
+            val baseDomain = selection.domain
             attempted = true
             val domain = "kws${parsed.dcId}.$baseDomain"
+            cfDomainHealth.recordSelected(parsed.dcId, parsed.isMedia, baseDomain, domain, selection.reason)
+            logger.log(
+                "CF selector DC${parsed.dcId} chose $domain reason=${selection.reason} latency=${selection.latencyMs ?: "unknown"}",
+            )
             logger.log("DC${parsed.dcId} -> trying CF proxy wss://$domain$DEFAULT_WS_PATH")
+            val startedAtNs = System.nanoTime()
             val webSocket = try {
                 webSocketConnector.connect(domain, domain, DEFAULT_WS_PATH, RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)
             } catch (error: Throwable) {
                 cfProxyErrors.incrementAndGet()
                 val detail = websocketFailureDetail(error)
+                val decision = cfDomainHealth.recordFailure(
+                    parsed.dcId,
+                    parsed.isMedia,
+                    baseDomain,
+                    error,
+                    currentNetworkStatus,
+                    directRouteHealth.isSettling(),
+                )
                 logger.log("DC${parsed.dcId} CF proxy failed via $baseDomain: $detail")
+                if (decision.counted && decision.cooldownUntilMs > 0) {
+                    logger.log(
+                        "CF domain cooldown DC${parsed.dcId} $baseDomain reason=${decision.kind.configValue} until=${decision.cooldownUntilMs}",
+                    )
+                }
                 null
             } ?: continue
 
+            val latencyMs = (System.nanoTime() - startedAtNs) / 1_000_000
             try {
                 cfProxyConnections.incrementAndGet()
                 lastCfDomain = domain
+                cfDomainHealth.recordSuccess(parsed.dcId, parsed.isMedia, baseDomain, latencyMs)
+                logger.log("CF domain success DC${parsed.dcId} $baseDomain latencyMs=$latencyMs")
                 logger.log("DC${parsed.dcId} CF proxy connected via $domain")
                 cfProxyBalancer.updateDomainForDc(parsed.dcId, baseDomain)
                 val result = runWebSocketRoute(client, parsed, WebSocketRoute(webSocket, "cf"), relayInit, cryptoContext, splitter)

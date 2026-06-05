@@ -78,6 +78,7 @@ object DiagnosticReportFormatter {
         appendLine("Last route change time: ${snapshot.lastRouteChangeTimeMs?.toString() ?: "unknown"}")
         appendLine("Network at last route change: ${snapshot.networkAtLastRouteChange}")
         appendLine("Stats: ${formatStats(snapshot.stats)}")
+        appendCfHealth(snapshot.stats)
         appendLine("---")
         snapshot.logs.forEach { appendLine(it.formatLine()) }
     }.trimEnd()
@@ -106,6 +107,46 @@ object DiagnosticReportFormatter {
             "directHealthFailures=${stats.directHealthFailures}, directDowngrades=${stats.directDowngrades}, " +
             "directPromotions=${stats.directPromotions}, directCooldownUntil=${stats.directCooldownUntil}, " +
             "routeSettlingUntil=${stats.routeSettlingUntil}, directProbeLastError=${stats.directProbeLastError ?: "none"}, " +
-            "directProbeLastSuccessTime=${stats.directProbeLastSuccessTime ?: "none"}"
+            "directProbeLastSuccessTime=${stats.directProbeLastSuccessTime ?: "none"}, " +
+            "cfHealthEnabled=${stats.cfHealthEnabled}, cfDomainsTotal=${stats.cfDomainsTotal}, " +
+            "cfDomainsInCooldown=${stats.cfDomainsInCooldown}, cfLastSelectedDomain=${stats.cfLastSelectedDomain ?: "none"}, " +
+            "cfLastSelectedReason=${stats.cfLastSelectedReason ?: "none"}, " +
+            "cfLastConnectLatencyMs=${stats.cfLastConnectLatencyMs ?: "unknown"}, " +
+            "cfBestDomainByDc=${formatBestDomainByDc(stats.cfBestDomainByDc)}, cf429Count=${stats.cf429Count}, " +
+            "cf503Count=${stats.cf503Count}, cfUnknownHostCount=${stats.cfUnknownHostCount}, " +
+            "cfTimeoutCount=${stats.cfTimeoutCount}, cfCooldownSkips=${stats.cfCooldownSkips}, " +
+            "cfAllDomainsInCooldownFallbacks=${stats.cfAllDomainsInCooldownFallbacks}"
     }
+
+    private fun StringBuilder.appendCfHealth(stats: ProxyServerStats?) {
+        if (stats == null || !stats.cfHealthEnabled) return
+        appendLine("CF health:")
+        if (stats.cfHealthDomains.isEmpty()) {
+            appendLine("  none")
+            return
+        }
+        stats.cfHealthDomains
+            .groupBy { it.dcId }
+            .toSortedMap()
+            .forEach { (dcId, domains) ->
+                val best = stats.cfBestDomainByDc[dcId] ?: "none"
+                val bestRow = domains.firstOrNull { it.fullDomain == best }
+                val cooldownCount = domains.count { it.cooldownUntilMs > 0 }
+                appendLine("DC$dcId:")
+                appendLine(
+                    "  best=$best latency=${bestRow?.ewmaLatencyMs ?: bestRow?.lastLatencyMs ?: "unknown"} " +
+                        "cooldown=$cooldownCount 429=${domains.sumOf { it.total429 }} " +
+                        "503=${domains.sumOf { it.total503 }} unknownHost=${domains.sumOf { it.totalUnknownHost }} " +
+                        "timeouts=${domains.sumOf { it.totalTimeouts }}",
+                )
+            }
+    }
+
+    private fun formatBestDomainByDc(bestDomainByDc: Map<Int, String>): String =
+        if (bestDomainByDc.isEmpty()) {
+            "none"
+        } else {
+            bestDomainByDc.toSortedMap().entries.joinToString(prefix = "{", postfix = "}") { (dcId, domain) -> "DC$dcId=$domain" }
+        }
+
 }
