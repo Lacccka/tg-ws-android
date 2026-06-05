@@ -42,6 +42,15 @@ class MainUiModelTest {
     }
 
     @Test
+    fun batteryAndQuickSettingsInstructionsAreRussian() {
+        assertEquals("Работа в фоне", SettingsUiText.BATTERY_BACKGROUND_TITLE)
+        assertEquals("Чтобы прокси не останавливался, разрешите приложению работу без ограничений батареи.", SettingsUiText.BATTERY_BACKGROUND_TEXT)
+        assertEquals("На Xiaomi также включите автозапуск для приложения.", SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT)
+        assertEquals("Кнопка в шторке", SettingsUiText.QS_TILE_TITLE)
+        assertTrue(SettingsUiText.QS_TILE_TEXT.contains("быстрые настройки Android"))
+    }
+
+    @Test
     fun stoppedProxyConnectionStateIsInactive() {
         assertEquals("Неактивно", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = stats()))
     }

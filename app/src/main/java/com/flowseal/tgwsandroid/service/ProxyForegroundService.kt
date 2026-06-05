@@ -55,7 +55,7 @@ class ProxyForegroundService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_STOP_FROM_UI, ACTION_STOP_FROM_NOTIFICATION, ACTION_STOP_LEGACY -> {
+            ACTION_STOP_FROM_UI, ACTION_STOP_FROM_NOTIFICATION, ACTION_STOP_FROM_TILE, ACTION_STOP_LEGACY -> {
                 val stopSource = stopSourceForAction(intent.action)
                 State.addLog("=== Proxy stop ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, stopSource.logSource)
                 State.addLog(stopSource.logMessage, LogSeverity.INFO, "service")
@@ -419,6 +419,7 @@ class ProxyForegroundService : Service() {
         const val ACTION_STOP_LEGACY = "com.flowseal.tgwsandroid.action.STOP_PROXY"
         const val ACTION_STOP_FROM_UI = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_UI"
         const val ACTION_STOP_FROM_NOTIFICATION = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_NOTIFICATION"
+        const val ACTION_STOP_FROM_TILE = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_TILE"
         private const val CHANNEL_ID = "proxy_foreground"
         private const val NOTIFICATION_ID = 1001
         private const val WATCHDOG_INTERVAL_SECONDS = 45L
@@ -427,11 +428,14 @@ class ProxyForegroundService : Service() {
 
         fun stopIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_STOP_FROM_UI)
 
+        fun stopFromTileIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_STOP_FROM_TILE)
+
         data class StopSource(val logSource: String, val markerReason: String, val logMessage: String)
 
         fun stopSourceForAction(action: String?): StopSource = when (action) {
             ACTION_STOP_FROM_UI -> StopSource("ui", "ui", "stop command received from UI")
             ACTION_STOP_FROM_NOTIFICATION -> StopSource("notification", "notification", "stop command received from notification")
+            ACTION_STOP_FROM_TILE -> StopSource("quick_settings", "quick_settings", "stop command received from quick settings tile")
             else -> StopSource("service", "legacy_unknown", "stop command received from legacy/unknown action")
         }
     }
@@ -527,6 +531,7 @@ class ProxyForegroundService : Service() {
             running = isRunning
             lastStatus = status
             addLog(status, RuntimeLogStore.classifySeverity(status), "service")
+            ProxyQuickSettingsTileService.requestTileRefresh(appContext)
         }
 
         fun setBatteryOptimizationStatus(status: String) {

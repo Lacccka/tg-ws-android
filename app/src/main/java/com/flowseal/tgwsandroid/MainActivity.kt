@@ -20,7 +20,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
-import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -260,9 +259,30 @@ class MainActivity : Activity() {
                     addView(createRouteModeButton(option), matchWrapParams(topMargin = rowGap))
                 }
             }, cardParams())
-            addView(createCard("Батарея") {
-                addView(createTextRow("Статус", batteryStatusText), matchWrapParams())
+            addView(createCard(SettingsUiText.BATTERY_BACKGROUND_TITLE) {
+                addView(createValueText().apply {
+                    text = SettingsUiText.BATTERY_BACKGROUND_TEXT
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                }, matchWrapParams())
+                if (BatterySettingsIntentPlan.isXiaomiFamily(Build.MANUFACTURER.orEmpty())) {
+                    addView(createValueText().apply {
+                        text = SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT
+                        setTextColor(COLOR_TEXT_SECONDARY)
+                    }, matchWrapParams(topMargin = rowGap))
+                }
+                addView(createTextRow("Статус", batteryStatusText), matchWrapParams(topMargin = rowGap))
                 addView(createButton("Открыть настройки батареи") { openBatterySettings() }, matchWrapParams(topMargin = rowGap))
+                addView(createValueText().apply {
+                    text = SettingsUiText.BATTERY_BUTTON_HELP_TEXT
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                }, matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding))
+            addView(createCard(SettingsUiText.QS_TILE_TITLE) {
+                addView(createValueText().apply {
+                    text = SettingsUiText.QS_TILE_TEXT
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                }, matchWrapParams())
+                addView(createButton(SettingsUiText.QS_TILE_HELP_BUTTON) { showQuickSettingsTileHelp() }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
             addView(createCard("Telegram") {
                 addView(createButton("Обновить секрет") { confirmResetSecret() }, matchWrapParams())
@@ -586,14 +606,17 @@ class MainActivity : Activity() {
     }
 
     private fun openBatterySettings() {
-        if (detectBatteryOptimizationStatus() == "optimized") {
-            val packageUri = Uri.parse("package:$packageName")
-            val requestIntent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, packageUri)
-            if (tryStartActivity(requestIntent)) return
+        if (!BatterySettingsNavigator(this).open()) {
+            Toast.makeText(this, "Не удалось открыть настройки батареи", Toast.LENGTH_LONG).show()
         }
-        val settingsIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-        if (tryStartActivity(settingsIntent)) return
-        Toast.makeText(this, "Не удалось открыть настройки батареи", Toast.LENGTH_LONG).show()
+    }
+
+    private fun showQuickSettingsTileHelp() {
+        AlertDialog.Builder(this)
+            .setTitle(SettingsUiText.QS_TILE_HELP_TITLE)
+            .setMessage(SettingsUiText.QS_TILE_HELP_MESSAGE)
+            .setPositiveButton("Понятно", null)
+            .show()
     }
 
     private fun refreshLocalDiagnostics() {

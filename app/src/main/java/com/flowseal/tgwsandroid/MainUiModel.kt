@@ -15,6 +15,19 @@ data class UserRouteModeOption(
     val routeMode: NetworkRouteMode,
 )
 
+
+object SettingsUiText {
+    const val BATTERY_BACKGROUND_TITLE = "Работа в фоне"
+    const val BATTERY_BACKGROUND_TEXT = "Чтобы прокси не останавливался, разрешите приложению работу без ограничений батареи."
+    const val BATTERY_XIAOMI_AUTOSTART_TEXT = "На Xiaomi также включите автозапуск для приложения."
+    const val BATTERY_BUTTON_HELP_TEXT = "Выберите «Батарея» → «Без ограничений». На Xiaomi также проверьте «Автозапуск»."
+    const val QS_TILE_TITLE = "Кнопка в шторке"
+    const val QS_TILE_TEXT = "Добавьте «TG Proxy» в быстрые настройки Android, чтобы запускать и останавливать прокси из шторки."
+    const val QS_TILE_HELP_BUTTON = "Как добавить"
+    const val QS_TILE_HELP_TITLE = "Как добавить кнопку"
+    const val QS_TILE_HELP_MESSAGE = "Откройте шторку быстрых настроек, нажмите «Изменить» или значок карандаша, найдите «TG Proxy» и перетащите её наверх."
+}
+
 object UserRouteModes {
     val normalOptions: List<UserRouteModeOption> = listOf(
         UserRouteModeOption(

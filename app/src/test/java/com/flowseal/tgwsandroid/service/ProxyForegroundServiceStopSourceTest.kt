@@ -21,6 +21,14 @@ class ProxyForegroundServiceStopSourceTest {
     }
 
     @Test
+    fun tileStopActionLogsQuickSettingsSource() {
+        val source = ProxyForegroundService.stopSourceForAction(ProxyForegroundService.ACTION_STOP_FROM_TILE)
+
+        assertEquals("quick_settings", source.markerReason)
+        assertEquals("stop command received from quick settings tile", source.logMessage)
+    }
+
+    @Test
     fun legacyStopActionLogsUnknownSource() {
         val source = ProxyForegroundService.stopSourceForAction(ProxyForegroundService.ACTION_STOP_LEGACY)
 

@@ -35,5 +35,16 @@
             android:name=".service.ProxyForegroundService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".service.ProxyQuickSettingsTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_qs_tg_proxy"
+            android:label="TG Proxy"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+        </service>
     </application>
 </manifest>
