@@ -775,6 +775,9 @@ class ProxyServer(
 
     private fun isDirectAttemptAllowedForCurrentRoute(): Boolean {
         val snapshot = routeState.snapshot()
+        if (snapshot.configuredRouteMode == NetworkRouteMode.DIRECT_FIRST) {
+            return snapshot.effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST
+        }
         if (currentNetworkStatus.equals("none", ignoreCase = true) || currentNetworkStatus.equals("mobile", ignoreCase = true) ||
             currentNetworkStatus.equals("cellular", ignoreCase = true) || directRouteHealth.isSettling()
         ) {
@@ -866,7 +869,9 @@ class ProxyServer(
 
     private fun directRouteContextAllowsAttempt(expectedGeneration: Long? = null): Boolean {
         if (expectedGeneration != null && routeGeneration.get() != expectedGeneration) return false
-        if (effectiveRouteMode() != NetworkRouteMode.DIRECT_FIRST) return false
+        val snapshot = routeState.snapshot()
+        if (snapshot.effectiveRouteMode != NetworkRouteMode.DIRECT_FIRST) return false
+        if (snapshot.configuredRouteMode == NetworkRouteMode.DIRECT_FIRST) return true
         if (!isWifi(currentNetworkStatus)) return false
         if (directRouteHealth.isSettling()) return false
         return true

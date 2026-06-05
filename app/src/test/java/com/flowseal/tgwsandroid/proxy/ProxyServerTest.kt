@@ -1153,7 +1153,7 @@ class ProxyServerTest {
             config = baseConfig().copy(
                 poolSize = 1,
                 routeMode = NetworkRouteMode.AUTO,
-                networkStatus = "Wi-Fi",
+                networkStatus = "mobile",
                 dcRedirects = mapOf(2 to "203.0.113.2"),
             ),
         )
@@ -1401,6 +1401,8 @@ class ProxyServerTest {
             bufferSizeBytes = 4096,
             poolSize = 0,
             cfproxyEnabled = true,
+            routeMode = NetworkRouteMode.DIRECT_FIRST,
+            networkStatus = "Wi-Fi",
         )
 
     private fun handshakeVector(name: String): JSONObject {
