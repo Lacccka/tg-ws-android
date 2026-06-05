@@ -119,7 +119,7 @@ class ProxyForegroundService : Service() {
                 State.addLog("proxy start requested", LogSeverity.INFO, "service")
                 registerNetworkCallback()
                 val logger = ProxyLogger { message -> State.addProxyLog(message) }
-                val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(applicationContext), logger = logger)
+                val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus), logger = logger)
                 proxyServer = server
                 try {
                     server.start()
@@ -345,7 +345,7 @@ class ProxyForegroundService : Service() {
             State.updateStats(stats)
             State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
             val line = "watchdog: running=${server?.isRunning == true} ${compactStats(stats)} " +
-                "network=${State.networkStatus} battery=${State.batteryOptimizationStatus}"
+                "network=${State.networkStatus} route=${stats?.effectiveRouteMode ?: "unknown"} battery=${State.batteryOptimizationStatus}"
             State.addLog(line, LogSeverity.INFO, "service")
         }, WATCHDOG_INTERVAL_SECONDS, WATCHDOG_INTERVAL_SECONDS, TimeUnit.SECONDS)
     }
@@ -362,7 +362,7 @@ class ProxyForegroundService : Service() {
             "sessionTimeouts=${stats.sessionTimeouts} sessionEof=${stats.sessionEof} " +
             "sessionClientClosed=${stats.sessionClientClosed} sessionSocketClosed=${stats.sessionSocketClosed} " +
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors} cf=${stats.cfProxyConnections}/${stats.cfProxyErrors} " +
-            "pool=${stats.poolHits}/${stats.poolMisses}/${stats.poolRefillErrors} poolStale=${stats.poolStale}"
+            "pool=${stats.poolHits}/${stats.poolMisses}/${stats.poolRefillErrors} poolStale=${stats.poolStale} route=${stats.effectiveRouteMode} lastRoute=${stats.lastRouteUsed ?: "none"}"
     }
 
     companion object {
@@ -518,6 +518,8 @@ class ProxyForegroundService : Service() {
             val endpoint = context?.let { ProxyRuntimeConfig.endpointSummary(it) } ?: "unknown"
             val secret = context?.let { ProxyRuntimeConfig.partialTelegramSecret(it) } ?: "unknown"
             val dcSummary = context?.let { ProxyRuntimeConfig.dcSummary(it) } ?: "unknown"
+            val routeMode = context?.let { ProxyRuntimeConfig.appConfig(it).routeMode.displayName } ?: "unknown"
+            val effectiveRouteMode = statsSnapshot?.effectiveRouteMode ?: context?.let { ProxyRuntimeConfig.proxyServerConfig(it, networkStatus).effectiveRouteMode.displayName } ?: "unknown"
             return DiagnosticReportFormatter.format(
                 DiagnosticReportFormatter.snapshot(
                     status = lastStatus,
@@ -526,6 +528,8 @@ class ProxyForegroundService : Service() {
                     dcSummary = dcSummary,
                     batteryOptimization = batteryOptimizationStatus,
                     network = networkStatus,
+                    routeMode = routeMode,
+                    effectiveRouteMode = effectiveRouteMode,
                     stats = statsSnapshot,
                     logs = logStore.snapshot(),
                 ),

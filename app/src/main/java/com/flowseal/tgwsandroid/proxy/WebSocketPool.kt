@@ -153,7 +153,7 @@ class WebSocketPool(
         try {
             for (domain in domains) {
                 try {
-                    connected = connector.connect(targetHost, domain, path)
+                    connected = connector.connect(targetHost, domain, path, RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)
                     break
                 } catch (error: Throwable) {
                     onRefillError()

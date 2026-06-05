@@ -32,9 +32,16 @@ data class ProxyServerConfig(
     val cfproxyEnabled: Boolean = false,
     /** Bundled or caller-provided CF proxy base domains. Remote refresh is intentionally not ported yet. */
     val cfProxyDomains: List<String> = CfProxyDomains.defaults,
+    val routeMode: NetworkRouteMode = NetworkRouteMode.AUTO,
+    val networkStatus: String = "unknown",
+    val directFallbackTimeoutMs: Int = 2_000,
 ) {
+    val effectiveRouteMode: NetworkRouteMode = RouteStrategy.resolve(routeMode, networkStatus)
     companion object {
-        fun fromAppConfig(appConfig: AppConfig): ProxyServerConfig = ProxyServerConfig(
+        fun fromAppConfig(
+            appConfig: AppConfig,
+            networkStatus: String = "unknown",
+        ): ProxyServerConfig = ProxyServerConfig(
             host = appConfig.host,
             port = appConfig.port,
             secretHex = appConfig.secret,
@@ -43,6 +50,8 @@ data class ProxyServerConfig(
             poolSize = appConfig.poolSize,
             cfproxyEnabled = appConfig.cfproxy,
             cfProxyDomains = appConfig.cfproxyUserDomain.ifEmpty { CfProxyDomains.defaults },
+            routeMode = appConfig.routeMode,
+            networkStatus = networkStatus,
         )
 
         private fun List<String>.toDcRedirects(): Map<Int, String> = buildMap {
@@ -76,6 +85,11 @@ data class ProxyServerStats(
     val sessionClientClosed: Long = 0,
     val sessionSocketClosed: Long = 0,
     val sessionUnexpectedErrors: Long = 0,
+    val routeMode: String = NetworkRouteMode.AUTO.configValue,
+    val effectiveRouteMode: String = NetworkRouteMode.DIRECT_FIRST.configValue,
+    val lastRouteUsed: String? = null,
+    val directTimeouts: Long = 0,
+    val lastCfDomain: String? = null,
 )
 
 fun interface ProxyLogger {
@@ -99,7 +113,7 @@ interface TcpClientTransport : ClientByteStream {
 }
 
 fun interface RawWebSocketConnector {
-    fun connect(targetHost: String, domain: String, path: String): WebSocketBinaryStream
+    fun connect(targetHost: String, domain: String, path: String, timeoutMs: Int): WebSocketBinaryStream
 }
 
 private data class WebSocketRoute(
@@ -141,8 +155,8 @@ fun interface ProxyBridgeRunner {
 class ProxyServer(
     private val config: ProxyServerConfig,
     private val serverTransport: TcpServerTransport = JavaTcpServerTransport(),
-    private val webSocketConnector: RawWebSocketConnector = RawWebSocketConnector { targetHost, domain, path ->
-        RawWebSocketBinaryStream(RawWebSocket.connect(host = targetHost, domain = domain, path = path))
+    private val webSocketConnector: RawWebSocketConnector = RawWebSocketConnector { targetHost, domain, path, timeoutMs ->
+        RawWebSocketBinaryStream(RawWebSocket.connect(host = targetHost, domain = domain, path = path, timeoutMs = timeoutMs))
     },
     private val bridgeRunner: ProxyBridgeRunner = ProxyBridgeRunner { client, webSocket, cryptoContext, splitter, counters ->
         BridgeSession(client, webSocket, cryptoContext, splitter, counters, config.bufferSizeBytes).runBlocking()
@@ -170,6 +184,9 @@ class ProxyServer(
     private val poolMisses = AtomicLong(0)
     private val poolRefillErrors = AtomicLong(0)
     private val poolStale = AtomicLong(0)
+    private val directTimeouts = AtomicLong(0)
+    @Volatile private var lastRouteUsed: String? = null
+    @Volatile private var lastCfDomain: String? = null
     private val webSocketPool = WebSocketPool(
         poolSize = config.poolSize,
         connector = webSocketConnector,
@@ -183,8 +200,10 @@ class ProxyServer(
     fun start() {
         if (!running.compareAndSet(false, true)) return
         serverTransport.bind(config.host, config.port)
-        if (config.poolSize > 0) {
+        if (isDirectPoolEnabled()) {
             webSocketPool.warmup(config.dcRedirects, ::wsDomains)
+        } else if (config.poolSize > 0) {
+            logger.log("Direct WS pool warmup skipped for effective route mode ${config.effectiveRouteMode.configValue}")
         }
         acceptThread = Thread(::acceptLoop, "ProxyServer-accept-${config.host}:${config.port}").also {
             it.isDaemon = true
@@ -226,6 +245,11 @@ class ProxyServer(
         poolMisses = poolMisses.get(),
         poolRefillErrors = poolRefillErrors.get(),
         poolStale = poolStale.get(),
+        routeMode = config.routeMode.configValue,
+        effectiveRouteMode = config.effectiveRouteMode.configValue,
+        lastRouteUsed = lastRouteUsed,
+        directTimeouts = directTimeouts.get(),
+        lastCfDomain = lastCfDomain,
     )
 
     private fun acceptLoop() {
@@ -311,39 +335,65 @@ class ProxyServer(
             return
         }
 
-        val directRoute = getPooledOrConnectWebSocket(parsed, targetHost)
+        when (config.effectiveRouteMode) {
+            NetworkRouteMode.CF_ONLY -> {
+                if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
+                logger.log("DC${parsed.dcId} no route available after CF-only attempts")
+            }
+            NetworkRouteMode.CF_FIRST -> {
+                if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
+                logger.log("DC${parsed.dcId} trying short direct fallback after CF-first failure")
+                if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = false, timeoutMs = config.directFallbackTimeoutMs)) return
+                logger.log("DC${parsed.dcId} no route available after CF-first attempts")
+            }
+            NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> {
+                if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = true, timeoutMs = RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)) return
+                if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
+                logger.log("DC${parsed.dcId} no route available after direct WebSocket attempts")
+            }
+        }
+    }
+
+
+    private fun tryDirectRoute(
+        client: TcpClientTransport,
+        parsed: MtprotoHandshake.Result,
+        targetHost: String,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+        usePool: Boolean,
+        timeoutMs: Int,
+    ): Boolean {
+        val directRoute = getPooledOrConnectWebSocket(parsed, targetHost, usePool, timeoutMs)
         if (directRoute != null) {
             val directResult = runWebSocketRoute(client, parsed, directRoute, relayInit, cryptoContext, splitter)
-            if (!directResult.failed) return
+            if (!directResult.failed) return true
             if (directResult.retryableStalePooled) {
                 logger.log("DC${parsed.dcId} retrying with cold direct route after stale pool")
-                val coldRoute = connectWebSocket(parsed, targetHost)?.let { WebSocketRoute(it, "direct-cold") }
+                val coldRoute = connectWebSocket(parsed, targetHost, timeoutMs)?.let { WebSocketRoute(it, "direct-cold") }
                 if (coldRoute != null) {
                     val coldResult = runWebSocketRoute(client, parsed, coldRoute, relayInit, cryptoContext, splitter)
-                    if (!coldResult.failed) return
-                    if (!coldResult.failedBeforeBridge) return
+                    if (!coldResult.failed) return true
+                    if (!coldResult.failedBeforeBridge) return true
                 }
                 if (config.cfproxyEnabled) {
                     logger.log("DC${parsed.dcId} trying CF fallback after stale pool/cold direct failure")
                 }
             } else if (!directResult.failedBeforeBridge || directResult.stalePooled) {
-                return
+                return true
             }
         }
-
-        if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) {
-            return
-        }
-
-        logger.log("DC${parsed.dcId} no route available after direct WebSocket attempts")
+        return false
     }
-
 
     private fun getPooledOrConnectWebSocket(
         parsed: MtprotoHandshake.Result,
         targetHost: String,
+        usePool: Boolean,
+        timeoutMs: Int,
     ): WebSocketRoute? {
-        if (config.poolSize > 0) {
+        if (usePool && isDirectPoolEnabled()) {
             val pooled = webSocketPool.get(parsed.dcId, parsed.isMedia, targetHost, wsDomains(parsed.dcId, parsed.isMedia))
             if (pooled != null) {
                 poolHits.incrementAndGet()
@@ -353,12 +403,13 @@ class ProxyServer(
             poolMisses.incrementAndGet()
             logger.log("DC${parsed.dcId} direct WS pool miss")
         }
-        return connectWebSocket(parsed, targetHost)?.let { WebSocketRoute(it, "direct-cold") }
+        return connectWebSocket(parsed, targetHost, timeoutMs)?.let { WebSocketRoute(it, "direct-cold") }
     }
 
     private fun connectWebSocket(
         parsed: MtprotoHandshake.Result,
         targetHost: String,
+        timeoutMs: Int,
     ): WebSocketBinaryStream? {
         val failures = mutableListOf<String>()
         for (domain in wsDomains(parsed.dcId, parsed.isMedia)) {
@@ -366,11 +417,12 @@ class ProxyServer(
                 "DC${parsed.dcId} media=${parsed.isMedia} -> wss://$domain$DEFAULT_WS_PATH via $targetHost",
             )
             try {
-                val webSocket = webSocketConnector.connect(targetHost, domain, DEFAULT_WS_PATH)
+                val webSocket = webSocketConnector.connect(targetHost, domain, DEFAULT_WS_PATH, timeoutMs)
                 logger.log("DC${parsed.dcId} WebSocket connected via $domain")
                 return webSocket
             } catch (error: Throwable) {
                 wsConnectErrors.incrementAndGet()
+                if (isTimeout(error)) directTimeouts.incrementAndGet()
                 val detail = websocketFailureDetail(error)
                 failures.add("$domain ($detail)")
                 logger.log("DC${parsed.dcId} WebSocket attempt via $domain failed: $detail")
@@ -394,7 +446,7 @@ class ProxyServer(
             val domain = "kws${parsed.dcId}.$baseDomain"
             logger.log("DC${parsed.dcId} -> trying CF proxy wss://$domain$DEFAULT_WS_PATH")
             val webSocket = try {
-                webSocketConnector.connect(domain, domain, DEFAULT_WS_PATH)
+                webSocketConnector.connect(domain, domain, DEFAULT_WS_PATH, RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)
             } catch (error: Throwable) {
                 cfProxyErrors.incrementAndGet()
                 val detail = websocketFailureDetail(error)
@@ -404,6 +456,7 @@ class ProxyServer(
 
             try {
                 cfProxyConnections.incrementAndGet()
+                lastCfDomain = domain
                 logger.log("DC${parsed.dcId} CF proxy connected via $domain")
                 cfProxyBalancer.updateDomainForDc(parsed.dcId, baseDomain)
                 val result = runWebSocketRoute(client, parsed, WebSocketRoute(webSocket, "cf"), relayInit, cryptoContext, splitter)
@@ -438,6 +491,7 @@ class ProxyServer(
         var durationMs = 0L
         var reason = "completed"
         try {
+            lastRouteUsed = route.type
             route.stream.send(relayInit)
             bridgeStarted = true
             bridgeRunner.run(client, route.stream, cryptoContext, splitter, counters)
@@ -544,6 +598,8 @@ class ProxyServer(
         logger.log(message)
     }
 
+    private fun isDirectPoolEnabled(): Boolean = isDirectPoolEnabledFor(config.effectiveRouteMode)
+
     private fun closeClient(client: TcpClientTransport) {
         try {
             client.close()
@@ -564,8 +620,12 @@ class ProxyServer(
 
     companion object {
         const val DEFAULT_WS_PATH = "/apiws"
+        const val DEFAULT_MOBILE_DIRECT_FALLBACK_TIMEOUT_MS = 2_000
         private const val STOP_JOIN_TIMEOUT_MS = 1_000L
         private const val STALE_POOL_MAX_DURATION_MS = 2_000L
+
+        private fun isDirectPoolEnabledFor(mode: NetworkRouteMode): Boolean =
+            mode == NetworkRouteMode.DIRECT_FIRST || mode == NetworkRouteMode.AUTO
 
         fun protoIntForProtoTag(protoTag: ByteArray): Int = when {
             protoTag.contentEquals(RelayInit.PROTO_TAG_ABRIDGED) -> MsgSplitter.PROTO_ABRIDGED_INT
@@ -583,6 +643,10 @@ class ProxyServer(
 
         private fun failureDetail(error: Throwable): String =
             "${error::class.java.simpleName}: ${error.message ?: "no message"}"
+
+        private fun isTimeout(error: Throwable): Boolean =
+            error::class.java.simpleName.contains("SocketTimeoutException") ||
+                error.message.orEmpty().contains("timeout", ignoreCase = true)
 
         private fun websocketFailureDetail(error: Throwable): String {
             val base = failureDetail(error)

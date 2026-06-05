@@ -179,7 +179,7 @@ class ProxyServerTest {
         val proxy =
             newProxy(
                 server = server,
-                connector = RawWebSocketConnector { _, _, _ -> throw IOException("ws boom") },
+                connector = RawWebSocketConnector { _, _, _, _ -> throw IOException("ws boom") },
                 config = baseConfig().copy(cfproxyEnabled = false),
             )
 
@@ -277,7 +277,7 @@ class ProxyServerTest {
         val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
-        val connector = RawWebSocketConnector { _, domain, _ -> throw IOException("boom for $domain") }
+        val connector = RawWebSocketConnector { _, domain, _, _ -> throw IOException("boom for $domain") }
         val proxy = newProxy(
             server = server,
             connector = connector,
@@ -433,7 +433,7 @@ class ProxyServerTest {
         val client = FakeTcpClientTransport(buildClientHandshake(dcIdx = 5, protoTag = RelayInit.PROTO_TAG_ABRIDGED))
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
-        val connector = RawWebSocketConnector { _, domain, _ -> throw IOException("cf boom for $domain") }
+        val connector = RawWebSocketConnector { _, domain, _, _ -> throw IOException("cf boom for $domain") }
         val proxy = newProxy(
             server = server,
             connector = connector,
@@ -548,7 +548,7 @@ class ProxyServerTest {
         val events = CopyOnWriteArrayList<String>()
         val warmSocket = FakeWebSocketBinaryStream(events)
         val attempts = AtomicInteger(0)
-        val connector = RawWebSocketConnector { _, domain, _ ->
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
             val attempt = attempts.incrementAndGet()
             if (attempt == 1 && domain == "kws2.web.telegram.org") warmSocket else throw IOException("cold direct blocked")
         }
@@ -583,7 +583,7 @@ class ProxyServerTest {
         val events = CopyOnWriteArrayList<String>()
         val attempts = AtomicInteger(0)
         val coldSocket = FakeWebSocketBinaryStream(events)
-        val connector = RawWebSocketConnector { _, domain, _ ->
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
             val attempt = attempts.incrementAndGet()
             if (attempt <= 4) throw IOException("warmup failed $attempt")
             if (!Thread.currentThread().name.startsWith("ProxyServer-client")) throw IOException("refill blocked $attempt")
@@ -622,7 +622,7 @@ class ProxyServerTest {
         val staleSocket = FakeWebSocketBinaryStream(events, sendError = SocketException("Broken pipe"))
         val coldSocket = FakeWebSocketBinaryStream(events)
         val attempts = AtomicInteger(0)
-        val connector = RawWebSocketConnector { _, domain, _ ->
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
             val attempt = attempts.incrementAndGet()
             when {
                 attempt == 1 && domain == "kws2.web.telegram.org" -> staleSocket
@@ -668,7 +668,7 @@ class ProxyServerTest {
         val staleSocket = FakeWebSocketBinaryStream(events, sendError = SocketException("Broken pipe"))
         val cfSocket = FakeWebSocketBinaryStream(events)
         val attempts = AtomicInteger(0)
-        val connector = RawWebSocketConnector { _, domain, _ ->
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
             val attempt = attempts.incrementAndGet()
             when {
                 attempt == 1 && domain == "kws2.web.telegram.org" -> staleSocket
@@ -710,7 +710,7 @@ class ProxyServerTest {
         val staleSocket = FakeWebSocketBinaryStream(events)
         val coldSocket = FakeWebSocketBinaryStream(events)
         val attempts = AtomicInteger(0)
-        val connector = RawWebSocketConnector { _, domain, _ ->
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
             val attempt = attempts.incrementAndGet()
             when {
                 attempt == 1 && domain == "kws2.web.telegram.org" -> staleSocket
@@ -754,7 +754,7 @@ class ProxyServerTest {
         val events = CopyOnWriteArrayList<String>()
         val pooledSocket = FakeWebSocketBinaryStream(events)
         val attempts = AtomicInteger(0)
-        val connector = RawWebSocketConnector { _, domain, _ ->
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
             val attempt = attempts.incrementAndGet()
             if (attempt == 1 && domain == "kws2.web.telegram.org") pooledSocket else throw IOException("unexpected retry $attempt $domain")
         }
@@ -808,7 +808,7 @@ class ProxyServerTest {
         val logs = CopyOnWriteArrayList<String>()
         val pool = WebSocketPool(
             poolSize = 1,
-            connector = RawWebSocketConnector { _, domain, _ -> throw IOException("refill boom for $domain") },
+            connector = RawWebSocketConnector { _, domain, _, _ -> throw IOException("refill boom for $domain") },
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -824,7 +824,7 @@ class ProxyServerTest {
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
         val sockets = CopyOnWriteArrayList<FakeWebSocketBinaryStream>()
-        val connector = RawWebSocketConnector { _, _, _ ->
+        val connector = RawWebSocketConnector { _, _, _, _ ->
             FakeWebSocketBinaryStream().also { sockets.add(it) }
         }
         val proxy = newProxy(
@@ -892,6 +892,94 @@ class ProxyServerTest {
 
         assertTrue(sawCrypto.get())
         assertTrue(sawSplitter.get())
+    }
+
+
+    @Test
+    fun autoRouteModeResolvesWifiToDirectFirst() {
+        val config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi")
+
+        assertEquals(NetworkRouteMode.DIRECT_FIRST, config.effectiveRouteMode)
+    }
+
+    @Test
+    fun autoRouteModeResolvesMobileToCfFirst() {
+        val config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "mobile")
+
+        assertEquals(NetworkRouteMode.CF_FIRST, config.effectiveRouteMode)
+    }
+
+    @Test
+    fun cfOnlyDoesNotUseDirectConnectorOrPoolPath() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                poolSize = 1,
+                routeMode = NetworkRouteMode.CF_ONLY,
+                cfProxyDomains = listOf("cf.example"),
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(listOf("kws2.cf.example"), connector.targetHosts)
+        assertEquals(0L, proxy.stats().poolHits)
+        assertEquals(0L, proxy.stats().poolMisses)
+        assertEquals(NetworkRouteMode.CF_ONLY.configValue, proxy.stats().effectiveRouteMode)
+    }
+
+    @Test
+    fun directFirstKeepsDirectBeforeCfFallbackBehavior() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val connector = FailingDirectThenCfConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.DIRECT_FIRST, cfProxyDomains = listOf("cf.example")),
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertTrue(connector.domains.first().endsWith(".web.telegram.org"))
+        assertTrue(connector.domains.last().endsWith(".cf.example"))
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+    }
+
+    @Test
+    fun cfFirstUsesShortDirectTimeoutOnlyAfterCfFailure() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val connector = TimeoutRecordingConnector()
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_FIRST,
+                cfProxyDomains = listOf("cf.example"),
+                directFallbackTimeoutMs = 1_500,
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(listOf("kws2.cf.example", "kws2.web.telegram.org", "kws2-1.web.telegram.org"), connector.domains)
+        assertEquals(listOf(RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS, 1_500, 1_500), connector.timeouts)
+        assertEquals(2L, proxy.stats().directTimeouts)
+        assertEquals(0L, proxy.stats().poolMisses)
     }
 
     @Test
@@ -1080,6 +1168,7 @@ class ProxyServerTest {
             targetHost: String,
             domain: String,
             path: String,
+            timeoutMs: Int,
         ): WebSocketBinaryStream {
             attempts += 1
             domains.add(domain)
@@ -1099,6 +1188,7 @@ class ProxyServerTest {
             targetHost: String,
             domain: String,
             path: String,
+            timeoutMs: Int,
         ): WebSocketBinaryStream {
             targetHosts.add(targetHost)
             domains.add(domain)
@@ -1119,11 +1209,29 @@ class ProxyServerTest {
             targetHost: String,
             domain: String,
             path: String,
+            timeoutMs: Int,
         ): WebSocketBinaryStream {
             targetHosts.add(targetHost)
             domains.add(domain)
             paths.add(path)
             return fixedSocket ?: FakeWebSocketBinaryStream().also { sockets.add(it) }
+        }
+    }
+
+
+    private class TimeoutRecordingConnector : RawWebSocketConnector {
+        val domains = mutableListOf<String>()
+        val timeouts = mutableListOf<Int>()
+
+        override fun connect(
+            targetHost: String,
+            domain: String,
+            path: String,
+            timeoutMs: Int,
+        ): WebSocketBinaryStream {
+            domains.add(domain)
+            timeouts.add(timeoutMs)
+            throw java.net.SocketTimeoutException("timeout after $timeoutMs")
         }
     }
 
@@ -1138,6 +1246,7 @@ class ProxyServerTest {
             targetHost: String,
             domain: String,
             path: String,
+            timeoutMs: Int,
         ): WebSocketBinaryStream {
             targetHosts.add(targetHost)
             domains.add(domain)

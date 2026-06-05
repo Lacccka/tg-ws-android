@@ -2,6 +2,7 @@ package com.flowseal.tgwsandroid.config
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
+import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -21,6 +22,7 @@ class AppConfigStoreTest {
             cfproxyWorkerDomain = listOf("worker.example"),
             dcIp = listOf("1:203.0.113.1"),
             appearance = Appearance.DARK,
+            routeMode = NetworkRouteMode.CF_ONLY,
         )
         store.saveConfig(original)
 
@@ -36,6 +38,7 @@ class AppConfigStoreTest {
         assertEquals(original.cfproxyWorkerDomain, updated.cfproxyWorkerDomain)
         assertEquals(original.dcIp, updated.dcIp)
         assertEquals(original.appearance, updated.appearance)
+        assertEquals(original.routeMode, updated.routeMode)
     }
 
     @Test
@@ -62,6 +65,7 @@ class AppConfigStoreTest {
         assertEquals(true, updated.cfproxy)
         assertEquals(AppConfig.DEFAULT_DC_IP, updated.dcIp)
         assertEquals(Appearance.AUTO, updated.appearance)
+        assertEquals(NetworkRouteMode.AUTO, updated.routeMode)
         assertEquals(validSecret, updated.secret)
     }
 
@@ -87,6 +91,16 @@ class AppConfigStoreTest {
 
         assertEquals("55555555555555555555555555555555", updated.secret)
         assertTrue(AppConfigStore.isValidSecretHex(updated.secret))
+    }
+
+    @Test
+    fun `routeMode is saved and restored`() {
+        val store = testStore()
+        store.saveConfig(AppConfig(secret = "11111111111111111111111111111111", routeMode = NetworkRouteMode.CF_FIRST))
+
+        val loaded = store.loadConfig()
+
+        assertEquals(NetworkRouteMode.CF_FIRST, loaded.routeMode)
     }
 
     @Test

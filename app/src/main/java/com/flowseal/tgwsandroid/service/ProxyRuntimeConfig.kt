@@ -28,9 +28,11 @@ object ProxyRuntimeConfig {
 
     fun appConfig(): AppConfig = config
 
-    fun proxyServerConfig(context: Context): ProxyServerConfig = proxyServerConfig(appConfig(context))
+    fun proxyServerConfig(context: Context, networkStatus: String = "unknown"): ProxyServerConfig =
+        proxyServerConfig(appConfig(context), networkStatus)
 
-    internal fun proxyServerConfig(config: AppConfig): ProxyServerConfig = ProxyServerConfig.fromAppConfig(config)
+    internal fun proxyServerConfig(config: AppConfig, networkStatus: String = "unknown"): ProxyServerConfig =
+        ProxyServerConfig.fromAppConfig(config, networkStatus)
 
     fun endpointSummary(context: Context): String = endpointSummary(appConfig(context))
 
@@ -48,6 +50,16 @@ object ProxyRuntimeConfig {
             val parts = entry.split(':', limit = 2)
             if (parts.size == 2) parts[0] else entry
         } + " via " + (dcIp.firstOrNull()?.substringAfter(':', "unknown") ?: "unknown")
+    }
+
+    fun routeModeSummary(context: Context, networkStatus: String = "unknown"): String =
+        routeModeSummary(appConfig(context), networkStatus)
+
+    fun routeModeSummary(networkStatus: String = "unknown"): String = routeModeSummary(config, networkStatus)
+
+    internal fun routeModeSummary(config: AppConfig, networkStatus: String = "unknown"): String {
+        val serverConfig = proxyServerConfig(config, networkStatus)
+        return "${config.routeMode.displayName} (effective ${serverConfig.effectiveRouteMode.displayName})"
     }
 
     fun cfFallbackSummary(context: Context): String = cfFallbackSummary(appConfig(context))

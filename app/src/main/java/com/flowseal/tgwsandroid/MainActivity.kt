@@ -33,6 +33,8 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
+import com.flowseal.tgwsandroid.config.AppConfigStore
+import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.service.LogSeverity
 import com.flowseal.tgwsandroid.service.ProxyForegroundService
 import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
@@ -48,6 +50,7 @@ class MainActivity : Activity() {
     private lateinit var secretText: TextView
     private lateinit var dcText: TextView
     private lateinit var cfFallbackText: TextView
+    private lateinit var routeModeText: TextView
     private lateinit var statsText: TextView
     private lateinit var logsText: TextView
     private lateinit var restartRequiredText: TextView
@@ -62,6 +65,7 @@ class MainActivity : Activity() {
     private lateinit var restartDashboardButton: Button
     private lateinit var restartAdvancedButton: Button
     private lateinit var resetSecretButton: Button
+    private lateinit var routeModeButton: Button
     private lateinit var connectTelegramButton: Button
     private lateinit var advancedToggleButton: Button
     private lateinit var copyProxyLinkButton: Button
@@ -98,6 +102,7 @@ class MainActivity : Activity() {
         restartDashboardButton.setOnClickListener { restartProxyService() }
         restartAdvancedButton.setOnClickListener { restartProxyService() }
         resetSecretButton.setOnClickListener { confirmResetSecret() }
+        routeModeButton.setOnClickListener { showRouteModeDialog() }
         connectTelegramButton.setOnClickListener { openTelegramProxyLink() }
         advancedToggleButton.setOnClickListener {
             advancedExpanded = !advancedExpanded
@@ -148,6 +153,7 @@ class MainActivity : Activity() {
         secretText = createValueText()
         dcText = createValueText()
         cfFallbackText = createValueText()
+        routeModeText = createValueText()
         statsText = createValueText()
         logsText = TextView(this).apply {
             text = "No logs yet"
@@ -169,6 +175,7 @@ class MainActivity : Activity() {
         restartDashboardButton = createButton("Restart proxy")
         restartAdvancedButton = createButton("Restart proxy")
         resetSecretButton = createButton("Reset secret")
+        routeModeButton = createButton("Route mode")
         connectTelegramButton = createButton("Connect in Telegram")
         advancedToggleButton = createButton("Diagnostics / Advanced")
         copyProxyLinkButton = createButton("Copy proxy link")
@@ -215,6 +222,8 @@ class MainActivity : Activity() {
                 addView(createTextRow("Secret", secretText), matchWrapParams())
                 addView(createTextRow("DC summary", dcText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("CF fallback", cfFallbackText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Route mode", routeModeText), matchWrapParams(topMargin = rowGap))
+                addView(routeModeButton, matchWrapParams(topMargin = rowGap))
                 addView(createSectionTitle("Actions"), matchWrapParams(topMargin = smallPadding))
                 addView(batterySettingsButton, matchWrapParams(topMargin = rowGap))
                 addView(copyProxyLinkButton, matchWrapParams(topMargin = rowGap))
@@ -429,6 +438,27 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun showRouteModeDialog() {
+        val current = ProxyRuntimeConfig.appConfig(applicationContext).routeMode
+        val modes = NetworkRouteMode.entries.toTypedArray()
+        val labels = modes.map { it.displayName }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Route mode")
+            .setSingleChoiceItems(labels, modes.indexOf(current)) { dialog, which ->
+                val selected = modes[which]
+                val store = AppConfigStore.from(applicationContext)
+                val updated = store.loadConfig().copy(routeMode = selected)
+                store.saveConfig(updated)
+                ProxyRuntimeConfig.initialize(applicationContext)
+                pendingRestartRequired = true
+                ProxyForegroundService.State.addLog("route mode changed to ${selected.configValue}; restart required", LogSeverity.INFO, "ui")
+                dialog.dismiss()
+                refreshState()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
     private fun openBatterySettings() {
         if (detectBatteryOptimizationStatus() == "optimized") {
             val packageUri = Uri.parse("package:$packageName")
@@ -460,6 +490,7 @@ class MainActivity : Activity() {
         secretText.text = ProxyRuntimeConfig.partialTelegramSecret()
         dcText.text = ProxyRuntimeConfig.dcSummary()
         cfFallbackText.text = ProxyRuntimeConfig.cfFallbackSummary()
+        routeModeText.text = ProxyRuntimeConfig.routeModeSummary(ProxyForegroundService.State.networkStatus)
         statsText.text = conciseStatsLine()
         primaryControlButton.text = if (running) "Stop proxy" else "Start proxy"
         restartRequiredText.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE

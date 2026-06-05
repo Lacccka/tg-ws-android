@@ -1,5 +1,6 @@
 package com.flowseal.tgwsandroid.config
 
+import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -24,6 +25,7 @@ data class AppConfig(
     val cfproxyUserDomain: List<String> = emptyList(),
     val cfproxyWorkerDomain: List<String> = emptyList(),
     val appearance: Appearance = Appearance.AUTO,
+    val routeMode: NetworkRouteMode = NetworkRouteMode.AUTO,
 ) {
     companion object {
         const val DEFAULT_HOST = "127.0.0.1"
@@ -49,6 +51,9 @@ data class AppConfig(
                 cfproxyUserDomain = json.optStringList("cfproxy_user_domain", emptyList()),
                 cfproxyWorkerDomain = json.optStringList("cfproxy_worker_domain", emptyList()),
                 appearance = Appearance.fromConfigValue(json.optString("appearance", Appearance.AUTO.configValue)),
+                routeMode = NetworkRouteMode.fromConfigValue(
+                    json.optString("route_mode", json.optString("routeMode", NetworkRouteMode.AUTO.configValue)),
+                ),
             )
     }
 }

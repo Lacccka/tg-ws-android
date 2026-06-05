@@ -1,5 +1,6 @@
 package com.flowseal.tgwsandroid.config
 
+import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -29,7 +30,8 @@ class AppConfigTest {
                       "cfproxy": false,
                       "cfproxy_user_domain": "one.example, two.example",
                       "cfproxy_worker_domain": ["worker.example"],
-                      "appearance": "dark"
+                      "appearance": "dark",
+                      "route_mode": "cf_first"
                     }
                     """.trimIndent(),
                 ),
@@ -49,5 +51,13 @@ class AppConfigTest {
         assertEquals(listOf("one.example", "two.example"), config.cfproxyUserDomain)
         assertEquals(listOf("worker.example"), config.cfproxyWorkerDomain)
         assertEquals(Appearance.DARK, config.appearance)
+        assertEquals(NetworkRouteMode.CF_FIRST, config.routeMode)
+    }
+
+    @Test
+    fun invalidRouteModeFallsBackToAuto() {
+        val config = AppConfig.fromJson(JSONObject("""{"route_mode":"bad"}"""))
+
+        assertEquals(NetworkRouteMode.AUTO, config.routeMode)
     }
 }

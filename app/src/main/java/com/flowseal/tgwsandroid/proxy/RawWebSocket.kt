@@ -153,6 +153,7 @@ class RawWebSocket private constructor(
     ): ByteArray = RawWebSocketCodec.buildFrame(opcode, payload, mask = true, randomProvider = randomProvider)
 
     companion object {
+        const val DEFAULT_CONNECT_TIMEOUT_MS = 10_000
         private const val OP_TEXT = 0x1
         private val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
         private val secureRandom = SecureRandom()
@@ -162,14 +163,14 @@ class RawWebSocket private constructor(
         fun connect(
             host: String,
             domain: String,
-            timeoutMs: Int = 10_000,
+            timeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
             path: String = "/apiws",
             transportFactory: TransportFactory = TrustAllTlsTransportFactory,
             randomProvider: (Int) -> ByteArray = { length ->
                 ByteArray(length).also { secureRandom.nextBytes(it) }
             },
         ): RawWebSocket {
-            val boundedTimeoutMs = minOf(timeoutMs, 10_000)
+            val boundedTimeoutMs = minOf(timeoutMs, DEFAULT_CONNECT_TIMEOUT_MS)
             val transport = transportFactory.connect(host, 443, domain, boundedTimeoutMs)
             try {
                 transport.setReadTimeout(boundedTimeoutMs)

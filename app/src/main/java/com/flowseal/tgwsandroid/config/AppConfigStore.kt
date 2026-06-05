@@ -101,6 +101,8 @@ fun AppConfig.toJson(): JSONObject = JSONObject().apply {
     put("cfproxy_user_domain", JSONArray(cfproxyUserDomain))
     put("cfproxy_worker_domain", JSONArray(cfproxyWorkerDomain))
     put("appearance", appearance.configValue)
+    put("route_mode", routeMode.configValue)
+    put("routeMode", routeMode.configValue)
 }
 
 private fun generateSecretHex(): String {

@@ -14,6 +14,8 @@ data class DiagnosticSnapshot(
     val dcSummary: String,
     val batteryOptimization: String,
     val network: String,
+    val routeMode: String = "unknown",
+    val effectiveRouteMode: String = "unknown",
     val stats: ProxyServerStats?,
     val logs: List<RuntimeLogEntry>,
 )
@@ -28,6 +30,8 @@ object DiagnosticReportFormatter {
         dcSummary: String,
         batteryOptimization: String = "unknown",
         network: String = "unknown",
+        routeMode: String = "unknown",
+        effectiveRouteMode: String = "unknown",
         stats: ProxyServerStats? = null,
         logs: List<RuntimeLogEntry>,
         clock: Clock = Clock.systemDefaultZone(),
@@ -39,6 +43,8 @@ object DiagnosticReportFormatter {
         dcSummary = dcSummary.ifBlank { "unknown" },
         batteryOptimization = batteryOptimization.ifBlank { "unknown" },
         network = network.ifBlank { "unknown" },
+        routeMode = routeMode.ifBlank { "unknown" },
+        effectiveRouteMode = effectiveRouteMode.ifBlank { "unknown" },
         stats = stats,
         logs = logs,
     )
@@ -52,6 +58,8 @@ object DiagnosticReportFormatter {
         appendLine("DCs: ${snapshot.dcSummary}")
         appendLine("Battery optimization: ${snapshot.batteryOptimization}")
         appendLine("Network: ${snapshot.network}")
+        appendLine("Route mode: ${snapshot.routeMode}")
+        appendLine("Effective route mode: ${snapshot.effectiveRouteMode}")
         appendLine("Stats: ${formatStats(snapshot.stats)}")
         appendLine("---")
         snapshot.logs.forEach { appendLine(it.formatLine()) }
@@ -65,7 +73,10 @@ object DiagnosticReportFormatter {
             "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
             "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +
             "sessionClientClosed=${stats.sessionClientClosed}, sessionSocketClosed=${stats.sessionSocketClosed}, " +
-            "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, poolHits=${stats.poolHits}, " +
+            "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, routeMode=${stats.routeMode}, " +
+            "effectiveRouteMode=${stats.effectiveRouteMode}, lastRouteUsed=${stats.lastRouteUsed ?: "none"}, " +
+            "directTimeouts=${stats.directTimeouts}, cfConnections=${stats.cfProxyConnections}, " +
+            "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, poolHits=${stats.poolHits}, " +
             "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}"
     }
 }
