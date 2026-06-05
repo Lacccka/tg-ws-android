@@ -74,6 +74,7 @@ object DiagnosticReportFormatter {
         appendLine("Effective route mode: ${snapshot.effectiveRouteMode}")
         appendLine("Previous effective route mode: ${snapshot.previousEffectiveRouteMode ?: "none"}")
         appendLine("Last route change reason: ${snapshot.lastRouteChangeReason}")
+        appendLine("Last route change source: ${snapshot.stats?.lastRouteChangeSource ?: "unknown"}")
         appendLine("Last route change time: ${snapshot.lastRouteChangeTimeMs?.toString() ?: "unknown"}")
         appendLine("Network at last route change: ${snapshot.networkAtLastRouteChange}")
         appendLine("Stats: ${formatStats(snapshot.stats)}")
@@ -91,10 +92,15 @@ object DiagnosticReportFormatter {
             "sessionClientClosed=${stats.sessionClientClosed}, sessionSocketClosed=${stats.sessionSocketClosed}, " +
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, configuredRouteMode=${stats.routeMode}, " +
             "effectiveRouteMode=${stats.effectiveRouteMode}, previousEffectiveRouteMode=${stats.previousEffectiveRouteMode ?: "none"}, " +
-            "lastRouteChangeReason=${stats.lastRouteChangeReason}, lastRouteChangeTimeMs=${stats.lastRouteChangeTimeMs ?: "unknown"}, " +
+            "lastRouteChangeReason=${stats.lastRouteChangeReason}, lastRouteChangeSource=${stats.lastRouteChangeSource}, " +
+            "lastRouteChangeTimeMs=${stats.lastRouteChangeTimeMs ?: "unknown"}, " +
             "networkAtLastRouteChange=${stats.networkAtLastRouteChange}, lastRouteUsed=${stats.lastRouteUsed ?: "none"}, " +
+            "directAttempts=${stats.directAttempts}, directAttemptsSkippedBecauseRoute=${stats.directAttemptsSkippedBecauseRoute}, " +
             "directTimeouts=${stats.directTimeouts}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, poolHits=${stats.poolHits}, " +
-            "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}"
+            "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}, " +
+            "poolRefillsCancelled=${stats.poolRefillsCancelled}, " +
+            "poolResultsDiscardedAfterRouteChange=${stats.poolResultsDiscardedAfterRouteChange}, " +
+            "routeChangesImmediate=${stats.routeChangesImmediate}, networkNoneEvents=${stats.networkNoneEvents}"
     }
 }

@@ -337,21 +337,27 @@ class ProxyForegroundService : Service() {
         State.setNetworkStatus(normalized)
         State.addLog("$event: $normalized", severity, "network")
         State.addLog("network changed: $previous -> $normalized", severity, "network")
-        routeDebouncer.submit(normalized)
+        if (event == "network lost" || normalized.equals("none", ignoreCase = true)) {
+            State.addLog("network lost: applying safe route immediately", LogSeverity.WARN, "network")
+            routeDebouncer.cancel()
+            executor.execute { applyRouteForNetwork(normalized, immediate = true) }
+        } else {
+            routeDebouncer.submit(normalized)
+        }
     }
 
-    private fun applyRouteForNetwork(networkStatus: String) {
+    private fun applyRouteForNetwork(networkStatus: String, immediate: Boolean = false) {
         val server = synchronized(lock) { proxyServer }
         if (server?.isRunning != true) {
             State.addLog("route unchanged: proxy not running for network=$networkStatus", LogSeverity.INFO, "network")
             return
         }
         val before = server.routeSnapshot()
-        val result = server.applyNetworkRoute(networkStatus)
+        val result = if (immediate) server.applyNetworkRouteImmediately(networkStatus) else server.applyNetworkRoute(networkStatus)
         State.updateStats(server.stats())
         if (result.changed) {
             State.addLog(
-                "route changed: ${result.previous.configValue} -> ${result.current.configValue} because network=$networkStatus",
+                "route changed (${result.source}): ${result.previous.configValue} -> ${result.current.configValue} because network=$networkStatus",
                 LogSeverity.INFO,
                 "network",
             )
@@ -361,12 +367,12 @@ class ProxyForegroundService : Service() {
             } else {
                 ""
             }
-            State.addLog("route unchanged: ${result.current.configValue} for network=$networkStatus$override", LogSeverity.INFO, "network")
+            State.addLog("route unchanged (${result.source}): ${result.current.configValue} for network=$networkStatus$override", LogSeverity.INFO, "network")
         }
     }
 
     private fun networkStatus(capabilities: NetworkCapabilities?): String = when {
-        capabilities == null -> "unknown"
+        capabilities == null -> "none"
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile"
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN) -> "VPN"

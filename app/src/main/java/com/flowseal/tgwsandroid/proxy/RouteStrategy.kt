@@ -25,6 +25,7 @@ data class RouteSnapshot(
     val effectiveRouteMode: NetworkRouteMode,
     val previousEffectiveRouteMode: NetworkRouteMode? = null,
     val lastRouteChangeReason: String = "initial",
+    val lastRouteChangeSource: String = "initial",
     val lastRouteChangeTimeMs: Long? = null,
     val networkAtLastRouteChange: String = "unknown",
 )
@@ -40,6 +41,7 @@ class RouteState(
             effectiveRouteMode = RouteStrategy.resolve(configuredRouteMode, initialNetworkStatus),
             previousEffectiveRouteMode = null,
             lastRouteChangeReason = "initial network=$initialNetworkStatus",
+            lastRouteChangeSource = "initial",
             lastRouteChangeTimeMs = clock.millis(),
             networkAtLastRouteChange = initialNetworkStatus.ifBlank { "unknown" },
         ),
@@ -65,6 +67,7 @@ class RouteState(
         desiredEffectiveRouteMode: NetworkRouteMode,
         reason: String,
         networkStatus: String,
+        source: String = "debounce",
     ): RouteChangeResult {
         while (true) {
             val current = state.get()
@@ -76,12 +79,14 @@ class RouteState(
                     snapshot = current,
                     reason = reason,
                     networkStatus = networkStatus,
+                    source = source,
                 )
             }
             val updated = current.copy(
                 effectiveRouteMode = desiredEffectiveRouteMode,
                 previousEffectiveRouteMode = current.effectiveRouteMode,
                 lastRouteChangeReason = reason,
+                lastRouteChangeSource = source,
                 lastRouteChangeTimeMs = clock.millis(),
                 networkAtLastRouteChange = networkStatus.ifBlank { "unknown" },
             )
@@ -93,6 +98,7 @@ class RouteState(
                     snapshot = updated,
                     reason = reason,
                     networkStatus = networkStatus,
+                    source = source,
                 )
             }
         }
@@ -106,6 +112,7 @@ data class RouteChangeResult(
     val snapshot: RouteSnapshot,
     val reason: String,
     val networkStatus: String,
+    val source: String = "debounce",
 )
 
 object RouteStrategy {
@@ -118,6 +125,7 @@ object RouteStrategy {
             networkStatus.equals("cellular", ignoreCase = true) -> NetworkRouteMode.CF_FIRST
             networkStatus.equals("Wi-Fi", ignoreCase = true) -> NetworkRouteMode.DIRECT_FIRST
             networkStatus.equals("wifi", ignoreCase = true) -> NetworkRouteMode.DIRECT_FIRST
+            networkStatus.equals("none", ignoreCase = true) -> NetworkRouteMode.CF_FIRST
             else -> NetworkRouteMode.DIRECT_FIRST
         }
         else -> configuredMode

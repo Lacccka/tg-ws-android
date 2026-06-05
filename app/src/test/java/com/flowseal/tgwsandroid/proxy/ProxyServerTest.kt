@@ -10,6 +10,7 @@ import java.io.IOException
 import java.net.SocketException
 import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -1080,6 +1081,115 @@ class ProxyServerTest {
 
         assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
         assertTrue(logs.any { it.contains("WS pool warmup started") })
+    }
+
+
+    @Test
+    fun networkLostBypassesDebounceAndAppliesSafeRouteImmediately() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi"),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        val result = proxy.applyNetworkRouteImmediately("none")
+        proxy.stop()
+
+        assertTrue(result.changed)
+        assertEquals("immediate", result.source)
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(1L, proxy.stats().routeChangesImmediate)
+        assertEquals(1L, proxy.stats().networkNoneEvents)
+        assertTrue(logs.any { it.contains("network lost: applying safe route immediately") })
+        assertTrue(logs.any { it.contains("effective route changed: direct_first -> cf_first because network=none") })
+    }
+
+    @Test
+    fun wifiToNoneClearsAndDisablesPoolImmediately() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = MultiSocketRecordingConnector()
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(poolSize = 1, routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi"),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().directAttempts >= 4L }
+        val result = proxy.applyNetworkRouteImmediately("none")
+        proxy.stop()
+
+        assertTrue(result.changed)
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertTrue(connector.sockets.all { it.closed })
+        assertTrue(logs.any { it.contains("Direct WS pool warmup skipped because effective route mode cf_first") })
+    }
+
+    @Test
+    fun inFlightPoolRefillResultIsDiscardedAfterRouteChangesToCfFirst() {
+        val server = FakeTcpServerTransport()
+        val connectorStarted = CountDownLatch(1)
+        val allowConnect = CountDownLatch(1)
+        val connector = RawWebSocketConnector { _, _, _, _ ->
+            connectorStarted.countDown()
+            assertTrue(allowConnect.await(2, TimeUnit.SECONDS))
+            FakeWebSocketBinaryStream()
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                poolSize = 1,
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "Wi-Fi",
+                dcRedirects = mapOf(2 to "203.0.113.2"),
+            ),
+        )
+
+        proxy.start()
+        assertTrue(connectorStarted.await(2, TimeUnit.SECONDS))
+        proxy.applyNetworkRouteImmediately("none")
+        allowConnect.countDown()
+        waitUntil { proxy.stats().poolResultsDiscardedAfterRouteChange > 0L }
+        proxy.stop()
+
+        assertTrue(proxy.stats().poolRefillsCancelled > 0L)
+        assertTrue(proxy.stats().poolResultsDiscardedAfterRouteChange > 0L)
+    }
+
+    @Test
+    fun afterRouteDirectFirstToCfFirstNewSessionsDoNotUsePool() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val connector = MultiSocketRecordingConnector()
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                poolSize = 1,
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "Wi-Fi",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().directAttempts >= 4L }
+        val directDomainsBefore = connector.domains.count { it.endsWith(".web.telegram.org") }
+        proxy.applyNetworkRouteImmediately("none")
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        val directDomainsAfter = connector.domains.count { it.endsWith(".web.telegram.org") }
+        assertEquals(directDomainsBefore, directDomainsAfter)
+        assertEquals(0L, proxy.stats().poolHits)
+        assertTrue(connector.domains.any { it == "kws2.cf.example" })
     }
 
     @Test

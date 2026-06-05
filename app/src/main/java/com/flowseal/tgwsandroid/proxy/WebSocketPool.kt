@@ -32,11 +32,15 @@ class WebSocketPool(
     ),
     private val ownsExecutor: Boolean = true,
     private val onRefillError: () -> Unit = {},
+    private val onRefillAttempt: () -> Unit = {},
+    private val onRefillCancelled: (Int) -> Unit = {},
+    private val onResultDiscardedAfterRouteChange: () -> Unit = {},
 ) {
     private val lock = Any()
     private val enabled = AtomicBoolean(true)
     private val entries = mutableMapOf<Key, ArrayDeque<Entry>>()
     private val pendingRefills = mutableMapOf<Key, Int>()
+    private val generation = AtomicInteger(0)
 
     data class Key(
         val dc: Int,
@@ -88,7 +92,8 @@ class WebSocketPool(
     /** Disables future pool use and closes all currently idle sockets without shutting down the refill executor. */
     fun disableAndClear() {
         enabled.set(false)
-        clearIdle()
+        generation.incrementAndGet()
+        clearIdle(countPendingAsCancelled = true)
     }
 
     /** Enables future pool use without starting warmup by itself. */
@@ -103,15 +108,20 @@ class WebSocketPool(
     fun close() = closeAll()
 
     /** Closes all currently idle sockets and forgets pending bookkeeping without shutting down the executor. */
-    fun clearIdle() {
+    fun clearIdle() = clearIdle(countPendingAsCancelled = false)
+
+    private fun clearIdle(countPendingAsCancelled: Boolean) {
         val idle = mutableListOf<WebSocketBinaryStream>()
+        val cancelled: Int
         synchronized(lock) {
             for (queue in entries.values) {
                 while (queue.isNotEmpty()) idle.add(queue.removeFirst().webSocket)
             }
             entries.clear()
+            cancelled = if (countPendingAsCancelled) pendingRefills.values.sum() else 0
             pendingRefills.clear()
         }
+        if (cancelled > 0) onRefillCancelled(cancelled)
         idle.forEach { closeBestEffort(it) }
     }
 
@@ -143,6 +153,7 @@ class WebSocketPool(
         domains: List<String>,
     ) {
         if (poolSize <= 0 || domains.isEmpty() || !enabled.get()) return
+        val refillGeneration = generation.get()
         val key = Key(dc, isMedia)
         val expired = mutableListOf<WebSocketBinaryStream>()
         val reservations = synchronized(lock) {
@@ -156,12 +167,13 @@ class WebSocketPool(
         expired.forEach { closeBestEffort(it) }
         repeat(reservations) {
             try {
-                executor.execute { refillOne(key, targetHost, domains) }
+                executor.execute { refillOne(key, targetHost, domains, refillGeneration) }
             } catch (_: RejectedExecutionException) {
                 synchronized(lock) {
                     val remaining = (pendingRefills[key] ?: 1) - 1
                     if (remaining > 0) pendingRefills[key] = remaining else pendingRefills.remove(key)
                 }
+                onRefillCancelled(1)
             }
         }
     }
@@ -170,11 +182,15 @@ class WebSocketPool(
         key: Key,
         targetHost: String,
         domains: List<String>,
+        refillGeneration: Int,
     ) {
         var connected: WebSocketBinaryStream? = null
         try {
+            if (!enabled.get() || generation.get() != refillGeneration) return
             for (domain in domains) {
+                if (!enabled.get() || generation.get() != refillGeneration) break
                 try {
+                    onRefillAttempt()
                     connected = connector.connect(targetHost, domain, path, RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)
                     break
                 } catch (error: Throwable) {
@@ -187,7 +203,7 @@ class WebSocketPool(
             synchronized(lock) {
                 val pending = (pendingRefills[key] ?: 1) - 1
                 if (pending > 0) pendingRefills[key] = pending else pendingRefills.remove(key)
-                if (connected != null && enabled.get()) {
+                if (connected != null && enabled.get() && generation.get() == refillGeneration) {
                     val queue = entries.getOrPut(key) { ArrayDeque() }
                     if (queue.size < poolSize) {
                         queue.addLast(Entry(connected!!, nowMs()))
@@ -196,7 +212,11 @@ class WebSocketPool(
                 }
                 readyAfter = entries[key]?.size ?: 0
             }
-            connected?.let { closeBestEffort(it) }
+            connected?.let {
+                onResultDiscardedAfterRouteChange()
+                closeBestEffort(it)
+                logger.log("WS pool refill result discarded DC${key.dc} after route change")
+            }
             logger.log("WS pool refilled DC${key.dc}: $readyAfter ready")
         }
     }

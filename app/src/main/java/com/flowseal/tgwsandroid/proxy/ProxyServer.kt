@@ -89,11 +89,18 @@ data class ProxyServerStats(
     val effectiveRouteMode: String = NetworkRouteMode.DIRECT_FIRST.configValue,
     val previousEffectiveRouteMode: String? = null,
     val lastRouteChangeReason: String = "initial",
+    val lastRouteChangeSource: String = "initial",
     val lastRouteChangeTimeMs: Long? = null,
     val networkAtLastRouteChange: String = "unknown",
     val lastRouteUsed: String? = null,
     val directTimeouts: Long = 0,
     val lastCfDomain: String? = null,
+    val directAttempts: Long = 0,
+    val directAttemptsSkippedBecauseRoute: Long = 0,
+    val poolRefillsCancelled: Long = 0,
+    val poolResultsDiscardedAfterRouteChange: Long = 0,
+    val routeChangesImmediate: Long = 0,
+    val networkNoneEvents: Long = 0,
 )
 
 fun interface ProxyLogger {
@@ -190,6 +197,12 @@ class ProxyServer(
     private val poolRefillErrors = AtomicLong(0)
     private val poolStale = AtomicLong(0)
     private val directTimeouts = AtomicLong(0)
+    private val directAttempts = AtomicLong(0)
+    private val directAttemptsSkippedBecauseRoute = AtomicLong(0)
+    private val poolRefillsCancelled = AtomicLong(0)
+    private val poolResultsDiscardedAfterRouteChange = AtomicLong(0)
+    private val routeChangesImmediate = AtomicLong(0)
+    private val networkNoneEvents = AtomicLong(0)
     @Volatile private var lastRouteUsed: String? = null
     @Volatile private var lastCfDomain: String? = null
     private val webSocketPool = WebSocketPool(
@@ -197,6 +210,9 @@ class ProxyServer(
         connector = webSocketConnector,
         logger = logger,
         onRefillError = { poolRefillErrors.incrementAndGet() },
+        onRefillAttempt = { directAttempts.incrementAndGet() },
+        onRefillCancelled = { count -> poolRefillsCancelled.addAndGet(count.toLong()) },
+        onResultDiscardedAfterRouteChange = { poolResultsDiscardedAfterRouteChange.incrementAndGet() },
     )
     private var acceptThread: Thread? = null
 
@@ -257,23 +273,49 @@ class ProxyServer(
             effectiveRouteMode = routeSnapshot.effectiveRouteMode.configValue,
             previousEffectiveRouteMode = routeSnapshot.previousEffectiveRouteMode?.configValue,
             lastRouteChangeReason = routeSnapshot.lastRouteChangeReason,
+            lastRouteChangeSource = routeSnapshot.lastRouteChangeSource,
             lastRouteChangeTimeMs = routeSnapshot.lastRouteChangeTimeMs,
             networkAtLastRouteChange = routeSnapshot.networkAtLastRouteChange,
             lastRouteUsed = lastRouteUsed,
             directTimeouts = directTimeouts.get(),
             lastCfDomain = lastCfDomain,
+            directAttempts = directAttempts.get(),
+            directAttemptsSkippedBecauseRoute = directAttemptsSkippedBecauseRoute.get(),
+            poolRefillsCancelled = poolRefillsCancelled.get(),
+            poolResultsDiscardedAfterRouteChange = poolResultsDiscardedAfterRouteChange.get(),
+            routeChangesImmediate = routeChangesImmediate.get(),
+            networkNoneEvents = networkNoneEvents.get(),
         )
     }
 
     fun applyNetworkRoute(networkStatus: String): RouteChangeResult =
-        applyEffectiveRouteMode(routeState.desiredEffectiveRouteMode(networkStatus), "network=$networkStatus", networkStatus)
+        applyNetworkRoute(networkStatus, immediate = false)
+
+    fun applyNetworkRouteImmediately(networkStatus: String): RouteChangeResult =
+        applyNetworkRoute(networkStatus, immediate = true)
+
+    private fun applyNetworkRoute(networkStatus: String, immediate: Boolean): RouteChangeResult {
+        val normalized = networkStatus.ifBlank { "unknown" }
+        if (normalized.equals("none", ignoreCase = true)) {
+            networkNoneEvents.incrementAndGet()
+            if (immediate) logger.log("network lost: applying safe route immediately")
+        }
+        if (immediate) routeChangesImmediate.incrementAndGet()
+        return applyEffectiveRouteMode(
+            routeState.desiredEffectiveRouteMode(normalized),
+            "network=$normalized",
+            normalized,
+            source = if (immediate) "immediate" else "debounce",
+        )
+    }
 
     fun applyEffectiveRouteMode(
         desiredEffectiveRouteMode: NetworkRouteMode,
         reason: String,
         networkStatus: String,
+        source: String = "manual",
     ): RouteChangeResult {
-        val result = routeState.applyEffectiveRouteMode(desiredEffectiveRouteMode, reason, networkStatus)
+        val result = routeState.applyEffectiveRouteMode(desiredEffectiveRouteMode, reason, networkStatus, source)
         if (result.changed) {
             logger.log(
                 "effective route changed: ${result.previous.configValue} -> ${result.current.configValue} because $reason",
@@ -377,8 +419,13 @@ class ProxyServer(
             }
             NetworkRouteMode.CF_FIRST -> {
                 if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
-                logger.log("DC${parsed.dcId} trying short direct fallback after CF-first failure")
-                if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = false, timeoutMs = config.directFallbackTimeoutMs)) return
+                if (isDirectAttemptAllowedForCurrentRoute()) {
+                    logger.log("DC${parsed.dcId} trying short direct fallback after CF-first failure")
+                    if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = false, timeoutMs = config.directFallbackTimeoutMs)) return
+                } else {
+                    directAttemptsSkippedBecauseRoute.incrementAndGet()
+                    logger.log("DC${parsed.dcId} direct fallback skipped because effective route mode ${effectiveRouteMode().configValue}")
+                }
                 logger.log("DC${parsed.dcId} no route available after CF-first attempts")
             }
             NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> {
@@ -406,7 +453,7 @@ class ProxyServer(
             if (!directResult.failed) return true
             if (directResult.retryableStalePooled) {
                 logger.log("DC${parsed.dcId} retrying with cold direct route after stale pool")
-                val coldRoute = connectWebSocket(parsed, targetHost, timeoutMs)?.let { WebSocketRoute(it, "direct-cold") }
+                val coldRoute = guardedConnectWebSocket(parsed, targetHost, timeoutMs)?.let { WebSocketRoute(it, "direct-cold") }
                 if (coldRoute != null) {
                     val coldResult = runWebSocketRoute(client, parsed, coldRoute, relayInit, cryptoContext, splitter)
                     if (!coldResult.failed) return true
@@ -428,6 +475,11 @@ class ProxyServer(
         usePool: Boolean,
         timeoutMs: Int,
     ): WebSocketRoute? {
+        if (!isDirectAttemptAllowedForCurrentRoute()) {
+            directAttemptsSkippedBecauseRoute.incrementAndGet()
+            logger.log("DC${parsed.dcId} direct route skipped because effective route mode ${effectiveRouteMode().configValue}")
+            return null
+        }
         if (usePool && isDirectPoolEnabled()) {
             val pooled = webSocketPool.get(parsed.dcId, parsed.isMedia, targetHost, wsDomains(parsed.dcId, parsed.isMedia))
             if (pooled != null) {
@@ -438,7 +490,20 @@ class ProxyServer(
             poolMisses.incrementAndGet()
             logger.log("DC${parsed.dcId} direct WS pool miss")
         }
-        return connectWebSocket(parsed, targetHost, timeoutMs)?.let { WebSocketRoute(it, "direct-cold") }
+        return guardedConnectWebSocket(parsed, targetHost, timeoutMs)?.let { WebSocketRoute(it, "direct-cold") }
+    }
+
+    private fun guardedConnectWebSocket(
+        parsed: MtprotoHandshake.Result,
+        targetHost: String,
+        timeoutMs: Int,
+    ): WebSocketBinaryStream? {
+        if (!isDirectAttemptAllowedForCurrentRoute()) {
+            directAttemptsSkippedBecauseRoute.incrementAndGet()
+            logger.log("DC${parsed.dcId} direct connect skipped because effective route mode ${effectiveRouteMode().configValue}")
+            return null
+        }
+        return connectWebSocket(parsed, targetHost, timeoutMs)
     }
 
     private fun connectWebSocket(
@@ -452,6 +517,7 @@ class ProxyServer(
                 "DC${parsed.dcId} media=${parsed.isMedia} -> wss://$domain$DEFAULT_WS_PATH via $targetHost",
             )
             try {
+                directAttempts.incrementAndGet()
                 val webSocket = webSocketConnector.connect(targetHost, domain, DEFAULT_WS_PATH, timeoutMs)
                 logger.log("DC${parsed.dcId} WebSocket connected via $domain")
                 return webSocket
@@ -636,6 +702,15 @@ class ProxyServer(
     private fun effectiveRouteMode(): NetworkRouteMode = routeState.effectiveRouteMode
 
     private fun isDirectPoolEnabled(): Boolean = isDirectPoolEnabledFor(effectiveRouteMode())
+
+    private fun isDirectAttemptAllowedForCurrentRoute(): Boolean {
+        val snapshot = routeState.snapshot()
+        return when (snapshot.effectiveRouteMode) {
+            NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> true
+            NetworkRouteMode.CF_FIRST -> snapshot.configuredRouteMode == NetworkRouteMode.CF_FIRST
+            NetworkRouteMode.CF_ONLY -> false
+        }
+    }
 
     private fun handlePoolForRouteChange(previous: NetworkRouteMode, current: NetworkRouteMode) {
         if (isDirectPoolEnabledFor(current)) {
