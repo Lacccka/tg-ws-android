@@ -61,9 +61,17 @@ class CfProxyDomainsTest {
         var now = 1_000L
         val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now })
 
-        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", routeSettling = false)
+        val decision = health.recordFailure(
+            2,
+            false,
+            "one.example",
+            RuntimeException("HTTP 429"),
+            "mobile",
+            routeSettling = false,
+        )
         val plan = health.selectDomains(2)
 
+        assertTrue(decision.cooldownUntilMs > now)
         assertEquals("two.example", plan.ordered.first().domain)
         assertEquals(1L, health.snapshot().total429)
         assertEquals(1, health.snapshot().domainsInCooldown)

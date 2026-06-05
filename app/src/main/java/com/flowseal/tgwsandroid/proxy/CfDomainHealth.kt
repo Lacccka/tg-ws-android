@@ -62,7 +62,9 @@ class CfDomainHealth(
 
         allDomainsInCooldownFallbacks += 1
         return CfDomainSelectionPlan(
-            ordered = entries.sortedWith(domainComparator()).map { it.copy(reason = "all_cooldown_least_bad") },
+            ordered = entries
+                .sortedWith(cooldownFallbackComparator())
+                .map { it.copy(reason = "all_cooldown_least_bad") },
             skippedCooldown = emptyList(),
             allDomainsInCooldownFallback = true,
         )
@@ -155,7 +157,10 @@ class CfDomainHealth(
 
     private fun normalizeKnownDomain(domain: String): String? {
         val normalized = domain.trim().lowercase()
-        return normalized.takeIf { it in domains }
+        if (normalized in domains) return normalized
+        return domains
+            .filter { baseDomain -> normalized.endsWith(".$baseDomain") }
+            .maxByOrNull { it.length }
     }
 
     private fun selectionReason(state: MutableCfDomainState, now: Long): String = when {
@@ -167,7 +172,13 @@ class CfDomainHealth(
 
     private fun domainComparator(): Comparator<CfDomainSelection> =
         compareBy<CfDomainSelection> { if (it.reason == "last_good") 0 else 1 }
+            .thenBy { it.latencyMs ?: Long.MAX_VALUE }
+            .thenBy { it.originalIndex }
             .thenBy { it.failureScore }
+
+    private fun cooldownFallbackComparator(): Comparator<CfDomainSelection> =
+        compareBy<CfDomainSelection> { it.failureScore }
+            .thenBy { it.cooldownUntilMs }
             .thenBy { it.latencyMs ?: Long.MAX_VALUE }
             .thenBy { it.originalIndex }
 
