@@ -4,30 +4,30 @@
     android:viewportWidth="24"
     android:viewportHeight="24">
 
-    <!-- Shield / proxy protection outline -->
+    <!-- Larger shield -->
     <path
-        android:pathData="M12,3 L5,6 V11 C5,15.6 7.9,19.3 12,21 C16.1,19.3 19,15.6 19,11 V6 L12,3 Z"
+        android:pathData="M12,1.8 L3.8,5.2 V10.8 C3.8,16.2 7.2,20.2 12,22.2 C16.8,20.2 20.2,16.2 20.2,10.8 V5.2 L12,1.8 Z"
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+
+    <!-- Larger forward arrow -->
+    <path
+        android:pathData="M6.8,9.2 H15.8 M13.3,6.8 L15.8,9.2 L13.3,11.6"
         android:fillColor="@android:color/transparent"
         android:strokeColor="@android:color/white"
         android:strokeWidth="2"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
 
-    <!-- Forward proxy arrow -->
+    <!-- Larger backward arrow -->
     <path
-        android:pathData="M8,10 H15 M13,8 L15,10 L13,12"
+        android:pathData="M17.2,14.8 H8.2 M10.7,12.4 L8.2,14.8 L10.7,17.2"
         android:fillColor="@android:color/transparent"
         android:strokeColor="@android:color/white"
-        android:strokeWidth="1.8"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round" />
-
-    <!-- Backward proxy arrow -->
-    <path
-        android:pathData="M16,14 H9 M11,12 L9,14 L11,16"
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="@android:color/white"
-        android:strokeWidth="1.8"
+        android:strokeWidth="2"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
 
