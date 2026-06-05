@@ -55,11 +55,14 @@ object BatterySettingsIntentPlan {
 
     fun candidates(packageName: String, manufacturer: String): List<BatterySettingsIntentSpec> = buildList {
         if (isXiaomiFamily(manufacturer)) {
-            addAll(xiaomiCandidates(packageName))
+            addAll(xiaomiAppBatteryCandidates(packageName))
         }
         add(appDetails(packageName))
-        add(batterySaverSettings())
         add(ignoreBatteryOptimizationSettings())
+        add(batterySaverSettings())
+        if (isXiaomiFamily(manufacturer)) {
+            add(xiaomiAutostartCandidate())
+        }
         add(systemSettings())
     }
 
@@ -89,7 +92,7 @@ object BatterySettingsIntentPlan {
             normalized.contains("miui")
     }
 
-    fun xiaomiCandidates(packageName: String): List<BatterySettingsIntentSpec> = listOf(
+    fun xiaomiAppBatteryCandidates(packageName: String): List<BatterySettingsIntentSpec> = listOf(
         BatterySettingsIntentSpec(
             action = Intent.ACTION_MAIN,
             packageName = MIUI_POWER_KEEPER_PACKAGE,
@@ -99,12 +102,16 @@ object BatterySettingsIntentPlan {
                 MIUI_EXTRA_PACKAGE_LABEL to "TG Proxy",
             ),
         ),
-        BatterySettingsIntentSpec(
-            action = Intent.ACTION_MAIN,
-            packageName = MIUI_AUTO_START_PACKAGE,
-            className = MIUI_AUTO_START_ACTIVITY,
-        ),
     )
+
+    fun xiaomiAutostartCandidate(): BatterySettingsIntentSpec = BatterySettingsIntentSpec(
+        action = Intent.ACTION_MAIN,
+        packageName = MIUI_AUTO_START_PACKAGE,
+        className = MIUI_AUTO_START_ACTIVITY,
+    )
+
+    fun xiaomiCandidates(packageName: String): List<BatterySettingsIntentSpec> =
+        xiaomiAppBatteryCandidates(packageName) + xiaomiAutostartCandidate()
 }
 
 private fun Context.tryStartBatterySettingsActivity(intent: Intent): Boolean = try {

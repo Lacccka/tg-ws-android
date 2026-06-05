@@ -23,27 +23,69 @@ class BatterySettingsNavigatorTest {
 
         assertEquals(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, candidates.first().action)
         assertEquals("com.flowseal.tgwsandroid", candidates.first().dataPackageName)
-        assertTrue(candidates.any { it.action == Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS })
+        assertOrderedBefore(
+            candidates,
+            { it.action == Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS },
+            { it.action == Settings.ACTION_BATTERY_SAVER_SETTINGS },
+        )
         assertEquals(Settings.ACTION_SETTINGS, candidates.last().action)
     }
 
     @Test
-    fun xiaomiCandidatesPreferPowerKeeperBeforeStandardAppSettings() {
+    fun xiaomiBatteryPlanKeepsAppSpecificBatteryBeforeStandardFallbacks() {
         val candidates = BatterySettingsIntentPlan.candidates("com.flowseal.tgwsandroid", "Xiaomi")
 
-        assertEquals("com.miui.powerkeeper", candidates[0].packageName)
-        assertEquals("com.miui.powerkeeper.ui.HiddenAppsConfigActivity", candidates[0].className)
-        assertEquals(Intent.ACTION_MAIN, candidates[0].action)
-        assertEquals("com.flowseal.tgwsandroid", candidates[0].extras["package_name"])
-        assertEquals("com.miui.securitycenter", candidates[1].packageName)
-        assertEquals("com.miui.permcenter.autostart.AutoStartManagementActivity", candidates[1].className)
-        assertEquals(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, candidates[2].action)
-        assertEquals("com.flowseal.tgwsandroid", candidates[2].dataPackageName)
+        val appBattery = candidates[0]
+        assertEquals("com.miui.powerkeeper", appBattery.packageName)
+        assertEquals("com.miui.powerkeeper.ui.HiddenAppsConfigActivity", appBattery.className)
+        assertEquals(Intent.ACTION_MAIN, appBattery.action)
+        assertEquals("com.flowseal.tgwsandroid", appBattery.extras["package_name"])
+
+        assertOrderedBefore(
+            candidates,
+            { it.packageName == "com.miui.powerkeeper" && it.className == "com.miui.powerkeeper.ui.HiddenAppsConfigActivity" },
+            { it.action == Settings.ACTION_APPLICATION_DETAILS_SETTINGS },
+        )
+        assertOrderedBefore(
+            candidates,
+            { it.action == Settings.ACTION_APPLICATION_DETAILS_SETTINGS },
+            { it.packageName == "com.miui.securitycenter" && it.className == "com.miui.permcenter.autostart.AutoStartManagementActivity" },
+        )
+    }
+
+    @Test
+    fun xiaomiBatteryButtonDoesNotPreferAutostart() {
+        val candidates = BatterySettingsIntentPlan.candidates("com.flowseal.tgwsandroid", "Redmi")
+        val autostartIndex = candidates.indexOfFirst {
+            it.packageName == "com.miui.securitycenter" &&
+                it.className == "com.miui.permcenter.autostart.AutoStartManagementActivity"
+        }
+
+        assertTrue(autostartIndex > 0)
+        assertFalse("Autostart must not be the first battery-settings candidate", autostartIndex == 0)
+        assertEquals(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, candidates[autostartIndex - 3].action)
+        assertEquals(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS, candidates[autostartIndex - 2].action)
+        assertEquals(Settings.ACTION_BATTERY_SAVER_SETTINGS, candidates[autostartIndex - 1].action)
+    }
+
+    @Test
+    fun appDetailsFallbackIsBeforeAutostartWhenMiuiBatteryScreenIsUnavailable() {
+        val candidates = BatterySettingsIntentPlan.candidates("com.flowseal.tgwsandroid", "POCO")
+        val appDetailsIndex = candidates.indexOfFirst { it.action == Settings.ACTION_APPLICATION_DETAILS_SETTINGS }
+        val autostartIndex = candidates.indexOfFirst {
+            it.packageName == "com.miui.securitycenter" &&
+                it.className == "com.miui.permcenter.autostart.AutoStartManagementActivity"
+        }
+
+        assertTrue(appDetailsIndex >= 0)
+        assertTrue(autostartIndex >= 0)
+        assertTrue("App details must be tried before MIUI autostart fallback", appDetailsIndex < autostartIndex)
+        assertEquals("com.flowseal.tgwsandroid", candidates[appDetailsIndex].dataPackageName)
     }
 
     @Test
     fun xiaomiSpecsUseValidPackageAndClassShape() {
-        val spec = BatterySettingsIntentPlan.xiaomiCandidates("com.flowseal.tgwsandroid").first()
+        val spec = BatterySettingsIntentPlan.xiaomiAppBatteryCandidates("com.flowseal.tgwsandroid").first()
 
         assertEquals("com.miui.powerkeeper", spec.packageName)
         assertEquals("com.miui.powerkeeper.ui.HiddenAppsConfigActivity", spec.className)
@@ -51,18 +93,22 @@ class BatterySettingsNavigatorTest {
     }
 
     @Test
-    fun missingManufacturerIntentCanBeSkippedByBestEffortPlan() {
-        val candidates = BatterySettingsIntentPlan.candidates("com.flowseal.tgwsandroid", "POCO")
-        val firstGeneric = candidates.first { it.action == Settings.ACTION_APPLICATION_DETAILS_SETTINGS }
+    fun xiaomiAutostartIsSeparateFallbackCandidate() {
+        val spec = BatterySettingsIntentPlan.xiaomiAutostartCandidate()
 
-        assertEquals("com.flowseal.tgwsandroid", firstGeneric.dataPackageName)
+        assertEquals(Intent.ACTION_MAIN, spec.action)
+        assertEquals("com.miui.securitycenter", spec.packageName)
+        assertEquals("com.miui.permcenter.autostart.AutoStartManagementActivity", spec.className)
+        assertTrue(spec.extras.isEmpty())
     }
 
     @Test
     fun helperTextDiffersForXiaomiAndGenericDevices() {
         assertTrue(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("автозапуск"))
+        assertTrue(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("Питание"))
         assertTrue(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("Без ограничений"))
         assertFalse(SettingsUiText.BATTERY_BUTTON_HELP_TEXT.contains("автозапуск"))
+        assertTrue(SettingsUiText.BATTERY_BUTTON_HELP_TEXT.contains("Питание"))
         assertTrue(SettingsUiText.BATTERY_BUTTON_HELP_TEXT.contains("Без ограничений"))
     }
 
@@ -74,5 +120,18 @@ class BatterySettingsNavigatorTest {
         assertTrue(BatterySettingsIntentPlan.isXiaomiFamily("HyperOS"))
         assertTrue(BatterySettingsIntentPlan.isXiaomiFamily("MIUI"))
         assertFalse(BatterySettingsIntentPlan.isXiaomiFamily("Google"))
+    }
+
+    private fun assertOrderedBefore(
+        candidates: List<BatterySettingsIntentSpec>,
+        first: (BatterySettingsIntentSpec) -> Boolean,
+        second: (BatterySettingsIntentSpec) -> Boolean,
+    ) {
+        val firstIndex = candidates.indexOfFirst(first)
+        val secondIndex = candidates.indexOfFirst(second)
+
+        assertTrue(firstIndex >= 0)
+        assertTrue(secondIndex >= 0)
+        assertTrue(firstIndex < secondIndex)
     }
 }

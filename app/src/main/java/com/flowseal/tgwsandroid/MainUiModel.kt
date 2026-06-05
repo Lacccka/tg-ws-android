@@ -24,8 +24,8 @@ data class UserRouteModeOption(
 
 object SettingsUiText {
     const val BATTERY_BACKGROUND_TITLE = "Работа в фоне"
-    const val BATTERY_XIAOMI_AUTOSTART_TEXT = "Если открылся экран приложения, выберите «Батарея» → «Без ограничений». На Xiaomi также проверьте автозапуск."
-    const val BATTERY_BUTTON_HELP_TEXT = "Если открылся экран приложения, выберите «Батарея» → «Без ограничений»."
+    const val BATTERY_XIAOMI_AUTOSTART_TEXT = "Откройте «Питание» или «Батарея» и выберите «Без ограничений». На Xiaomi также проверьте автозапуск."
+    const val BATTERY_BUTTON_HELP_TEXT = "Откройте «Питание» или «Батарея» и выберите «Без ограничений»."
     const val QS_TILE_TITLE = "Кнопка в шторке"
     const val QS_TILE_TEXT = "Добавьте «TG Proxy» в быстрые настройки Android, чтобы запускать и останавливать прокси из шторки."
     const val QS_TILE_HELP_BUTTON = "Как добавить"
