@@ -30,7 +30,9 @@ class BatterySettingsNavigatorTest {
 
         assertEquals(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, candidates[0].action)
         assertEquals("com.miui.powerkeeper", candidates[1].packageName)
+        assertEquals("com.miui.powerkeeper.ui.HiddenAppsConfigActivity", candidates[1].className)
         assertEquals("com.miui.securitycenter", candidates[2].packageName)
+        assertEquals("com.miui.permcenter.autostart.AutoStartManagementActivity", candidates[2].className)
     }
 
     @Test

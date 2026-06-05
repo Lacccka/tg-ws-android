@@ -24,10 +24,9 @@ class BatterySettingsNavigator(
     }
 
     private fun BatterySettingsIntentSpec.toIntent(): Intent {
-        val intent = if (className != null) {
-            Intent(action).setClassName(packageName, className)
-        } else {
-            Intent(action)
+        val intent = Intent(action)
+        if (packageName != null && className != null) {
+            intent.setClassName(packageName, className)
         }
         dataPackageName?.let { intent.data = Uri.parse("package:$it") }
         extras.forEach { (key, value) -> intent.putExtra(key, value) }
