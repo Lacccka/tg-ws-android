@@ -124,4 +124,4 @@ Android-specific changes must not modify the mirrored upstream proxy files. The 
 python tools/check_upstream.py
 ```
 
-The developer section in the app intentionally does not download or update upstream code. It points developers to this check so critical upstream updates can be reviewed separately without mixing Android UI changes into the upstream mirror.
+Upstream verification is a developer workflow only. The app UI intentionally does not show upstream status or run this check at runtime, so critical upstream updates can be reviewed separately without mixing Android UI changes into the upstream mirror.

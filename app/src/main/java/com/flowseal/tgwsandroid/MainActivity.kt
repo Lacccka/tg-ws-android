@@ -60,6 +60,7 @@ class MainActivity : Activity() {
 
     private lateinit var batteryStatusText: TextView
     private lateinit var routeModeValueText: TextView
+    private val routeModeButtons = mutableListOf<Pair<UserRouteModeOption, Button>>()
     private lateinit var secretStateText: TextView
     private lateinit var restartProxyButton: Button
     private lateinit var restartProxyHintText: TextView
@@ -69,7 +70,6 @@ class MainActivity : Activity() {
     private lateinit var rawRouteDetailsText: TextView
     private lateinit var cfDetailsText: TextView
     private lateinit var directDetailsText: TextView
-    private lateinit var upstreamStatusText: TextView
 
     private var currentScreen: Screen = Screen.HOME
     private var pendingRestartRequired: Boolean = false
@@ -208,6 +208,7 @@ class MainActivity : Activity() {
         val density = resources.displayMetrics.density
         val padding = (16 * density).toInt()
         val rowGap = (8 * density).toInt()
+        routeModeButtons.clear()
         routeModeValueText = createValueText()
         batteryStatusText = createValueText()
         secretStateText = createValueText().apply { setTextColor(COLOR_SUCCESS) }
@@ -228,10 +229,8 @@ class MainActivity : Activity() {
         rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
-        upstreamStatusText = createValueText()
         developerSection = createCard("Режим разработчика") {
-            addView(createTextRow("Статус upstream-файлов", upstreamStatusText), matchWrapParams())
-            addView(createTextRow("Подробности маршрута", rawRouteDetailsText), matchWrapParams(topMargin = rowGap))
+            addView(createTextRow("Подробности маршрута", rawRouteDetailsText), matchWrapParams())
             addView(createTextRow("Состояние резервных доменов", cfDetailsText), matchWrapParams(topMargin = rowGap))
             addView(createTextRow("Состояние прямого маршрута", directDetailsText), matchWrapParams(topMargin = rowGap))
             addView(createSectionTitle("Действия"), matchWrapParams(topMargin = rowGap))
@@ -254,26 +253,20 @@ class MainActivity : Activity() {
             setBackgroundColor(COLOR_BACKGROUND)
             addHeader()
             addView(createCard("Режим подключения") {
-                addView(createTextRow("Выбранный режим", routeModeValueText), matchWrapParams())
                 UserRouteModes.normalOptions.forEach { option ->
                     addView(createRouteModeButton(option), matchWrapParams(topMargin = rowGap))
                 }
+                addView(routeModeValueText, matchWrapParams(topMargin = rowGap))
             }, cardParams())
             addView(createCard(SettingsUiText.BATTERY_BACKGROUND_TITLE) {
-                addView(createValueText().apply {
-                    text = SettingsUiText.BATTERY_BACKGROUND_TEXT
-                    setTextColor(COLOR_TEXT_SECONDARY)
-                }, matchWrapParams())
-                if (BatterySettingsIntentPlan.isXiaomiFamily(Build.MANUFACTURER.orEmpty())) {
-                    addView(createValueText().apply {
-                        text = SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT
-                        setTextColor(COLOR_TEXT_SECONDARY)
-                    }, matchWrapParams(topMargin = rowGap))
-                }
-                addView(createTextRow("Статус", batteryStatusText), matchWrapParams(topMargin = rowGap))
+                addView(batteryStatusText, matchWrapParams())
                 addView(createButton("Открыть настройки батареи") { openBatterySettings() }, matchWrapParams(topMargin = rowGap))
                 addView(createValueText().apply {
-                    text = SettingsUiText.BATTERY_BUTTON_HELP_TEXT
+                    text = if (BatterySettingsIntentPlan.isXiaomiFamily(Build.MANUFACTURER.orEmpty())) {
+                        SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT
+                    } else {
+                        SettingsUiText.BATTERY_BUTTON_HELP_TEXT
+                    }
                     setTextColor(COLOR_TEXT_SECONDARY)
                 }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
@@ -319,21 +312,25 @@ class MainActivity : Activity() {
         }, matchWrapParams())
     }
 
-    private fun createRouteModeButton(option: UserRouteModeOption): Button = createButton(
-        "${option.title}\n${option.description}",
-    ) {
-        val store = AppConfigStore.from(applicationContext)
-        store.saveConfig(store.loadConfig().copy(routeMode = option.routeMode))
-        ProxyRuntimeConfig.initialize(applicationContext)
-        val running = ProxyForegroundService.State.running
-        pendingRestartRequired = PendingRestartModel.pendingAfterRouteModeChange(running)
-        val logMessage = if (pendingRestartRequired) {
-            "route mode changed to ${option.routeMode.configValue}; restart required"
-        } else {
-            "route mode changed to ${option.routeMode.configValue}; will apply on next proxy start"
+    private fun createRouteModeButton(option: UserRouteModeOption): Button {
+        val button = createButton(
+            UserRouteModes.buttonText(option, option.routeMode == ProxyRuntimeConfig.appConfig(applicationContext).routeMode),
+        ) {
+            val store = AppConfigStore.from(applicationContext)
+            store.saveConfig(store.loadConfig().copy(routeMode = option.routeMode))
+            ProxyRuntimeConfig.initialize(applicationContext)
+            val running = ProxyForegroundService.State.running
+            pendingRestartRequired = PendingRestartModel.pendingAfterRouteModeChange(running)
+            val logMessage = if (pendingRestartRequired) {
+                "route mode changed to ${option.routeMode.configValue}; restart required"
+            } else {
+                "route mode changed to ${option.routeMode.configValue}; will apply on next proxy start"
+            }
+            ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
+            refreshState()
         }
-        ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
-        refreshState()
+        routeModeButtons.add(option to button)
+        return button
     }
 
     private fun refreshState() {
@@ -375,13 +372,15 @@ class MainActivity : Activity() {
 
         if (::routeModeValueText.isInitialized) {
             val config = ProxyRuntimeConfig.appConfig(applicationContext)
-            routeModeValueText.text = UserRouteModes.labelFor(config.routeMode)
-            batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
+            routeModeButtons.forEach { (option, button) ->
+                button.text = UserRouteModes.buttonText(option, option.routeMode == config.routeMode)
+            }
+            routeModeValueText.text = UserRouteModes.helperFor(config.routeMode)
+            batteryStatusText.text = SettingsUiText.batteryStatusLine(userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus))
             developerModeCheckBox.isChecked = developerModeEnabled()
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
             restartProxyButton.isEnabled = PendingRestartModel.restartActionEnabled(running)
             restartProxyHintText.text = if (running) "" else PendingRestartModel.RESTART_DISABLED_HINT
-            upstreamStatusText.text = "Неизвестно — проверьте командой python tools/check_upstream.py"
             rawRouteDetailsText.text = routeDetailsLine()
             cfDetailsText.text = cfDetailsLine()
             directDetailsText.text = directDetailsLine()

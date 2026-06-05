@@ -4,54 +4,71 @@ import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 
 object RussianUiText {
-    const val ROUTE_AUTO_RECOMMENDED = "Автоматически — рекомендуется"
+    const val ROUTE_AUTO = "Авто"
+    const val ROUTE_AUTO_SUBTITLE = "Рекомендуется"
     const val ROUTE_FAST_WIFI = "Быстрый Wi-Fi"
-    const val ROUTE_COMPATIBLE = "Совместимый Wi-Fi + мобильная сеть"
-    const val ROUTE_AUTO_SELECTION = "Автоматический выбор"
     const val ROUTE_COMPATIBLE_SHORT = "Совместимый"
+    const val ROUTE_AUTO_SELECTION = "Автоматический выбор"
+    const val ROUTE_AUTO_HELPER = "Авто выбирает быстрый маршрут на Wi-Fi и совместимый на мобильной сети."
+    const val ROUTE_FAST_WIFI_HELPER = "Подходит для Wi-Fi. На мобильной сети может не работать."
+    const val ROUTE_COMPATIBLE_HELPER = "Подходит для Wi-Fi и мобильной сети, но ping может быть выше."
     const val MOBILE_COMPATIBLE_ROUTE_HELPER = "На мобильной сети используется совместимый маршрут. Ping может быть выше."
 }
 
 data class UserRouteModeOption(
     val title: String,
-    val description: String,
+    val subtitle: String?,
     val routeMode: NetworkRouteMode,
 )
 
 
 object SettingsUiText {
     const val BATTERY_BACKGROUND_TITLE = "Работа в фоне"
-    const val BATTERY_BACKGROUND_TEXT = "Чтобы прокси не останавливался, разрешите приложению работу без ограничений батареи."
-    const val BATTERY_XIAOMI_AUTOSTART_TEXT = "На Xiaomi также включите автозапуск для приложения."
-    const val BATTERY_BUTTON_HELP_TEXT = "Выберите «Батарея» → «Без ограничений». На Xiaomi также проверьте «Автозапуск»."
+    const val BATTERY_XIAOMI_AUTOSTART_TEXT = "На Xiaomi также проверьте автозапуск."
+    const val BATTERY_BUTTON_HELP_TEXT = "Выберите режим без ограничений батареи."
     const val QS_TILE_TITLE = "Кнопка в шторке"
     const val QS_TILE_TEXT = "Добавьте «TG Proxy» в быстрые настройки Android, чтобы запускать и останавливать прокси из шторки."
     const val QS_TILE_HELP_BUTTON = "Как добавить"
     const val QS_TILE_HELP_TITLE = "Как добавить кнопку"
     const val QS_TILE_HELP_MESSAGE = "Откройте шторку быстрых настроек, нажмите «Изменить» или значок карандаша, найдите «TG Proxy» и перетащите её наверх."
+
+    fun batteryStatusLine(status: String): String = "Статус: $status"
 }
 
 object UserRouteModes {
     val normalOptions: List<UserRouteModeOption> = listOf(
         UserRouteModeOption(
-            title = RussianUiText.ROUTE_AUTO_RECOMMENDED,
-            description = "Приложение само выбирает лучший маршрут: быстрый на Wi-Fi и совместимый на мобильной сети.",
+            title = RussianUiText.ROUTE_AUTO,
+            subtitle = RussianUiText.ROUTE_AUTO_SUBTITLE,
             routeMode = NetworkRouteMode.AUTO,
         ),
         UserRouteModeOption(
             title = RussianUiText.ROUTE_FAST_WIFI,
-            description = "Использует быстрый прямой маршрут. Лучше подходит для Wi-Fi. На мобильной сети может не работать.",
+            subtitle = null,
             routeMode = NetworkRouteMode.DIRECT_FIRST,
         ),
         UserRouteModeOption(
-            title = RussianUiText.ROUTE_COMPATIBLE,
-            description = "Использует совместимый маршрут через резервные домены. Подходит для Wi-Fi и мобильной сети, но ping может быть выше.",
+            title = RussianUiText.ROUTE_COMPATIBLE_SHORT,
+            subtitle = null,
             routeMode = NetworkRouteMode.CF_FIRST,
         ),
     )
 
     fun labelFor(mode: NetworkRouteMode): String = normalOptions.firstOrNull { it.routeMode == mode }?.title
         ?: mode.configValue
+
+    fun buttonText(option: UserRouteModeOption, selected: Boolean): String = buildString {
+        if (selected) append("✓ ")
+        append(option.title)
+        if (option.subtitle != null) append("\n").append(option.subtitle)
+    }
+
+    fun helperFor(mode: NetworkRouteMode): String = when (mode) {
+        NetworkRouteMode.AUTO -> RussianUiText.ROUTE_AUTO_HELPER
+        NetworkRouteMode.DIRECT_FIRST -> RussianUiText.ROUTE_FAST_WIFI_HELPER
+        NetworkRouteMode.CF_FIRST -> RussianUiText.ROUTE_COMPATIBLE_HELPER
+        NetworkRouteMode.CF_ONLY -> RussianUiText.ROUTE_COMPATIBLE_HELPER
+    }
 }
 
 object DeveloperUiModel {

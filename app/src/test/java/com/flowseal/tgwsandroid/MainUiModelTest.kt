@@ -12,9 +12,45 @@ class MainUiModelTest {
     fun normalRouteModeLabelsMapToInternalModes() {
         val options = UserRouteModes.normalOptions.associateBy { it.title }
 
-        assertEquals(NetworkRouteMode.AUTO, options.getValue("Автоматически — рекомендуется").routeMode)
+        assertEquals(NetworkRouteMode.AUTO, options.getValue("Авто").routeMode)
         assertEquals(NetworkRouteMode.DIRECT_FIRST, options.getValue("Быстрый Wi-Fi").routeMode)
-        assertEquals(NetworkRouteMode.CF_FIRST, options.getValue("Совместимый Wi-Fi + мобильная сеть").routeMode)
+        assertEquals(NetworkRouteMode.CF_FIRST, options.getValue("Совместимый").routeMode)
+    }
+
+    @Test
+    fun autoRouteModeUsesCompactRecommendedSubtitle() {
+        val auto = UserRouteModes.normalOptions.single { it.routeMode == NetworkRouteMode.AUTO }
+
+        assertEquals("Авто", auto.title)
+        assertEquals("Рекомендуется", auto.subtitle)
+    }
+
+    @Test
+    fun normalRouteModeOptionsDoNotUseLongLabelsOrCardBodies() {
+        val labels = UserRouteModes.normalOptions.map { it.title }
+        val subtitles = UserRouteModes.normalOptions.mapNotNull { it.subtitle }
+
+        assertFalse(labels.contains("Автоматически — рекомендуется"))
+        assertFalse(labels.contains("Совместимый Wi-Fi + мобильная сеть"))
+        assertFalse(subtitles.any { it.contains("Приложение само выбирает лучший маршрут") })
+        assertFalse(subtitles.any { it.contains("Использует быстрый прямой маршрут") })
+        assertFalse(subtitles.any { it.contains("Использует совместимый маршрут через резервные домены") })
+    }
+
+    @Test
+    fun routeModeButtonTextMarksSelectedModeWithoutLongBody() {
+        val auto = UserRouteModes.normalOptions.single { it.routeMode == NetworkRouteMode.AUTO }
+        val direct = UserRouteModes.normalOptions.single { it.routeMode == NetworkRouteMode.DIRECT_FIRST }
+
+        assertEquals("✓ Авто\nРекомендуется", UserRouteModes.buttonText(auto, selected = true))
+        assertEquals("Быстрый Wi-Fi", UserRouteModes.buttonText(direct, selected = false))
+    }
+
+    @Test
+    fun selectedRouteHelperTextChangesBySelectedMode() {
+        assertEquals("Авто выбирает быстрый маршрут на Wi-Fi и совместимый на мобильной сети.", UserRouteModes.helperFor(NetworkRouteMode.AUTO))
+        assertEquals("Подходит для Wi-Fi. На мобильной сети может не работать.", UserRouteModes.helperFor(NetworkRouteMode.DIRECT_FIRST))
+        assertEquals("Подходит для Wi-Fi и мобильной сети, но ping может быть выше.", UserRouteModes.helperFor(NetworkRouteMode.CF_FIRST))
     }
 
     @Test
@@ -39,13 +75,26 @@ class MainUiModelTest {
         assertTrue(DeveloperUiModel.developerActions.contains("Копировать диагностику"))
         assertTrue(DeveloperUiModel.developerActions.contains("Очистить логи"))
         assertTrue(DeveloperUiModel.developerActions.contains("Копировать ссылку прокси"))
+        assertTrue(DeveloperUiModel.developerActions.contains("Подробности маршрута"))
+        assertTrue(DeveloperUiModel.developerActions.contains("Состояние резервных доменов"))
+        assertTrue(DeveloperUiModel.developerActions.contains("Состояние прямого маршрута"))
     }
 
     @Test
-    fun batteryAndQuickSettingsInstructionsAreRussian() {
+    fun developerModeDoesNotExposeUpstreamManualCheckText() {
+        assertFalse(DeveloperUiModel.developerActions.any { it.contains("upstream", ignoreCase = true) })
+        assertFalse(DeveloperUiModel.developerActions.any { it.contains("check_upstream", ignoreCase = true) })
+        assertFalse(DeveloperUiModel.developerActions.contains("Статус upstream-файлов"))
+    }
+
+    @Test
+    fun batteryAndQuickSettingsInstructionsAreRussianAndCompact() {
         assertEquals("Работа в фоне", SettingsUiText.BATTERY_BACKGROUND_TITLE)
-        assertEquals("Чтобы прокси не останавливался, разрешите приложению работу без ограничений батареи.", SettingsUiText.BATTERY_BACKGROUND_TEXT)
-        assertEquals("На Xiaomi также включите автозапуск для приложения.", SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT)
+        assertEquals("На Xiaomi также проверьте автозапуск.", SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT)
+        assertEquals("Выберите режим без ограничений батареи.", SettingsUiText.BATTERY_BUTTON_HELP_TEXT)
+        assertEquals("Статус: Без ограничений", SettingsUiText.batteryStatusLine("Без ограничений"))
+        assertFalse(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("Чтобы прокси не останавливался"))
+        assertFalse(SettingsUiText.BATTERY_BUTTON_HELP_TEXT.contains("Чтобы прокси не останавливался"))
         assertEquals("Кнопка в шторке", SettingsUiText.QS_TILE_TITLE)
         assertTrue(SettingsUiText.QS_TILE_TEXT.contains("быстрые настройки Android"))
     }
