@@ -133,10 +133,15 @@ data class ProxyServerStats(
     val cfActiveConnectsByDc: Map<Int, Int> = emptyMap(),
     val cfConnectQueueWaits: Long = 0,
     val cfConnectQueueTimeouts: Long = 0,
+    val cfQueueControlledFailures: Long = 0,
+    val cfQueueWaitMs: Long = 0,
     val cfMaxConcurrentConnectsByDc: Map<Int, Int> = emptyMap(),
     val cf429BackoffCount: Long = 0,
     val cfAllCooldownWaits: Long = 0,
     val cfAllCooldownWaitMs: Long = 0,
+    val cfAllCooldownSingleAttempts: Long = 0,
+    val cfAllCooldownSingleAttemptFailures: Long = 0,
+    val cfAllCooldownStoppedCycles: Long = 0,
     val cfHealthDomains: List<CfDomainSnapshot> = emptyList(),
 )
 
@@ -371,10 +376,15 @@ class ProxyServer(
             cfActiveConnectsByDc = cfHealthSnapshot.activeConnectsByDc,
             cfConnectQueueWaits = cfHealthSnapshot.connectQueueWaits,
             cfConnectQueueTimeouts = cfHealthSnapshot.connectQueueTimeouts,
+            cfQueueControlledFailures = cfHealthSnapshot.queueControlledFailures,
+            cfQueueWaitMs = cfHealthSnapshot.queueWaitMs,
             cfMaxConcurrentConnectsByDc = cfHealthSnapshot.maxConcurrentConnectsByDc,
             cf429BackoffCount = cfHealthSnapshot.backoffCount,
             cfAllCooldownWaits = cfHealthSnapshot.allCooldownWaits,
             cfAllCooldownWaitMs = cfHealthSnapshot.allCooldownWaitMs,
+            cfAllCooldownSingleAttempts = cfHealthSnapshot.allCooldownSingleAttempts,
+            cfAllCooldownSingleAttemptFailures = cfHealthSnapshot.allCooldownSingleAttemptFailures,
+            cfAllCooldownStoppedCycles = cfHealthSnapshot.allCooldownStoppedCycles,
             cfHealthDomains = cfHealthSnapshot.domains,
         )
     }
@@ -693,7 +703,19 @@ class ProxyServer(
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
     ): Boolean {
-        val selectionPlan = cfDomainHealth.selectDomains(parsed.dcId, parsed.isMedia)
+        val cycleState = CfDomainFallbackCycleState()
+        return tryCfProxyFallbackCycle(client, parsed, relayInit, cryptoContext, splitter, cycleState)
+    }
+
+    private fun tryCfProxyFallbackCycle(
+        client: TcpClientTransport,
+        parsed: MtprotoHandshake.Result,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+        cycleState: CfDomainFallbackCycleState,
+    ): Boolean {
+        val selectionPlan = cfDomainHealth.selectDomains(parsed.dcId, parsed.isMedia, cycleState)
         for (skipped in selectionPlan.skippedCooldown) {
             logger.log(
                 "CF domain skipped because cooldown DC${parsed.dcId} ${skipped.domain} until=${skipped.cooldownUntilMs}",
@@ -705,20 +727,40 @@ class ProxyServer(
         if (selectionPlan.allDomainsInCooldownWaitMs > 0) {
             logger.log("CF all domains in cooldown; waiting ${selectionPlan.allDomainsInCooldownWaitMs}ms for DC${parsed.dcId}")
             sleepQuietly(selectionPlan.allDomainsInCooldownWaitMs)
-            return tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)
+            return tryCfProxyFallbackCycle(client, parsed, relayInit, cryptoContext, splitter, cycleState)
+        }
+        if (selectionPlan.allDomainsInCooldownStoppedCycle) {
+            logger.log("CF all-cooldown single attempt failed; stop fallback cycle for DC${parsed.dcId}")
+            return false
         }
         if (selectionPlan.allDomainsInCooldownFallback) {
-            logger.log("CF all domains in cooldown; trying least-bad domain for DC${parsed.dcId}")
+            logger.log("CF all domains in cooldown; single least-bad attempt for DC${parsed.dcId}")
         }
 
         var attempted = false
-        for (selection in selectionPlan.ordered) {
+        cfSelectionLoop@ for (selection in selectionPlan.ordered) {
             val baseDomain = selection.domain
             attempted = true
             val domain = "kws${parsed.dcId}.$baseDomain"
-            if (!cfDomainHealth.acquireConnect(parsed.dcId, parsed.isMedia, baseDomain)) {
-                logger.log("CF domain skipped because in-flight DC${parsed.dcId} domain=$baseDomain")
-                continue
+            when (cfDomainHealth.acquireConnectDecision(parsed.dcId, parsed.isMedia, baseDomain)) {
+                CfConnectAcquireResult.ACQUIRED -> Unit
+                CfConnectAcquireResult.QUEUE_TIMEOUT -> {
+                    logger.log("CF connect queue controlled failure DC${parsed.dcId} domain=$baseDomain")
+                    if (selectionPlan.allDomainsInCooldownFallback) {
+                        cfDomainHealth.recordAllCooldownSingleAttemptFailure()
+                        logger.log("CF all-cooldown single attempt failed; stop fallback cycle")
+                    }
+                    return false
+                }
+                CfConnectAcquireResult.DOMAIN_IN_FLIGHT, CfConnectAcquireResult.UNAVAILABLE -> {
+                    logger.log("CF domain skipped because in-flight DC${parsed.dcId} domain=$baseDomain")
+                    if (selectionPlan.allDomainsInCooldownFallback) {
+                        cfDomainHealth.recordAllCooldownSingleAttemptFailure()
+                        logger.log("CF all-cooldown single attempt failed; stop fallback cycle")
+                        return false
+                    }
+                    continue@cfSelectionLoop
+                }
             }
             cfDomainHealth.recordSelected(parsed.dcId, parsed.isMedia, baseDomain, domain, selection.reason)
             logger.log(
@@ -745,11 +787,19 @@ class ProxyServer(
                         "CF domain cooldown DC${parsed.dcId} $baseDomain reason=${decision.kind.configValue} until=${decision.cooldownUntilMs}",
                     )
                 }
+                if (selectionPlan.allDomainsInCooldownFallback) {
+                    cfDomainHealth.recordAllCooldownSingleAttemptFailure()
+                    logger.log("CF all-cooldown single attempt failed; stop fallback cycle")
+                }
                 null
             } finally {
                 cfDomainHealth.releaseConnect(parsed.dcId, parsed.isMedia, baseDomain)
                 logger.log("CF domain released in-flight DC${parsed.dcId} domain=$baseDomain")
-            } ?: continue
+            }
+            if (webSocket == null) {
+                if (selectionPlan.allDomainsInCooldownFallback) return false
+                continue@cfSelectionLoop
+            }
 
             val latencyMs = (System.nanoTime() - startedAtNs) / 1_000_000
             try {

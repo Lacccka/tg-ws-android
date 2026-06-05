@@ -120,9 +120,13 @@ object DiagnosticReportFormatter {
             "cfMaxInflightPerDomainReached=${stats.cfMaxInflightPerDomainReached}, " +
             "cfActiveConnectsByDc=${formatIntByDc(stats.cfActiveConnectsByDc)}, " +
             "cfConnectQueueWaits=${stats.cfConnectQueueWaits}, cfConnectQueueTimeouts=${stats.cfConnectQueueTimeouts}, " +
+            "cfQueueControlledFailures=${stats.cfQueueControlledFailures}, cfQueueWaitMs=${stats.cfQueueWaitMs}, " +
             "cfMaxConcurrentConnectsByDc=${formatIntByDc(stats.cfMaxConcurrentConnectsByDc)}, " +
             "cf429BackoffCount=${stats.cf429BackoffCount}, cfAllCooldownWaits=${stats.cfAllCooldownWaits}, " +
-            "cfAllCooldownWaitMs=${stats.cfAllCooldownWaitMs}"
+            "cfAllCooldownWaitMs=${stats.cfAllCooldownWaitMs}, " +
+            "cfAllCooldownSingleAttempts=${stats.cfAllCooldownSingleAttempts}, " +
+            "cfAllCooldownSingleAttemptFailures=${stats.cfAllCooldownSingleAttemptFailures}, " +
+            "cfAllCooldownStoppedCycles=${stats.cfAllCooldownStoppedCycles}"
     }
 
     private fun StringBuilder.appendCfHealth(stats: ProxyServerStats?) {
@@ -153,6 +157,7 @@ object DiagnosticReportFormatter {
                 appendLine("  cf429BackoffLevel=${formatTopDomains(domains.filter { it.backoffLevel > 0 }.sortedByDescending { it.backoffLevel }) { it.backoffLevel }}")
                 appendLine("  cf429BackoffUntil=${formatTopDomains(domains.filter { it.backoffUntilMs > 0 }.sortedBy { it.backoffUntilMs }) { it.backoffUntilMs }}")
                 appendLine("  cf429ConsecutiveByDomain=${formatTopDomains(domains.filter { it.consecutive429 > 0 }.sortedByDescending { it.consecutive429 }) { it.consecutive429 }}")
+                appendLine("  cfSuccessStreakByDomain=${formatTopDomains(domains.filter { it.successfulStreak > 0 }.sortedByDescending { it.successfulStreak }) { it.successfulStreak }}")
             }
     }
 

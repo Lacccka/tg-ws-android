@@ -26,8 +26,13 @@ class CfDomainHealth(
     private var maxInflightPerDomainReached: Long = 0
     private var connectQueueWaits: Long = 0
     private var connectQueueTimeouts: Long = 0
+    private var queueControlledFailures: Long = 0
+    private var queueWaitMs: Long = 0
     private var allCooldownWaits: Long = 0
     private var allCooldownWaitMs: Long = 0
+    private var allCooldownSingleAttempts: Long = 0
+    private var allCooldownSingleAttemptFailures: Long = 0
+    private var allCooldownStoppedCycles: Long = 0
     private val activeConnectsByDc = mutableMapOf<Int, Int>()
     private val maxConcurrentConnectsByDc = mutableMapOf<Int, Int>()
     private val inFlightByDomain = mutableMapOf<CfDomainKey, Int>()
@@ -41,7 +46,11 @@ class CfDomainHealth(
     }
 
     @Synchronized
-    fun selectDomains(dcId: Int, isMedia: Boolean = false): CfDomainSelectionPlan {
+    fun selectDomains(
+        dcId: Int,
+        isMedia: Boolean = false,
+        cycleState: CfDomainFallbackCycleState = CfDomainFallbackCycleState(),
+    ): CfDomainSelectionPlan {
         val now = nowMs()
         val activeDomains = domains
         if (activeDomains.isEmpty()) {
@@ -93,21 +102,36 @@ class CfDomainHealth(
         val soonestCooldown = entries.minOfOrNull { it.cooldownUntilMs } ?: 0L
         val waitMs = (soonestCooldown - now).coerceAtLeast(0L)
         if (waitMs in 1..ALL_COOLDOWN_WAIT_THRESHOLD_MS) {
+            val waitWithJitterMs = waitMs + ALL_COOLDOWN_WAIT_JITTER_MS
             allCooldownWaits += 1
-            allCooldownWaitMs += waitMs
+            allCooldownWaitMs += waitWithJitterMs
             return CfDomainSelectionPlan(
                 ordered = emptyList(),
                 skippedCooldown = entries.sortedWith(cooldownFallbackComparator()),
                 skippedInflight = emptyList(),
                 allDomainsInCooldownFallback = false,
-                allDomainsInCooldownWaitMs = waitMs,
+                allDomainsInCooldownWaitMs = waitWithJitterMs,
             )
         }
 
+        if (cycleState.allCooldownFallbackUsed) {
+            allCooldownStoppedCycles += 1
+            return CfDomainSelectionPlan(
+                ordered = emptyList(),
+                skippedCooldown = entries.sortedWith(cooldownFallbackComparator()),
+                skippedInflight = emptyList(),
+                allDomainsInCooldownFallback = false,
+                allDomainsInCooldownStoppedCycle = true,
+            )
+        }
+
+        cycleState.allCooldownFallbackUsed = true
         allDomainsInCooldownFallbacks += 1
+        allCooldownSingleAttempts += 1
         return CfDomainSelectionPlan(
             ordered = entries
                 .sortedWith(cooldownFallbackComparator())
+                .take(1)
                 .map { it.copy(reason = "all_cooldown_least_bad") },
             skippedCooldown = emptyList(),
             skippedInflight = emptyList(),
@@ -128,8 +152,13 @@ class CfDomainHealth(
         val state = stateFor(dcId, isMedia, normalized)
         val now = nowMs()
         state.successes += 1
+        state.successfulStreak += 1
         state.consecutiveFailures = 0
-        state.consecutive429 = 0
+        state.consecutive429 = when {
+            state.consecutive429 <= 0L -> 0L
+            state.successfulStreak >= SUCCESS_STREAK_STRONG_BACKOFF_RESET -> (state.consecutive429 - SUCCESS_STREAK_STRONG_BACKOFF_DECREMENT).coerceAtLeast(0L)
+            else -> (state.consecutive429 - 1L).coerceAtLeast(0L)
+        }
         state.lastSuccessTimeMs = now
         state.lastLatencyMs = latencyMs
         state.ewmaLatencyMs = state.ewmaLatencyMs?.let { (it * 0.7) + (latencyMs * 0.3) } ?: latencyMs.toDouble()
@@ -155,6 +184,7 @@ class CfDomainHealth(
 
         val state = stateFor(dcId, isMedia, normalized)
         val now = nowMs()
+        state.successfulStreak = 0
         if (kind == CfDomainErrorKind.HTTP_429) {
             state.consecutive429 += 1
         } else {
@@ -188,10 +218,19 @@ class CfDomainHealth(
         )
     }
 
-    fun acquireConnect(dcId: Int, isMedia: Boolean, baseDomain: String, waitMs: Long = CONNECT_QUEUE_WAIT_MS): Boolean {
-        val normalized = normalizeKnownDomain(baseDomain) ?: return false
+    fun acquireConnect(dcId: Int, isMedia: Boolean, baseDomain: String, waitMs: Long = CONNECT_QUEUE_WAIT_MS): Boolean =
+        acquireConnectDecision(dcId, isMedia, baseDomain, waitMs) == CfConnectAcquireResult.ACQUIRED
+
+    fun acquireConnectDecision(
+        dcId: Int,
+        isMedia: Boolean,
+        baseDomain: String,
+        waitMs: Long = CONNECT_QUEUE_WAIT_MS,
+    ): CfConnectAcquireResult {
+        val normalized = normalizeKnownDomain(baseDomain) ?: return CfConnectAcquireResult.UNAVAILABLE
         val key = CfDomainKey(dcId, isMedia, normalized)
-        val deadline = nowMs() + waitMs
+        val startedMs = nowMs()
+        val deadline = startedMs + waitMs
         var countedQueueWait = false
         var countedInflightWait = false
         synchronized(this) {
@@ -203,7 +242,7 @@ class CfDomainHealth(
                     activeConnectsByDc[dcId] = nextDcActive
                     maxConcurrentConnectsByDc[dcId] = max(maxConcurrentConnectsByDc[dcId] ?: 0, nextDcActive)
                     inFlightByDomain[key] = (inFlightByDomain[key] ?: 0) + 1
-                    return true
+                    return CfConnectAcquireResult.ACQUIRED
                 }
                 if (!countedQueueWait && activeForDc >= maxConcurrentConnectsForDc(dcId).coerceAtLeast(1)) {
                     connectQueueWaits += 1
@@ -215,16 +254,26 @@ class CfDomainHealth(
                 }
                 val remainingMs = deadline - nowMs()
                 if (remainingMs <= 0) {
-                    if (activeForDc >= maxConcurrentConnectsForDc(dcId).coerceAtLeast(1)) connectQueueTimeouts += 1
-                    if (domainInFlight) maxInflightPerDomainReached += 1
-                    return false
+                    if (activeForDc >= maxConcurrentConnectsForDc(dcId).coerceAtLeast(1)) {
+                        connectQueueTimeouts += 1
+                        queueControlledFailures += 1
+                        queueWaitMs += (nowMs() - startedMs).coerceAtLeast(0L)
+                        return CfConnectAcquireResult.QUEUE_TIMEOUT
+                    }
+                    if (domainInFlight) {
+                        maxInflightPerDomainReached += 1
+                        return CfConnectAcquireResult.DOMAIN_IN_FLIGHT
+                    }
+                    return CfConnectAcquireResult.UNAVAILABLE
                 }
                 try {
                     (this as java.lang.Object).wait(remainingMs.coerceAtMost(waitMs).coerceAtLeast(1L))
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
                     connectQueueTimeouts += 1
-                    return false
+                    queueControlledFailures += 1
+                    queueWaitMs += (nowMs() - startedMs).coerceAtLeast(0L)
+                    return CfConnectAcquireResult.QUEUE_TIMEOUT
                 }
             }
         }
@@ -247,6 +296,12 @@ class CfDomainHealth(
             activeConnectsByDc[dcId] = dcCount
         }
         (this as java.lang.Object).notifyAll()
+    }
+
+    @Synchronized
+    fun recordAllCooldownSingleAttemptFailure() {
+        allCooldownSingleAttemptFailures += 1
+        allCooldownStoppedCycles += 1
     }
 
     @Synchronized
@@ -277,10 +332,15 @@ class CfDomainHealth(
             activeConnectsByDc = activeConnectsByDc.toSortedMap(),
             connectQueueWaits = connectQueueWaits,
             connectQueueTimeouts = connectQueueTimeouts,
+            queueControlledFailures = queueControlledFailures,
+            queueWaitMs = queueWaitMs,
             maxConcurrentConnectsByDc = maxConcurrentConnectsByDc.toSortedMap(),
             backoffCount = rows.sumOf { it.total429 },
             allCooldownWaits = allCooldownWaits,
             allCooldownWaitMs = allCooldownWaitMs,
+            allCooldownSingleAttempts = allCooldownSingleAttempts,
+            allCooldownSingleAttemptFailures = allCooldownSingleAttemptFailures,
+            allCooldownStoppedCycles = allCooldownStoppedCycles,
             domains = rows.sortedWith(compareBy<CfDomainSnapshot> { it.dcId }.thenBy { it.domain }),
         )
     }
@@ -367,6 +427,9 @@ class CfDomainHealth(
             CfDomainErrorKind.OTHER -> 0L
         }
 
+        private const val SUCCESS_STREAK_STRONG_BACKOFF_RESET: Long = 3L
+        private const val SUCCESS_STREAK_STRONG_BACKOFF_DECREMENT: Long = 2L
+
         fun http429BackoffBaseMs(backoffLevel: Long): Long = when {
             backoffLevel <= 1L -> 30_000L
             backoffLevel == 2L -> 60_000L
@@ -377,6 +440,7 @@ class CfDomainHealth(
         const val DEFAULT_MAX_CONCURRENT_CF_CONNECTS_PER_DC: Int = 2
         const val CONNECT_QUEUE_WAIT_MS: Long = 250L
         const val ALL_COOLDOWN_WAIT_THRESHOLD_MS: Long = 500L
+        private const val ALL_COOLDOWN_WAIT_JITTER_MS: Long = 25L
         private const val HTTP_429_JITTER_RATIO: Double = 0.2
     }
 }
@@ -387,7 +451,19 @@ data class CfDomainSelectionPlan(
     val allDomainsInCooldownFallback: Boolean,
     val skippedInflight: List<CfDomainSelection> = emptyList(),
     val allDomainsInCooldownWaitMs: Long = 0L,
+    val allDomainsInCooldownStoppedCycle: Boolean = false,
 )
+
+class CfDomainFallbackCycleState {
+    internal var allCooldownFallbackUsed: Boolean = false
+}
+
+enum class CfConnectAcquireResult {
+    ACQUIRED,
+    DOMAIN_IN_FLIGHT,
+    QUEUE_TIMEOUT,
+    UNAVAILABLE,
+}
 
 data class CfDomainSelection(
     val dcId: Int,
@@ -429,10 +505,15 @@ data class CfDomainHealthSnapshot(
     val activeConnectsByDc: Map<Int, Int>,
     val connectQueueWaits: Long,
     val connectQueueTimeouts: Long,
+    val queueControlledFailures: Long,
+    val queueWaitMs: Long,
     val maxConcurrentConnectsByDc: Map<Int, Int>,
     val backoffCount: Long,
     val allCooldownWaits: Long,
     val allCooldownWaitMs: Long,
+    val allCooldownSingleAttempts: Long,
+    val allCooldownSingleAttemptFailures: Long,
+    val allCooldownStoppedCycles: Long,
     val domains: List<CfDomainSnapshot>,
 )
 
@@ -456,6 +537,7 @@ data class CfDomainSnapshot(
     val total503: Long,
     val totalUnknownHost: Long,
     val totalTimeouts: Long,
+    val successfulStreak: Long,
 ) {
     val fullDomain: String = "kws$dcId.$domain"
 }
@@ -490,6 +572,7 @@ private class MutableCfDomainState {
     var total503: Long = 0
     var totalUnknownHost: Long = 0
     var totalTimeouts: Long = 0
+    var successfulStreak: Long = 0
 
     fun snapshot(key: CfDomainKey, now: Long): CfDomainSnapshot = CfDomainSnapshot(
         dcId = key.dcId,
@@ -511,5 +594,6 @@ private class MutableCfDomainState {
         total503 = total503,
         totalUnknownHost = totalUnknownHost,
         totalTimeouts = totalTimeouts,
+        successfulStreak = successfulStreak,
     )
 }
