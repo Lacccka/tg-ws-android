@@ -74,7 +74,6 @@ class MainActivity : Activity() {
 
     private var currentScreen: Screen = Screen.HOME
     private var pendingRestartRequired: Boolean = false
-    private var showTelegramCleanupHint: Boolean = false
     private var transitionStatus: TransitionStatus = TransitionStatus.NONE
 
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
@@ -91,7 +90,6 @@ class MainActivity : Activity() {
         ProxyRuntimeConfig.initialize(applicationContext)
         ProxyForegroundService.State.initialize(applicationContext, "activity")
         pendingRestartRequired = savedInstanceState?.getBoolean(KEY_PENDING_RESTART_REQUIRED) ?: false
-        showTelegramCleanupHint = savedInstanceState?.getBoolean(KEY_SHOW_TELEGRAM_CLEANUP_HINT) ?: false
         currentScreen = Screen.valueOf(savedInstanceState?.getString(KEY_CURRENT_SCREEN) ?: Screen.HOME.name)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         setContentView(buildRootView())
@@ -106,7 +104,6 @@ class MainActivity : Activity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(KEY_PENDING_RESTART_REQUIRED, pendingRestartRequired)
-        outState.putBoolean(KEY_SHOW_TELEGRAM_CLEANUP_HINT, showTelegramCleanupHint)
         outState.putString(KEY_CURRENT_SCREEN, currentScreen.name)
         super.onSaveInstanceState(outState)
     }
@@ -162,12 +159,12 @@ class MainActivity : Activity() {
         routeText = createValueText()
         qualityText = createValueText()
         restartRequiredText = createValueText().apply {
-            text = "Нужно перезагрузить прокси, чтобы применить изменения."
+            text = PendingRestartModel.RESTART_WARNING
             setTextColor(COLOR_WARNING)
             typeface = Typeface.DEFAULT_BOLD
         }
         telegramCleanupHintText = createValueText().apply {
-            text = "Секрет обновлён. Подключите Telegram заново."
+            text = ""
             setTextColor(COLOR_TEXT_SECONDARY)
         }
         primaryControlButton = createButton("Запустить") {
@@ -194,7 +191,7 @@ class MainActivity : Activity() {
                 addView(createTextRow("Статус", statusText), matchWrapParams())
                 addView(createTextRow("Текущая сеть", networkText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("Маршрут", routeText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Качество подключения", qualityText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Состояние подключения", qualityText), matchWrapParams(topMargin = rowGap))
                 addView(restartRequiredText, matchWrapParams(topMargin = rowGap))
                 addView(telegramCleanupHintText, matchWrapParams(topMargin = rowGap))
                 addView(primaryControlButton, matchWrapParams(topMargin = rowGap))
@@ -308,8 +305,14 @@ class MainActivity : Activity() {
         val store = AppConfigStore.from(applicationContext)
         store.saveConfig(store.loadConfig().copy(routeMode = option.routeMode))
         ProxyRuntimeConfig.initialize(applicationContext)
-        pendingRestartRequired = true
-        ProxyForegroundService.State.addLog("route mode changed to ${option.routeMode.configValue}; restart required", LogSeverity.INFO, "ui")
+        val running = ProxyForegroundService.State.running
+        pendingRestartRequired = PendingRestartModel.pendingAfterRouteModeChange(running)
+        val logMessage = if (pendingRestartRequired) {
+            "route mode changed to ${option.routeMode.configValue}; restart required"
+        } else {
+            "route mode changed to ${option.routeMode.configValue}; will apply on next proxy start"
+        }
+        ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
         refreshState()
     }
 
@@ -317,6 +320,7 @@ class MainActivity : Activity() {
         ProxyRuntimeConfig.initialize(applicationContext)
         refreshLocalDiagnostics()
         val running = ProxyForegroundService.State.running
+        if (!running && transitionStatus != TransitionStatus.STARTING) pendingRestartRequired = false
         if (transitionStatus == TransitionStatus.STARTING && running) transitionStatus = TransitionStatus.NONE
         if (transitionStatus == TransitionStatus.STOPPING && !running) transitionStatus = TransitionStatus.NONE
         val failed = ProxyForegroundService.State.lastStatus.contains("failed", ignoreCase = true) ||
@@ -332,11 +336,17 @@ class MainActivity : Activity() {
             }
             networkText.text = userNetworkLabel(ProxyForegroundService.State.networkStatus)
             routeText.text = userRouteLabel()
-            qualityText.text = ConnectionQualityMapper.quality(running, ProxyForegroundService.State.networkStatus, ProxyForegroundService.State.stats())
+            qualityText.text = ConnectionStatusMapper.status(
+                running = running,
+                networkStatus = ProxyForegroundService.State.networkStatus,
+                stats = ProxyForegroundService.State.stats(),
+                checking = transitionStatus == TransitionStatus.STARTING,
+            )
             primaryControlButton.text = if (running) "Остановить" else "Запустить"
-            restartRequiredText.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE
-            restartPendingButton.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE
-            telegramCleanupHintText.visibility = if (showTelegramCleanupHint) View.VISIBLE else View.GONE
+            val showRestartWarning = pendingRestartRequired && running
+            restartRequiredText.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
+            restartPendingButton.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
+            telegramCleanupHintText.visibility = View.GONE
             refreshHints()
         }
 
@@ -346,8 +356,8 @@ class MainActivity : Activity() {
             batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
             developerModeCheckBox.isChecked = developerModeEnabled()
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
-            restartProxyButton.isEnabled = running
-            restartProxyHintText.text = if (running) "" else "Доступно после запуска прокси"
+            restartProxyButton.isEnabled = PendingRestartModel.restartActionEnabled(running)
+            restartProxyHintText.text = if (running) "" else PendingRestartModel.RESTART_DISABLED_HINT
             upstreamStatusText.text = "Неизвестно — проверьте командой python tools/check_upstream.py"
             rawRouteDetailsText.text = routeDetailsLine()
             cfDetailsText.text = cfDetailsLine()
@@ -467,9 +477,7 @@ class MainActivity : Activity() {
             return
         }
         requestNotificationPermissionIfNeeded()
-        val hadPendingRestart = pendingRestartRequired
         pendingRestartRequired = false
-        if (hadPendingRestart) showTelegramCleanupHint = true
         startService(ProxyForegroundService.stopIntent(this))
         handler.postDelayed({
             transitionStatus = TransitionStatus.STARTING
@@ -490,11 +498,16 @@ class MainActivity : Activity() {
 
     private fun resetSecret() {
         ProxyRuntimeConfig.resetSecret(applicationContext)
-        pendingRestartRequired = true
-        showTelegramCleanupHint = true
-        ProxyForegroundService.State.addLog("proxy secret reset; restart required to apply new secret", LogSeverity.INFO, "ui")
-        secretStateText.text = "Секрет обновлён. Подключите Telegram заново."
-        Toast.makeText(this, "Секрет обновлён. Подключите Telegram заново.", Toast.LENGTH_LONG).show()
+        val running = ProxyForegroundService.State.running
+        pendingRestartRequired = running
+        val logMessage = if (running) {
+            "proxy secret reset; restart required to apply new secret"
+        } else {
+            "proxy secret reset; will apply on next proxy start"
+        }
+        ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
+        if (::secretStateText.isInitialized) secretStateText.text = ""
+        Toast.makeText(this, SecretUpdatedMessageModel.MESSAGE, Toast.LENGTH_LONG).show()
         refreshState()
     }
 
@@ -704,7 +717,6 @@ class MainActivity : Activity() {
         private const val RESTART_DELAY_MS = 350L
         private const val REQUEST_POST_NOTIFICATIONS = 2001
         private const val KEY_PENDING_RESTART_REQUIRED = "pending_restart_required"
-        private const val KEY_SHOW_TELEGRAM_CLEANUP_HINT = "show_telegram_cleanup_hint"
         private const val KEY_CURRENT_SCREEN = "current_screen"
         private const val PREFS_NAME = "main_ui"
         private const val PREF_DEVELOPER_MODE = "developer_mode"

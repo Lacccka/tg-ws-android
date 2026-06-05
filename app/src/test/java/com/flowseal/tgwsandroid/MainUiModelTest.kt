@@ -14,7 +14,7 @@ class MainUiModelTest {
 
         assertEquals(NetworkRouteMode.AUTO, options.getValue("Автоматически — рекомендуется").routeMode)
         assertEquals(NetworkRouteMode.DIRECT_FIRST, options.getValue("Быстрый Wi-Fi").routeMode)
-        assertEquals(NetworkRouteMode.CF_FIRST, options.getValue("Совместимый Wi-Fi + Mobile").routeMode)
+        assertEquals(NetworkRouteMode.CF_FIRST, options.getValue("Совместимый Wi-Fi + мобильная сеть").routeMode)
     }
 
     @Test
@@ -42,15 +42,26 @@ class MainUiModelTest {
     }
 
     @Test
-    fun qualityStoppedProxyIsInactive() {
-        assertEquals("Неактивно", ConnectionQualityMapper.quality(running = false, networkStatus = "Wi-Fi", stats = stats()))
+    fun stoppedProxyConnectionStateIsInactive() {
+        assertEquals("Неактивно", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = stats()))
     }
 
     @Test
-    fun qualityWifiDirectHealthyIsGood() {
+    fun startingOrUnknownConnectionStateIsChecking() {
+        assertEquals("Проверяется", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = null, checking = true))
+        assertEquals("Проверяется", ConnectionStatusMapper.status(running = true, networkStatus = "Wi-Fi", stats = null))
+    }
+
+    @Test
+    fun networkNoneConnectionStateHasNoNetwork() {
+        assertEquals("Нет сети", ConnectionStatusMapper.status(running = true, networkStatus = "none", stats = stats()))
+    }
+
+    @Test
+    fun wifiDirectHealthyConnectionStateIsFast() {
         assertEquals(
-            "Хорошее",
-            ConnectionQualityMapper.quality(
+            "Работает быстро",
+            ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "Wi-Fi",
                 stats = stats(connectionsTotal = 1, effectiveRouteMode = NetworkRouteMode.DIRECT_FIRST.configValue),
@@ -59,15 +70,34 @@ class MainUiModelTest {
     }
 
     @Test
-    fun qualityMobileCompatibleWithModerateCfErrorsIsMedium() {
+    fun wifiDirectIgnoresOldCfErrors() {
         assertEquals(
-            "Среднее",
-            ConnectionQualityMapper.quality(
+            "Работает быстро",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "Wi-Fi",
+                stats = stats(
+                    connectionsTotal = 1,
+                    effectiveRouteMode = NetworkRouteMode.DIRECT_FIRST.configValue,
+                    cfProxyErrors = 10,
+                    cf429Count = 10,
+                    cfCooldownSkips = 10,
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun mobileCompatibleWithSuccessAndModerateCfErrorsWorks() {
+        assertEquals(
+            "Работает",
+            ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "mobile",
                 stats = stats(
                     connectionsTotal = 3,
                     effectiveRouteMode = NetworkRouteMode.CF_FIRST.configValue,
+                    cfProxyConnections = 2,
                     cfProxyErrors = 2,
                 ),
             ),
@@ -75,15 +105,16 @@ class MainUiModelTest {
     }
 
     @Test
-    fun qualityHighCfCongestionIsOverloaded() {
+    fun mobileCompatibleWithHighCurrentCfErrorsIsSlow() {
         assertEquals(
-            "Перегружено",
-            ConnectionQualityMapper.quality(
+            "Работает медленно",
+            ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "mobile",
                 stats = stats(
                     connectionsTotal = 3,
                     effectiveRouteMode = NetworkRouteMode.CF_FIRST.configValue,
+                    cfProxyConnections = 2,
                     cf429Count = 3,
                     cfCooldownSkips = 2,
                 ),
@@ -92,8 +123,79 @@ class MainUiModelTest {
     }
 
     @Test
-    fun qualityNetworkNoneHasNoRoute() {
-        assertEquals("Нет маршрута", ConnectionQualityMapper.quality(running = true, networkStatus = "none", stats = stats()))
+    fun noRouteOrCurrentFailureIsConnectionProblem() {
+        assertEquals(
+            "Проблема подключения",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "Wi-Fi",
+                stats = stats(
+                    connectionsTotal = 1,
+                    connectionsBad = 1,
+                    effectiveRouteMode = NetworkRouteMode.DIRECT_FIRST.configValue,
+                    directHealthState = "unhealthy",
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun overloadedIsNotUsedInNormalConnectionLabels() {
+        val labels = listOf(
+            "Неактивно",
+            "Проверяется",
+            "Работает быстро",
+            "Работает",
+            "Работает медленно",
+            "Нет сети",
+            "Проблема подключения",
+            "Неизвестно",
+        )
+        assertFalse(labels.contains("Перегружено"))
+    }
+
+    @Test
+    fun secretUpdatedMessageIsNotShownByDefault() {
+        assertFalse(SecretUpdatedMessageModel.visibleByDefault())
+    }
+
+    @Test
+    fun routeModeChangeDoesNotShowSecretUpdatedMessage() {
+        assertFalse(SecretUpdatedMessageModel.visibleAfterRouteModeChange())
+    }
+
+    @Test
+    fun secretUpdatedMessageAppearsOnlyAfterConfirmedUpdateSecretAction() {
+        assertTrue(SecretUpdatedMessageModel.visibleAfterConfirmedUpdateSecret(secretUpdated = true))
+        assertFalse(SecretUpdatedMessageModel.visibleAfterConfirmedUpdateSecret(secretUpdated = false))
+    }
+
+    @Test
+    fun secretUpdatedMessageIsNotShownAgainAfterConsumed() {
+        assertFalse(SecretUpdatedMessageModel.visibleAfterConsumed())
+    }
+
+    @Test
+    fun routeModeChangeWhileStoppedDoesNotCreateRestartWarning() {
+        assertFalse(PendingRestartModel.pendingAfterRouteModeChange(proxyRunning = false))
+    }
+
+    @Test
+    fun routeModeChangeWhileRunningCreatesRestartWarningOnlyIfRequired() {
+        assertTrue(PendingRestartModel.pendingAfterRouteModeChange(proxyRunning = true, restartRequiredForRunningProxy = true))
+        assertFalse(PendingRestartModel.pendingAfterRouteModeChange(proxyRunning = true, restartRequiredForRunningProxy = false))
+    }
+
+    @Test
+    fun restartProxyActionDisabledWhileStopped() {
+        assertFalse(PendingRestartModel.restartActionEnabled(proxyRunning = false))
+        assertTrue(PendingRestartModel.restartActionEnabled(proxyRunning = true))
+    }
+
+    @Test
+    fun savedRouteModeIsAppliedOnNextStart() {
+        assertEquals(NetworkRouteMode.CF_FIRST, NetworkRouteMode.fromConfigValue(NetworkRouteMode.CF_FIRST.configValue))
+        assertFalse(PendingRestartModel.pendingAfterRouteModeChange(proxyRunning = false))
     }
 
     @Test
@@ -118,6 +220,7 @@ class MainUiModelTest {
         networkNoneEvents: Long = 0,
         cf429Count: Long = 0,
         cfCooldownSkips: Long = 0,
+        directHealthState: String = "healthy",
     ): ProxyServerStats = ProxyServerStats(
         connectionsTotal = connectionsTotal,
         connectionsActive = connectionsActive,
@@ -134,6 +237,7 @@ class MainUiModelTest {
         sessionTimeouts = sessionTimeouts,
         sessionUnexpectedErrors = sessionUnexpectedErrors,
         networkNoneEvents = networkNoneEvents,
+        directHealthState = directHealthState,
         cf429Count = cf429Count,
         cfCooldownSkips = cfCooldownSkips,
     )

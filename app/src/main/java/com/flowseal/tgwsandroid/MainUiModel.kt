@@ -6,7 +6,7 @@ import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 object RussianUiText {
     const val ROUTE_AUTO_RECOMMENDED = "Автоматически — рекомендуется"
     const val ROUTE_FAST_WIFI = "Быстрый Wi-Fi"
-    const val ROUTE_COMPATIBLE = "Совместимый Wi-Fi + Mobile"
+    const val ROUTE_COMPATIBLE = "Совместимый Wi-Fi + мобильная сеть"
 }
 
 data class UserRouteModeOption(
@@ -58,24 +58,19 @@ object DeveloperUiModel {
     }
 }
 
-object ConnectionQualityMapper {
-    fun quality(
+object ConnectionStatusMapper {
+    fun status(
         running: Boolean,
         networkStatus: String,
         stats: ProxyServerStats?,
+        checking: Boolean = false,
     ): String {
-        if (!running) return "Неактивно"
-        if (networkStatus.equals("none", ignoreCase = true)) return "Нет маршрута"
-        if (stats == null) return "Неизвестно"
-        if (stats.networkNoneEvents > 0 && networkStatus.equals("none", ignoreCase = true)) return "Нет маршрута"
-        if (stats.connectionsBad > 0 && stats.connectionsBad >= stats.connectionsTotal.coerceAtLeast(1)) return "Нет маршрута"
-
-        val congestionSignals = stats.cf429Count + stats.cf429BackoffCount + stats.cfCooldownSkips +
-            stats.cfConnectQueueTimeouts + stats.cfQueueControlledFailures + stats.cfAllDomainsInCooldownFallbacks
-        if (congestionSignals >= 5) return "Перегружено"
+        if (!running && !checking) return "Неактивно"
+        if (checking) return "Проверяется"
+        if (networkStatus.equals("none", ignoreCase = true)) return "Нет сети"
+        if (stats == null) return "Проверяется"
 
         val effective = stats.effectiveRouteMode
-        val hasSessionErrors = stats.wsConnectErrors + stats.sessionTimeouts + stats.sessionUnexpectedErrors > 0
         val isWifi = networkStatus.equals("Wi-Fi", ignoreCase = true) || networkStatus.equals("wifi", ignoreCase = true)
         val isMobile = networkStatus.equals("mobile", ignoreCase = true) || networkStatus.equals("cellular", ignoreCase = true)
         val direct = effective.equals(NetworkRouteMode.DIRECT_FIRST.configValue, ignoreCase = true) ||
@@ -85,9 +80,57 @@ object ConnectionQualityMapper {
             effective.equals(NetworkRouteMode.CF_FIRST.name, ignoreCase = true) ||
             effective.equals(NetworkRouteMode.CF_ONLY.name, ignoreCase = true)
 
-        if (isWifi && direct && !hasSessionErrors) return "Хорошее"
-        if (isMobile && compatible) return "Среднее"
-        if (!hasSessionErrors && stats.connectionsTotal > 0) return "Хорошее"
+        val directUnavailable = stats.directHealthState.equals("unhealthy", ignoreCase = true) ||
+            stats.directHealthState.equals("cooldown", ignoreCase = true)
+        val hasCurrentSessionErrors = stats.wsConnectErrors + stats.sessionTimeouts + stats.sessionUnexpectedErrors > 0
+        val allConnectionsFailed = stats.connectionsBad > 0 && stats.connectionsBad >= stats.connectionsTotal.coerceAtLeast(1)
+        val successfulCfConnections = stats.cfProxyConnections > 0
+        val successfulConnections = stats.connectionsTotal > stats.connectionsBad || successfulCfConnections || stats.directHealthSuccesses > 0
+        val cfProblemSignals = stats.cfProxyErrors + stats.cf429Count + stats.cf429BackoffCount + stats.cfCooldownSkips +
+            stats.cfConnectQueueTimeouts + stats.cfQueueControlledFailures + stats.cfAllDomainsInCooldownFallbacks
+
+        if (isWifi && direct) {
+            return if (!directUnavailable && !hasCurrentSessionErrors && !allConnectionsFailed) {
+                "Работает быстро"
+            } else {
+                "Проблема подключения"
+            }
+        }
+
+        if (isWifi && directUnavailable) return "Проблема подключения"
+
+        if (isMobile && compatible) {
+            return when {
+                successfulCfConnections && cfProblemSignals < HIGH_CF_PROBLEM_SIGNALS -> "Работает"
+                successfulConnections && cfProblemSignals < HIGH_CF_PROBLEM_SIGNALS -> "Работает"
+                successfulConnections -> "Работает медленно"
+                else -> "Проблема подключения"
+            }
+        }
+
+        if (allConnectionsFailed || (hasCurrentSessionErrors && !successfulConnections)) return "Проблема подключения"
+        if (successfulConnections) return if (hasCurrentSessionErrors) "Работает медленно" else "Работает"
         return "Неизвестно"
     }
+
+    private const val HIGH_CF_PROBLEM_SIGNALS = 5L
+}
+
+object SecretUpdatedMessageModel {
+    const val MESSAGE = "Секрет обновлён. Подключите Telegram заново."
+
+    fun visibleByDefault(): Boolean = false
+    fun visibleAfterRouteModeChange(): Boolean = false
+    fun visibleAfterConfirmedUpdateSecret(secretUpdated: Boolean): Boolean = secretUpdated
+    fun visibleAfterConsumed(): Boolean = false
+}
+
+object PendingRestartModel {
+    const val RESTART_WARNING = "Изменения применятся после перезагрузки прокси."
+    const val RESTART_DISABLED_HINT = "Доступно после запуска прокси"
+
+    fun pendingAfterRouteModeChange(proxyRunning: Boolean, restartRequiredForRunningProxy: Boolean = true): Boolean =
+        proxyRunning && restartRequiredForRunningProxy
+
+    fun restartActionEnabled(proxyRunning: Boolean): Boolean = proxyRunning
 }
