@@ -115,7 +115,14 @@ object DiagnosticReportFormatter {
             "cfBestDomainByDc=${formatBestDomainByDc(stats.cfBestDomainByDc)}, cf429Count=${stats.cf429Count}, " +
             "cf503Count=${stats.cf503Count}, cfUnknownHostCount=${stats.cfUnknownHostCount}, " +
             "cfTimeoutCount=${stats.cfTimeoutCount}, cfCooldownSkips=${stats.cfCooldownSkips}, " +
-            "cfAllDomainsInCooldownFallbacks=${stats.cfAllDomainsInCooldownFallbacks}"
+            "cfAllDomainsInCooldownFallbacks=${stats.cfAllDomainsInCooldownFallbacks}, " +
+            "cfInflightSkips=${stats.cfInflightSkips}, cfInflightWaits=${stats.cfInflightWaits}, " +
+            "cfMaxInflightPerDomainReached=${stats.cfMaxInflightPerDomainReached}, " +
+            "cfActiveConnectsByDc=${formatIntByDc(stats.cfActiveConnectsByDc)}, " +
+            "cfConnectQueueWaits=${stats.cfConnectQueueWaits}, cfConnectQueueTimeouts=${stats.cfConnectQueueTimeouts}, " +
+            "cfMaxConcurrentConnectsByDc=${formatIntByDc(stats.cfMaxConcurrentConnectsByDc)}, " +
+            "cf429BackoffCount=${stats.cf429BackoffCount}, cfAllCooldownWaits=${stats.cfAllCooldownWaits}, " +
+            "cfAllCooldownWaitMs=${stats.cfAllCooldownWaitMs}"
     }
 
     private fun StringBuilder.appendCfHealth(stats: ProxyServerStats?) {
@@ -139,6 +146,13 @@ object DiagnosticReportFormatter {
                         "503=${domains.sumOf { it.total503 }} unknownHost=${domains.sumOf { it.totalUnknownHost }} " +
                         "timeouts=${domains.sumOf { it.totalTimeouts }}",
                 )
+                appendLine("  topSuccess=${formatTopDomains(domains.sortedByDescending { it.successes }) { it.successes }}")
+                appendLine("  top429=${formatTopDomains(domains.sortedByDescending { it.total429 }) { it.total429 }}")
+                appendLine("  topLatency=${formatTopDomains(domains.filter { it.ewmaLatencyMs != null || it.lastLatencyMs != null }.sortedBy { it.ewmaLatencyMs ?: it.lastLatencyMs ?: Long.MAX_VALUE }) { it.ewmaLatencyMs ?: it.lastLatencyMs ?: 0L }}")
+                appendLine("  topCooldown=${formatTopDomains(domains.filter { it.cooldownUntilMs > 0 }.sortedBy { it.cooldownUntilMs }) { it.cooldownUntilMs }}")
+                appendLine("  cf429BackoffLevel=${formatTopDomains(domains.filter { it.backoffLevel > 0 }.sortedByDescending { it.backoffLevel }) { it.backoffLevel }}")
+                appendLine("  cf429BackoffUntil=${formatTopDomains(domains.filter { it.backoffUntilMs > 0 }.sortedBy { it.backoffUntilMs }) { it.backoffUntilMs }}")
+                appendLine("  cf429ConsecutiveByDomain=${formatTopDomains(domains.filter { it.consecutive429 > 0 }.sortedByDescending { it.consecutive429 }) { it.consecutive429 }}")
             }
     }
 
@@ -148,5 +162,19 @@ object DiagnosticReportFormatter {
         } else {
             bestDomainByDc.toSortedMap().entries.joinToString(prefix = "{", postfix = "}") { (dcId, domain) -> "DC$dcId=$domain" }
         }
+
+    private fun formatIntByDc(valuesByDc: Map<Int, Int>): String =
+        if (valuesByDc.isEmpty()) {
+            "none"
+        } else {
+            valuesByDc.toSortedMap().entries.joinToString(prefix = "{", postfix = "}") { (dcId, value) -> "DC$dcId=$value" }
+        }
+
+    private fun formatTopDomains(domains: List<com.flowseal.tgwsandroid.proxy.CfDomainSnapshot>, value: (com.flowseal.tgwsandroid.proxy.CfDomainSnapshot) -> Long): String =
+        domains
+            .take(3)
+            .filter { value(it) > 0L }
+            .joinToString(prefix = "[", postfix = "]") { "${it.fullDomain}=${value(it)}" }
+            .ifEmpty { "none" }
 
 }

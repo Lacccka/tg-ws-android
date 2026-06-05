@@ -161,6 +161,16 @@ class RuntimeLogStoreTest {
             cfTimeoutCount = 15,
             cfCooldownSkips = 16,
             cfAllDomainsInCooldownFallbacks = 17,
+            cfInflightSkips = 18,
+            cfInflightWaits = 19,
+            cfMaxInflightPerDomainReached = 20,
+            cfActiveConnectsByDc = mapOf(2 to 1),
+            cfConnectQueueWaits = 21,
+            cfConnectQueueTimeouts = 22,
+            cfMaxConcurrentConnectsByDc = mapOf(2 to 2),
+            cf429BackoffCount = 23,
+            cfAllCooldownWaits = 24,
+            cfAllCooldownWaitMs = 250,
             cfHealthDomains = listOf(
                 CfDomainSnapshot(
                     dcId = 2,
@@ -176,6 +186,9 @@ class RuntimeLogStoreTest {
                     cooldownUntilMs = 0,
                     lastErrorKind = null,
                     total429 = 12,
+                    consecutive429 = 1,
+                    backoffUntilMs = 0,
+                    backoffLevel = 1,
                     total503 = 13,
                     totalUnknownHost = 14,
                     totalTimeouts = 15,
@@ -205,6 +218,9 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("poolStale=11"))
         assertTrue(report.contains("cfHealthEnabled=true"))
         assertTrue(report.contains("cf429Count=12"))
+        assertTrue(report.contains("cfInflightSkips=18"))
+        assertTrue(report.contains("cfConnectQueueWaits=21"))
+        assertTrue(report.contains("cf429BackoffCount=23"))
         assertTrue(report.contains("CF health:"))
         assertTrue(report.contains("best=kws2.one.example latency=123"))
         assertTrue(report.contains("02:45:30 INFO proxy ProxyServer listening"))

@@ -6,6 +6,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 class CfProxyDomainsTest {
     @Test
@@ -175,4 +178,168 @@ class CfProxyDomainsTest {
         assertEquals(1L, snapshot.totalUnknownHost)
         assertEquals(1L, snapshot.totalTimeouts)
     }
+
+    @Test
+    fun selectorSkipsInflightDomainWhenAlternativeExists() {
+        val health = CfDomainHealth(listOf("one.example", "two.example"))
+        assertTrue(health.acquireConnect(2, false, "one.example", waitMs = 1))
+
+        val plan = health.selectDomains(2)
+
+        assertEquals(listOf("two.example"), plan.ordered.map { it.domain })
+        assertEquals(listOf("one.example"), plan.skippedInflight.map { it.domain })
+        assertEquals(1L, health.snapshot().inflightSkips)
+        health.releaseConnect(2, false, "one.example")
+    }
+
+    @Test
+    fun inflightDomainCanBeSelectedOnlyWhenAllAlternativesUnavailable() {
+        val health = CfDomainHealth(listOf("one.example"))
+        assertTrue(health.acquireConnect(2, false, "one.example", waitMs = 1))
+
+        val plan = health.selectDomains(2)
+
+        assertEquals(listOf("one.example"), plan.ordered.map { it.domain })
+        assertEquals("inflight_least_bad", plan.ordered.first().reason)
+        assertTrue(health.snapshot().maxInflightPerDomainReached > 0L)
+        health.releaseConnect(2, false, "one.example")
+    }
+
+    @Test
+    fun perDcConcurrencyLimitPreventsMoreThanConfiguredActiveCfAttempts() {
+        val health = CfDomainHealth(
+            listOf("one.example", "two.example", "three.example"),
+            maxConcurrentConnectsForDc = { 2 },
+        )
+        assertTrue(health.acquireConnect(2, false, "one.example", waitMs = 1))
+        assertTrue(health.acquireConnect(2, false, "two.example", waitMs = 1))
+
+        assertFalse(health.acquireConnect(2, false, "three.example", waitMs = 10))
+
+        val snapshot = health.snapshot()
+        assertEquals(2, snapshot.activeConnectsByDc[2])
+        assertEquals(2, snapshot.maxConcurrentConnectsByDc[2])
+        assertEquals(1L, snapshot.connectQueueTimeouts)
+        health.releaseConnect(2, false, "one.example")
+        health.releaseConnect(2, false, "two.example")
+    }
+
+    @Test
+    fun http429AppliesExponentialBackoff() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example"), nowMs = { now }, jitterRatio = { 0.0 })
+
+        val first = health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        now = first.cooldownUntilMs + 1
+        val second = health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        now = second.cooldownUntilMs + 1
+        val third = health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        now = third.cooldownUntilMs + 1
+        val fourth = health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+
+        assertEquals(1L, first.backoffLevel)
+        assertEquals(30_000L, first.cooldownUntilMs - 1_000L)
+        assertEquals(2L, second.backoffLevel)
+        assertEquals(60_000L, second.cooldownUntilMs - (first.cooldownUntilMs + 1))
+        assertEquals(3L, third.backoffLevel)
+        assertEquals(120_000L, third.cooldownUntilMs - (second.cooldownUntilMs + 1))
+        assertEquals(4L, fourth.backoffLevel)
+        assertEquals(300_000L, fourth.cooldownUntilMs - (third.cooldownUntilMs + 1))
+    }
+
+    @Test
+    fun successResetsConsecutive429Backoff() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        now = 40_000L
+
+        health.recordSuccess(2, false, "one.example", latencyMs = 100)
+
+        val row = health.snapshot().domains.first()
+        assertEquals(0L, row.consecutive429)
+        assertEquals(0L, row.backoffLevel)
+        assertEquals(0L, row.backoffUntilMs)
+    }
+
+    @Test
+    fun jitterDoesNotMakeCooldownNegativeOrZero() {
+        val health = CfDomainHealth(listOf("one.example"), nowMs = { 1_000L }, jitterRatio = { -100.0 })
+
+        val decision = health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+
+        assertTrue(decision.cooldownUntilMs > 1_000L)
+    }
+
+    @Test
+    fun allCooldownStateWaitsForSoonestCooldownWhenSoonEnough() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        health.recordFailure(2, false, "two.example", RuntimeException("HTTP 503"), "mobile", false)
+        now = 30_700L
+
+        val plan = health.selectDomains(2)
+
+        assertTrue(plan.ordered.isEmpty())
+        assertEquals(300L, plan.allDomainsInCooldownWaitMs)
+        assertEquals(1L, health.snapshot().allCooldownWaits)
+        assertEquals(300L, health.snapshot().allCooldownWaitMs)
+    }
+
+    @Test
+    fun allCooldownFallbackStillReturnsLeastBadDomainIfCooldownsAreLong() {
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { 1_000L }, jitterRatio = { 0.0 })
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        health.recordFailure(2, false, "two.example", RuntimeException("HTTP 503"), "mobile", false)
+
+        val plan = health.selectDomains(2)
+
+        assertTrue(plan.allDomainsInCooldownFallback)
+        assertEquals("two.example", plan.ordered.first().domain)
+    }
+
+    @Test
+    fun concurrentAttemptsReleaseInflightMarkerOnSuccess() {
+        val health = CfDomainHealth(listOf("one.example", "two.example"))
+        assertTrue(health.acquireConnect(2, false, "one.example", waitMs = 1))
+        health.releaseConnect(2, false, "one.example")
+
+        assertEquals("one.example", health.selectDomains(2).ordered.first().domain)
+        assertTrue(health.snapshot().activeConnectsByDc.isEmpty())
+    }
+
+    @Test
+    fun concurrentAttemptsReleaseInflightMarkerOnFailure() {
+        val health = CfDomainHealth(listOf("one.example", "two.example"))
+        assertTrue(health.acquireConnect(2, false, "one.example", waitMs = 1))
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 503"), "mobile", false)
+        health.releaseConnect(2, false, "one.example")
+
+        assertEquals(listOf("two.example"), health.selectDomains(2).ordered.map { it.domain })
+        assertTrue(health.snapshot().activeConnectsByDc.isEmpty())
+    }
+
+    @Test
+    fun releaseWakesWaitingConnectAttempt() {
+        val health = CfDomainHealth(listOf("one.example"), maxConcurrentConnectsForDc = { 1 })
+        val started = CountDownLatch(1)
+        val acquiredAfterRelease = AtomicBoolean(false)
+        assertTrue(health.acquireConnect(2, false, "one.example", waitMs = 1))
+
+        val waiter = Thread {
+            started.countDown()
+            acquiredAfterRelease.set(health.acquireConnect(2, false, "one.example", waitMs = 500))
+            if (acquiredAfterRelease.get()) health.releaseConnect(2, false, "one.example")
+        }
+        waiter.start()
+        assertTrue(started.await(1, TimeUnit.SECONDS))
+        Thread.sleep(50)
+        health.releaseConnect(2, false, "one.example")
+        waiter.join(1_000)
+
+        assertTrue(acquiredAfterRelease.get())
+        assertTrue(health.snapshot().activeConnectsByDc.isEmpty())
+    }
+
 }

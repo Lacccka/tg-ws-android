@@ -127,6 +127,16 @@ data class ProxyServerStats(
     val cfTimeoutCount: Long = 0,
     val cfCooldownSkips: Long = 0,
     val cfAllDomainsInCooldownFallbacks: Long = 0,
+    val cfInflightSkips: Long = 0,
+    val cfInflightWaits: Long = 0,
+    val cfMaxInflightPerDomainReached: Long = 0,
+    val cfActiveConnectsByDc: Map<Int, Int> = emptyMap(),
+    val cfConnectQueueWaits: Long = 0,
+    val cfConnectQueueTimeouts: Long = 0,
+    val cfMaxConcurrentConnectsByDc: Map<Int, Int> = emptyMap(),
+    val cf429BackoffCount: Long = 0,
+    val cfAllCooldownWaits: Long = 0,
+    val cfAllCooldownWaitMs: Long = 0,
     val cfHealthDomains: List<CfDomainSnapshot> = emptyList(),
 )
 
@@ -355,6 +365,16 @@ class ProxyServer(
             cfTimeoutCount = cfHealthSnapshot.totalTimeouts,
             cfCooldownSkips = cfHealthSnapshot.cooldownSkips,
             cfAllDomainsInCooldownFallbacks = cfHealthSnapshot.allDomainsInCooldownFallbacks,
+            cfInflightSkips = cfHealthSnapshot.inflightSkips,
+            cfInflightWaits = cfHealthSnapshot.inflightWaits,
+            cfMaxInflightPerDomainReached = cfHealthSnapshot.maxInflightPerDomainReached,
+            cfActiveConnectsByDc = cfHealthSnapshot.activeConnectsByDc,
+            cfConnectQueueWaits = cfHealthSnapshot.connectQueueWaits,
+            cfConnectQueueTimeouts = cfHealthSnapshot.connectQueueTimeouts,
+            cfMaxConcurrentConnectsByDc = cfHealthSnapshot.maxConcurrentConnectsByDc,
+            cf429BackoffCount = cfHealthSnapshot.backoffCount,
+            cfAllCooldownWaits = cfHealthSnapshot.allCooldownWaits,
+            cfAllCooldownWaitMs = cfHealthSnapshot.allCooldownWaitMs,
             cfHealthDomains = cfHealthSnapshot.domains,
         )
     }
@@ -679,6 +699,14 @@ class ProxyServer(
                 "CF domain skipped because cooldown DC${parsed.dcId} ${skipped.domain} until=${skipped.cooldownUntilMs}",
             )
         }
+        for (skipped in selectionPlan.skippedInflight) {
+            logger.log("CF domain skipped because in-flight DC${parsed.dcId} domain=${skipped.domain}")
+        }
+        if (selectionPlan.allDomainsInCooldownWaitMs > 0) {
+            logger.log("CF all domains in cooldown; waiting ${selectionPlan.allDomainsInCooldownWaitMs}ms for DC${parsed.dcId}")
+            sleepQuietly(selectionPlan.allDomainsInCooldownWaitMs)
+            return tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)
+        }
         if (selectionPlan.allDomainsInCooldownFallback) {
             logger.log("CF all domains in cooldown; trying least-bad domain for DC${parsed.dcId}")
         }
@@ -688,6 +716,10 @@ class ProxyServer(
             val baseDomain = selection.domain
             attempted = true
             val domain = "kws${parsed.dcId}.$baseDomain"
+            if (!cfDomainHealth.acquireConnect(parsed.dcId, parsed.isMedia, baseDomain)) {
+                logger.log("CF domain skipped because in-flight DC${parsed.dcId} domain=$baseDomain")
+                continue
+            }
             cfDomainHealth.recordSelected(parsed.dcId, parsed.isMedia, baseDomain, domain, selection.reason)
             logger.log(
                 "CF selector DC${parsed.dcId} chose $domain reason=${selection.reason} latency=${selection.latencyMs ?: "unknown"}",
@@ -714,6 +746,9 @@ class ProxyServer(
                     )
                 }
                 null
+            } finally {
+                cfDomainHealth.releaseConnect(parsed.dcId, parsed.isMedia, baseDomain)
+                logger.log("CF domain released in-flight DC${parsed.dcId} domain=$baseDomain")
             } ?: continue
 
             val latencyMs = (System.nanoTime() - startedAtNs) / 1_000_000
@@ -739,6 +774,14 @@ class ProxyServer(
             logger.log("DC${parsed.dcId} all CF proxy fallback attempts failed")
         }
         return false
+    }
+
+    private fun sleepQuietly(delayMs: Long) {
+        try {
+            Thread.sleep(delayMs.coerceAtLeast(0L))
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
     }
 
     private fun runWebSocketRoute(
