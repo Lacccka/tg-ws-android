@@ -217,6 +217,67 @@ class CfProxyDomainsTest {
         assertEquals(1L, snapshot.totalTimeouts)
     }
 
+
+    @Test
+    fun unknownHostWhileNetworkNoneDoesNotCreateCooldown() {
+        val health = CfDomainHealth(listOf("one.example"), nowMs = { 1_000L })
+
+        val decision = health.recordFailure(2, false, "one.example", UnknownHostException("one.example"), "none", routeSettling = false)
+        val snapshot = health.snapshot()
+
+        assertFalse(decision.counted)
+        assertEquals(0, snapshot.domainsInCooldown)
+        assertEquals(1L, snapshot.transientNetworkFailures)
+        assertEquals(1L, snapshot.cooldownsSkippedBecauseNetworkSettling)
+    }
+
+    @Test
+    fun timeoutWhileRouteSettlingDoesNotCreateCooldown() {
+        val health = CfDomainHealth(listOf("one.example"), nowMs = { 1_000L })
+
+        val decision = health.recordFailure(2, false, "one.example", SocketTimeoutException("timeout"), "mobile", routeSettling = true)
+
+        assertFalse(decision.counted)
+        assertEquals(0, health.snapshot().domainsInCooldown)
+        assertEquals(1L, health.snapshot().cooldownsSkippedBecauseNetworkSettling)
+    }
+
+    @Test
+    fun networkGenerationChangedFailureDoesNotPoisonDomainHealth() {
+        val health = CfDomainHealth(listOf("one.example"), nowMs = { 1_000L })
+
+        val decision = health.recordFailure(
+            2,
+            false,
+            "one.example",
+            UnknownHostException("one.example"),
+            "mobile",
+            routeSettling = false,
+            networkGenerationChanged = true,
+        )
+
+        assertFalse(decision.counted)
+        assertEquals(0, health.snapshot().domainsInCooldown)
+        assertEquals(1L, health.snapshot().failuresIgnoredBecauseNetworkChanged)
+    }
+
+    @Test
+    fun clearTransientNetworkCooldownsPreservesHttp429() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        health.recordFailure(2, false, "one.example", UnknownHostException("one.example"), "mobile", routeSettling = false)
+        health.recordFailure(2, false, "two.example", RuntimeException("HTTP 429"), "mobile", routeSettling = false)
+        now = 2_000L
+
+        val cleared = health.clearTransientNetworkCooldowns()
+        val rows = health.snapshot().domains.associateBy { it.domain }
+
+        assertEquals(1, cleared)
+        assertEquals(0L, rows.getValue("one.example").cooldownUntilMs)
+        assertTrue(rows.getValue("two.example").cooldownUntilMs > 0L)
+        assertEquals(1L, health.snapshot().transientCooldownsClearedOnNetworkAvailable)
+    }
+
     @Test
     fun selectorSkipsInflightDomainWhenAlternativeExists() {
         val health = CfDomainHealth(listOf("one.example", "two.example"))

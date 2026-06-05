@@ -229,21 +229,25 @@ class MainUiModelTest {
     }
 
     @Test
-    fun highBadHandshakeRatioAsksToReconnectTelegram() {
+    fun recentBadHandshakeStormAsksToReconnectTelegram() {
         assertEquals(
             "Нужно переподключить Telegram",
             ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "mobile",
-                stats = stats(connectionsTotal = 100, connectionsBad = 50),
+                stats = stats(
+                    connectionsTotal = 100,
+                    connectionsBad = 50,
+                    recentInvalidHandshakeCount = 100,
+                ),
             ),
         )
     }
 
     @Test
-    fun activeSessionsDoNotHideBadHandshakeStorm() {
+    fun activeSessionsHideCumulativeBadHandshakeStorm() {
         assertEquals(
-            "Нужно переподключить Telegram",
+            "Подключён",
             ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "mobile",
@@ -253,8 +257,36 @@ class MainUiModelTest {
     }
 
     @Test
+    fun freshAcceptedHandshakeHidesCumulativeBadHandshakeStorm() {
+        assertEquals(
+            "Подключён",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "mobile",
+                stats = stats(
+                    connectionsTotal = 9749,
+                    connectionsBad = 9611,
+                    lastAcceptedHandshakeTimeMs = System.currentTimeMillis(),
+                ),
+            ),
+        )
+    }
+
+    @Test
+    fun oldCumulativeBadHandshakeStormAloneDoesNotAskForever() {
+        assertEquals(
+            "Нестабильное соединение",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "mobile",
+                stats = stats(connectionsTotal = 9749, connectionsBad = 9611),
+            ),
+        )
+    }
+
+    @Test
     fun telegramStormHelperMentionsReconnectWithoutRawProtocolText() {
-        val helper = TelegramStatusUiText.helper(stats(connectionsTotal = 100, connectionsBad = 50), routeHelper = null).orEmpty()
+        val helper = TelegramStatusUiText.helper(stats(connectionsTotal = 100, connectionsBad = 50, recentInvalidHandshakeCount = 100), routeHelper = null).orEmpty()
 
         assertTrue(helper.contains("Подключить Telegram"))
         assertFalse(helper.contains("Invalid MTProto handshake"))
@@ -421,6 +453,10 @@ class MainUiModelTest {
         directHealthState: String = "healthy",
         directHealthSuccesses: Long = 0,
         lastRouteUsed: String? = null,
+        recentInvalidHandshakeCount: Long = 0,
+        recentAcceptedHandshakeCount: Long = 0,
+        lastAcceptedHandshakeTimeMs: Long = 0,
+        lastSuccessfulRouteTimeMs: Long = 0,
     ): ProxyServerStats = ProxyServerStats(
         connectionsTotal = connectionsTotal,
         connectionsActive = connectionsActive,
@@ -442,5 +478,9 @@ class MainUiModelTest {
         lastRouteUsed = lastRouteUsed,
         cf429Count = cf429Count,
         cfCooldownSkips = cfCooldownSkips,
+        recentInvalidHandshakeCount = recentInvalidHandshakeCount,
+        recentAcceptedHandshakeCount = recentAcceptedHandshakeCount,
+        lastAcceptedHandshakeTimeMs = lastAcceptedHandshakeTimeMs,
+        lastSuccessfulRouteTimeMs = lastSuccessfulRouteTimeMs,
     )
 }

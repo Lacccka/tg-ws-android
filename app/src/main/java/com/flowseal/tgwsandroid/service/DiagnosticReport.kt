@@ -87,8 +87,14 @@ object DiagnosticReportFormatter {
         "unknown"
     } else {
         "total=${stats.connectionsTotal}, active=${stats.connectionsActive}, bad=${stats.connectionsBad}, " +
-            "Invalid MTProto handshake storm=${stats.badHandshakeStorm}, badHandshakeRatio=${String.format(Locale.US, "%.3f", stats.badHandshakeRatio)}, " +
-            "badHandshakeRecommendation=${if (stats.badHandshakeStorm) "Отключите прокси в Telegram, закройте Telegram и подключите заново." else "none"}, " +
+            "Invalid MTProto handshake stormRecent=${stats.badHandshakeStormRecent}, stormCumulative=${stats.badHandshakeStormCumulative}, " +
+            "badHandshakeRatio=${String.format(Locale.US, "%.3f", stats.badHandshakeRatio)}, " +
+            "recentBadHandshakeRatio=${String.format(Locale.US, "%.3f", stats.recentBadHandshakeRatio)}, " +
+            "recentInvalidHandshakeCount=${stats.recentInvalidHandshakeCount}, recentAcceptedHandshakeCount=${stats.recentAcceptedHandshakeCount}, " +
+            "lastInvalidHandshakeTimeMs=${stats.lastInvalidHandshakeTimeMs}, lastAcceptedHandshakeTimeMs=${stats.lastAcceptedHandshakeTimeMs}, " +
+            "lastSuccessfulRouteTimeMs=${stats.lastSuccessfulRouteTimeMs}, " +
+            "recentHandshakeDiagnostic=${if (stats.badHandshakeStormRecent) "Recent invalid Telegram handshakes detected" else "none"}, " +
+            "badHandshakeRecommendation=${if (stats.badHandshakeStormRecent) "Отключите прокси в Telegram, закройте Telegram и подключите заново." else "none"}, " +
             "wsErrors=${stats.wsConnectErrors}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
             "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +
@@ -128,7 +134,12 @@ object DiagnosticReportFormatter {
             "cfAllCooldownWaitMs=${stats.cfAllCooldownWaitMs}, " +
             "cfAllCooldownSingleAttempts=${stats.cfAllCooldownSingleAttempts}, " +
             "cfAllCooldownSingleAttemptFailures=${stats.cfAllCooldownSingleAttemptFailures}, " +
-            "cfAllCooldownStoppedCycles=${stats.cfAllCooldownStoppedCycles}"
+            "cfAllCooldownStoppedCycles=${stats.cfAllCooldownStoppedCycles}, " +
+            "cfTransientNetworkFailures=${stats.cfTransientNetworkFailures}, " +
+            "cfFailuresIgnoredBecauseNetworkChanged=${stats.cfFailuresIgnoredBecauseNetworkChanged}, " +
+            "cfCooldownsSkippedBecauseNetworkSettling=${stats.cfCooldownsSkippedBecauseNetworkSettling}, " +
+            "cfTransientCooldownsClearedOnNetworkAvailable=${stats.cfTransientCooldownsClearedOnNetworkAvailable}, " +
+            "networkGeneration=${stats.networkGeneration}"
     }
 
     private fun StringBuilder.appendCfHealth(stats: ProxyServerStats?) {

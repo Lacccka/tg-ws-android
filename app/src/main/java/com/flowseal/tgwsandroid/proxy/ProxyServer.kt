@@ -8,6 +8,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import java.util.Collections
+import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -142,20 +143,57 @@ data class ProxyServerStats(
     val cfAllCooldownSingleAttempts: Long = 0,
     val cfAllCooldownSingleAttemptFailures: Long = 0,
     val cfAllCooldownStoppedCycles: Long = 0,
+    val cfTransientNetworkFailures: Long = 0,
+    val cfFailuresIgnoredBecauseNetworkChanged: Long = 0,
+    val cfCooldownsSkippedBecauseNetworkSettling: Long = 0,
+    val cfTransientCooldownsClearedOnNetworkAvailable: Long = 0,
     val cfHealthDomains: List<CfDomainSnapshot> = emptyList(),
+    val recentInvalidHandshakeCount: Long = 0,
+    val recentAcceptedHandshakeCount: Long = 0,
+    val lastInvalidHandshakeTimeMs: Long = 0,
+    val lastAcceptedHandshakeTimeMs: Long = 0,
+    val lastSuccessfulRouteTimeMs: Long = 0,
+    val networkGeneration: Long = 0,
 ) {
     val badHandshakeRatio: Double
         get() = if (connectionsTotal > 0L) connectionsBad.toDouble() / connectionsTotal.toDouble() else 0.0
 
-    val badHandshakeStorm: Boolean
+    val badHandshakeStormCumulative: Boolean
         get() = connectionsTotal >= BAD_HANDSHAKE_STORM_MIN_TOTAL &&
             connectionsBad >= BAD_HANDSHAKE_STORM_MIN_BAD &&
             badHandshakeRatio >= BAD_HANDSHAKE_STORM_MIN_RATIO
+
+    val recentBadHandshakeRatio: Double
+        get() {
+            val total = recentInvalidHandshakeCount + recentAcceptedHandshakeCount
+            return if (total > 0L) recentInvalidHandshakeCount.toDouble() / total.toDouble() else 0.0
+        }
+
+    val badHandshakeStormRecent: Boolean
+        get() {
+            val now = System.currentTimeMillis()
+            val freshAccepted = lastAcceptedHandshakeTimeMs > 0L && now - lastAcceptedHandshakeTimeMs <= BAD_HANDSHAKE_FRESH_SUCCESS_MS
+            val freshRoute = lastSuccessfulRouteTimeMs > 0L && now - lastSuccessfulRouteTimeMs <= BAD_HANDSHAKE_FRESH_SUCCESS_MS
+            val activeRoute = connectionsActive > 0 && !lastRouteUsed.isNullOrBlank() && !lastRouteUsed.equals("none", ignoreCase = true)
+            if (freshAccepted || freshRoute || activeRoute) return false
+            return recentInvalidHandshakeCount >= BAD_HANDSHAKE_RECENT_MIN_INVALID &&
+                recentInvalidHandshakeCount >= (recentAcceptedHandshakeCount * BAD_HANDSHAKE_RECENT_INVALID_TO_ACCEPTED_MULTIPLIER) + BAD_HANDSHAKE_RECENT_INVALID_MARGIN &&
+                recentBadHandshakeRatio >= BAD_HANDSHAKE_STORM_MIN_RATIO
+        }
+
+    /** User-facing storm state is intentionally recent/windowed, not cumulative. */
+    val badHandshakeStorm: Boolean
+        get() = badHandshakeStormRecent
 
     companion object {
         const val BAD_HANDSHAKE_STORM_MIN_TOTAL: Long = 100
         const val BAD_HANDSHAKE_STORM_MIN_BAD: Long = 50
         const val BAD_HANDSHAKE_STORM_MIN_RATIO: Double = 0.5
+        const val BAD_HANDSHAKE_RECENT_WINDOW_MS: Long = 15_000
+        const val BAD_HANDSHAKE_RECENT_MIN_INVALID: Long = 100
+        const val BAD_HANDSHAKE_RECENT_INVALID_TO_ACCEPTED_MULTIPLIER: Long = 3
+        const val BAD_HANDSHAKE_RECENT_INVALID_MARGIN: Long = 50
+        const val BAD_HANDSHAKE_FRESH_SUCCESS_MS: Long = 15_000
     }
 }
 
@@ -268,6 +306,11 @@ class ProxyServer(
     private val connectionsTotal = AtomicLong(0)
     private val connectionsActive = AtomicInteger(0)
     private val connectionsBad = AtomicLong(0)
+    private val recentInvalidHandshakeTimes = ConcurrentLinkedDeque<Long>()
+    private val recentAcceptedHandshakeTimes = ConcurrentLinkedDeque<Long>()
+    private val lastInvalidHandshakeTimeMs = AtomicLong(0)
+    private val lastAcceptedHandshakeTimeMs = AtomicLong(0)
+    private val lastSuccessfulRouteTimeMs = AtomicLong(0)
     private val wsConnectErrors = AtomicLong(0)
     private val cfProxyConnections = AtomicLong(0)
     private val cfProxyErrors = AtomicLong(0)
@@ -351,6 +394,7 @@ class ProxyServer(
     }
 
     fun stats(): ProxyServerStats {
+        pruneRecentHandshakeWindows(System.currentTimeMillis())
         val routeSnapshot = routeState.snapshot()
         val directHealthSnapshot = directRouteHealth.snapshot()
         val cfHealthSnapshot = cfDomainHealth.snapshot()
@@ -429,7 +473,17 @@ class ProxyServer(
             cfAllCooldownSingleAttempts = cfHealthSnapshot.allCooldownSingleAttempts,
             cfAllCooldownSingleAttemptFailures = cfHealthSnapshot.allCooldownSingleAttemptFailures,
             cfAllCooldownStoppedCycles = cfHealthSnapshot.allCooldownStoppedCycles,
+            cfTransientNetworkFailures = cfHealthSnapshot.transientNetworkFailures,
+            cfFailuresIgnoredBecauseNetworkChanged = cfHealthSnapshot.failuresIgnoredBecauseNetworkChanged,
+            cfCooldownsSkippedBecauseNetworkSettling = cfHealthSnapshot.cooldownsSkippedBecauseNetworkSettling,
+            cfTransientCooldownsClearedOnNetworkAvailable = cfHealthSnapshot.transientCooldownsClearedOnNetworkAvailable,
             cfHealthDomains = cfHealthSnapshot.domains,
+            recentInvalidHandshakeCount = recentInvalidHandshakeTimes.size.toLong(),
+            recentAcceptedHandshakeCount = recentAcceptedHandshakeTimes.size.toLong(),
+            lastInvalidHandshakeTimeMs = lastInvalidHandshakeTimeMs.get(),
+            lastAcceptedHandshakeTimeMs = lastAcceptedHandshakeTimeMs.get(),
+            lastSuccessfulRouteTimeMs = lastSuccessfulRouteTimeMs.get(),
+            networkGeneration = routeGeneration.get(),
         )
     }
 
@@ -465,6 +519,9 @@ class ProxyServer(
             directRouteHealth.resetForSafeRoute()
             webSocketPool.disableAndClear()
             if (immediate) logger.log("network lost: applying safe route immediately")
+        } else if (previousNetworkStatus.equals("none", ignoreCase = true)) {
+            val cleared = cfDomainHealth.clearTransientNetworkCooldowns()
+            if (cleared > 0) logger.log("CF transient DNS cooldowns cleared after network available: $cleared")
         }
         if (immediate) routeChangesImmediate.incrementAndGet()
         val result = applyEffectiveRouteMode(
@@ -561,6 +618,7 @@ class ProxyServer(
             return
         }
 
+        recordAcceptedHandshake()
         val targetHost = config.dcRedirects[parsed.dcId]
 
         val protoInt = protoIntForProtoTag(parsed.protoTag)
@@ -759,6 +817,12 @@ class ProxyServer(
         splitter: MsgSplitter,
         cycleState: CfDomainFallbackCycleState,
     ): Boolean {
+        if (currentNetworkStatus.equals("none", ignoreCase = true)) {
+            cfDomainHealth.recordTransientNetworkFailure()
+            logger.log("DC${parsed.dcId} CF proxy skipped because network=none")
+            return false
+        }
+        val attemptGeneration = routeGeneration.get()
         val selectionPlan = cfDomainHealth.selectDomains(parsed.dcId, parsed.isMedia, cycleState)
         for (skipped in selectionPlan.skippedCooldown) {
             logger.log(
@@ -811,6 +875,13 @@ class ProxyServer(
                 "CF selector DC${parsed.dcId} chose $domain reason=${selection.reason} latency=${selection.latencyMs ?: "unknown"}",
             )
             logger.log("DC${parsed.dcId} -> trying CF proxy wss://$domain$DEFAULT_WS_PATH")
+            if (routeGeneration.get() != attemptGeneration || currentNetworkStatus.equals("none", ignoreCase = true)) {
+                cfDomainHealth.recordFailureIgnoredBecauseNetworkChanged()
+                logger.log("DC${parsed.dcId} CF proxy attempt skipped for $baseDomain because route/network generation changed")
+                cfDomainHealth.releaseConnect(parsed.dcId, parsed.isMedia, baseDomain)
+                logger.log("CF domain released in-flight DC${parsed.dcId} domain=$baseDomain")
+                continue@cfSelectionLoop
+            }
             val startedAtNs = System.nanoTime()
             val webSocket = try {
                 webSocketConnector.connect(domain, domain, DEFAULT_WS_PATH, RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)
@@ -824,6 +895,7 @@ class ProxyServer(
                     error,
                     currentNetworkStatus,
                     directRouteHealth.isSettling(),
+                    routeGeneration.get() != attemptGeneration,
                 )
                 logger.log("DC${parsed.dcId} CF proxy failed via $baseDomain: $detail")
                 if (decision.counted && decision.cooldownUntilMs > 0) {
@@ -850,6 +922,7 @@ class ProxyServer(
                 cfProxyConnections.incrementAndGet()
                 lastCfDomain = domain
                 cfDomainHealth.recordSuccess(parsed.dcId, parsed.isMedia, baseDomain, latencyMs)
+                lastSuccessfulRouteTimeMs.set(System.currentTimeMillis())
                 logger.log("CF domain success DC${parsed.dcId} $baseDomain latencyMs=$latencyMs")
                 logger.log("DC${parsed.dcId} CF proxy connected via $domain")
                 cfProxyBalancer.updateDomainForDc(parsed.dcId, baseDomain)
@@ -895,6 +968,7 @@ class ProxyServer(
         try {
             lastRouteUsed = route.type
             route.stream.send(relayInit)
+            lastSuccessfulRouteTimeMs.set(System.currentTimeMillis())
             bridgeStarted = true
             bridgeRunner.run(client, route.stream, cryptoContext, splitter, counters)
         } catch (error: Throwable) {
@@ -1002,10 +1076,29 @@ class ProxyServer(
     private fun markBad(message: String) {
         connectionsBad.incrementAndGet()
         if (message.startsWith(INVALID_MTPROTO_HANDSHAKE_PREFIX)) {
+            recordInvalidHandshake()
             invalidHandshakeLogLimiter.log(message, logger)
         } else {
             logger.log(message)
         }
+    }
+
+    private fun recordInvalidHandshake(now: Long = System.currentTimeMillis()) {
+        lastInvalidHandshakeTimeMs.set(now)
+        recentInvalidHandshakeTimes.addLast(now)
+        pruneRecentHandshakeWindows(now)
+    }
+
+    private fun recordAcceptedHandshake(now: Long = System.currentTimeMillis()) {
+        lastAcceptedHandshakeTimeMs.set(now)
+        recentAcceptedHandshakeTimes.addLast(now)
+        pruneRecentHandshakeWindows(now)
+    }
+
+    private fun pruneRecentHandshakeWindows(now: Long) {
+        val cutoff = now - ProxyServerStats.BAD_HANDSHAKE_RECENT_WINDOW_MS
+        while (recentInvalidHandshakeTimes.peekFirst()?.let { it < cutoff } == true) recentInvalidHandshakeTimes.pollFirst()
+        while (recentAcceptedHandshakeTimes.peekFirst()?.let { it < cutoff } == true) recentAcceptedHandshakeTimes.pollFirst()
     }
 
     private fun effectiveRouteMode(): NetworkRouteMode = routeState.effectiveRouteMode

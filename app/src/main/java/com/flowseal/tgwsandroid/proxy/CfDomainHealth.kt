@@ -33,6 +33,10 @@ class CfDomainHealth(
     private var allCooldownSingleAttempts: Long = 0
     private var allCooldownSingleAttemptFailures: Long = 0
     private var allCooldownStoppedCycles: Long = 0
+    private var transientNetworkFailures: Long = 0
+    private var failuresIgnoredBecauseNetworkChanged: Long = 0
+    private var cooldownsSkippedBecauseNetworkSettling: Long = 0
+    private var transientCooldownsClearedOnNetworkAvailable: Long = 0
     private val activeConnectsByDc = mutableMapOf<Int, Int>()
     private val maxConcurrentConnectsByDc = mutableMapOf<Int, Int>()
     private val inFlightByDomain = mutableMapOf<CfDomainKey, Int>()
@@ -175,10 +179,17 @@ class CfDomainHealth(
         error: Throwable,
         networkStatus: String,
         routeSettling: Boolean,
+        networkGenerationChanged: Boolean = false,
     ): CfDomainFailureDecision {
         val normalized = normalizeKnownDomain(baseDomain) ?: return CfDomainFailureDecision(CfDomainErrorKind.OTHER, false, 0)
         val kind = classifyError(error)
+        if (networkGenerationChanged) {
+            failuresIgnoredBecauseNetworkChanged += 1
+            return CfDomainFailureDecision(kind, counted = false, cooldownUntilMs = 0)
+        }
         if (shouldIgnoreTransientNetworkError(kind, networkStatus, routeSettling)) {
+            transientNetworkFailures += 1
+            if (routeSettling || networkStatus.equals("none", ignoreCase = true)) cooldownsSkippedBecauseNetworkSettling += 1
             return CfDomainFailureDecision(kind, counted = false, cooldownUntilMs = 0)
         }
 
@@ -299,6 +310,32 @@ class CfDomainHealth(
     }
 
     @Synchronized
+    fun recordTransientNetworkFailure() {
+        transientNetworkFailures += 1
+    }
+
+    @Synchronized
+    fun recordFailureIgnoredBecauseNetworkChanged() {
+        failuresIgnoredBecauseNetworkChanged += 1
+    }
+
+    @Synchronized
+    fun clearTransientNetworkCooldowns(): Int {
+        val now = nowMs()
+        var cleared = 0
+        for (state in states.values) {
+            if (state.cooldownUntilMs > now && state.lastErrorKind in TRANSIENT_NETWORK_ERROR_VALUES) {
+                state.cooldownUntilMs = 0
+                state.lastErrorKind = null
+                state.consecutiveFailures = 0
+                cleared += 1
+            }
+        }
+        if (cleared > 0) transientCooldownsClearedOnNetworkAvailable += cleared.toLong()
+        return cleared
+    }
+
+    @Synchronized
     fun recordAllCooldownSingleAttemptFailure() {
         allCooldownSingleAttemptFailures += 1
         allCooldownStoppedCycles += 1
@@ -341,6 +378,10 @@ class CfDomainHealth(
             allCooldownSingleAttempts = allCooldownSingleAttempts,
             allCooldownSingleAttemptFailures = allCooldownSingleAttemptFailures,
             allCooldownStoppedCycles = allCooldownStoppedCycles,
+            transientNetworkFailures = transientNetworkFailures,
+            failuresIgnoredBecauseNetworkChanged = failuresIgnoredBecauseNetworkChanged,
+            cooldownsSkippedBecauseNetworkSettling = cooldownsSkippedBecauseNetworkSettling,
+            transientCooldownsClearedOnNetworkAvailable = transientCooldownsClearedOnNetworkAvailable,
             domains = rows.sortedWith(compareBy<CfDomainSnapshot> { it.dcId }.thenBy { it.domain }),
         )
     }
@@ -415,7 +456,7 @@ class CfDomainHealth(
         }
 
         fun shouldIgnoreTransientNetworkError(kind: CfDomainErrorKind, networkStatus: String, routeSettling: Boolean): Boolean =
-            (kind == CfDomainErrorKind.UNKNOWN_HOST || kind == CfDomainErrorKind.ENETUNREACH) &&
+            (kind == CfDomainErrorKind.UNKNOWN_HOST || kind == CfDomainErrorKind.ENETUNREACH || kind == CfDomainErrorKind.TIMEOUT) &&
                 (routeSettling || networkStatus.equals("none", ignoreCase = true))
 
         fun cooldownMsFor(kind: CfDomainErrorKind, backoffLevel: Long = 0L): Long = when (kind) {
@@ -441,6 +482,11 @@ class CfDomainHealth(
         const val CONNECT_QUEUE_WAIT_MS: Long = 250L
         const val ALL_COOLDOWN_WAIT_THRESHOLD_MS: Long = 500L
         private const val ALL_COOLDOWN_WAIT_JITTER_MS: Long = 25L
+        private val TRANSIENT_NETWORK_ERROR_VALUES = setOf(
+            CfDomainErrorKind.UNKNOWN_HOST.configValue,
+            CfDomainErrorKind.ENETUNREACH.configValue,
+            CfDomainErrorKind.TIMEOUT.configValue,
+        )
         private const val HTTP_429_JITTER_RATIO: Double = 0.2
     }
 }
@@ -514,6 +560,10 @@ data class CfDomainHealthSnapshot(
     val allCooldownSingleAttempts: Long,
     val allCooldownSingleAttemptFailures: Long,
     val allCooldownStoppedCycles: Long,
+    val transientNetworkFailures: Long,
+    val failuresIgnoredBecauseNetworkChanged: Long,
+    val cooldownsSkippedBecauseNetworkSettling: Long,
+    val transientCooldownsClearedOnNetworkAvailable: Long,
     val domains: List<CfDomainSnapshot>,
 )
 

@@ -112,24 +112,32 @@ object ConnectionStatusMapper {
     ): String {
         if (!running && !checking) return "Прокси остановлен"
         if (networkStatus.equals("none", ignoreCase = true)) return "Нет сети"
-        if (checking) return "Проверяется"
         if (stats == null) return "Проверяется"
-        if (stats.badHandshakeStorm) return TelegramStatusUiText.RECONNECT_STATUS
 
         val activeSessions = stats.connectionsActive > 0
+        val hasRouteUsed = !stats.lastRouteUsed.isNullOrBlank() &&
+            !stats.lastRouteUsed.equals("none", ignoreCase = true)
+        val now = System.currentTimeMillis()
+        val freshAcceptedHandshake = stats.lastAcceptedHandshakeTimeMs > 0L &&
+            now - stats.lastAcceptedHandshakeTimeMs <= ProxyServerStats.BAD_HANDSHAKE_FRESH_SUCCESS_MS
+        val freshSuccessfulRoute = stats.lastSuccessfulRouteTimeMs > 0L &&
+            now - stats.lastSuccessfulRouteTimeMs <= ProxyServerStats.BAD_HANDSHAKE_FRESH_SUCCESS_MS
         val hasSuccessfulConnection = stats.connectionsTotal > stats.connectionsBad ||
             stats.cfProxyConnections > 0 ||
             stats.directHealthSuccesses > 0
-        val hasRouteUsed = !stats.lastRouteUsed.isNullOrBlank() &&
-            !stats.lastRouteUsed.equals("none", ignoreCase = true)
         val hasCurrentSessionErrors = stats.wsConnectErrors + stats.sessionTimeouts + stats.sessionUnexpectedErrors > 0
         val allConnectionsFailed = stats.connectionsTotal > 0 && stats.connectionsBad >= stats.connectionsTotal
         val hasFailuresWithoutSuccess = stats.connectionsTotal > 0 &&
             !hasSuccessfulConnection &&
+            !freshAcceptedHandshake &&
+            !freshSuccessfulRoute &&
             (stats.connectionsBad > 0 || hasCurrentSessionErrors || stats.directHealthState.equals("unhealthy", ignoreCase = true))
 
         return when {
-            activeSessions -> "Подключён"
+            activeSessions && hasRouteUsed -> "Подключён"
+            freshAcceptedHandshake || freshSuccessfulRoute -> "Подключён"
+            stats.badHandshakeStormRecent -> TelegramStatusUiText.RECONNECT_STATUS
+            checking || stats.routeSettlingUntil > now -> "Проверяется"
             hasSuccessfulConnection -> "Подключён"
             hasRouteUsed && !hasCurrentSessionErrors && !allConnectionsFailed -> "Подключён"
             hasFailuresWithoutSuccess -> "Нестабильное соединение"

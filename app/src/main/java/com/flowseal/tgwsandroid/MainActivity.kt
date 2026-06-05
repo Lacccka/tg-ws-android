@@ -355,7 +355,7 @@ class MainActivity : Activity() {
             networkText.text = userNetworkLabel(ProxyForegroundService.State.networkStatus)
             routeText.text = routeLabel
             val stats = ProxyForegroundService.State.stats()
-            val badHandshakeStorm = stats?.badHandshakeStorm == true
+            val badHandshakeStorm = stats?.badHandshakeStormRecent == true
             qualityText.text = ConnectionStatusMapper.status(
                 running = running,
                 networkStatus = ProxyForegroundService.State.networkStatus,
