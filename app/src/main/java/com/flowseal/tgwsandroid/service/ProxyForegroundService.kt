@@ -17,6 +17,7 @@ import android.os.PowerManager
 import com.flowseal.tgwsandroid.MainActivity
 import com.flowseal.tgwsandroid.proxy.ProxyLogger
 import com.flowseal.tgwsandroid.proxy.ProxyServer
+import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import java.io.File
 import java.time.LocalDateTime
@@ -33,6 +34,9 @@ class ProxyForegroundService : Service() {
     }
     private val watchdogExecutor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "ProxyForegroundService-watchdog").also { it.isDaemon = true }
+    }
+    private val routeDebouncer = NetworkRouteDebouncer(watchdogExecutor) { status ->
+        executor.execute { applyRouteForNetwork(status) }
     }
     private var proxyServer: ProxyServer? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -94,6 +98,7 @@ class ProxyForegroundService : Service() {
         State.addLog("service destroyed", LogSeverity.INFO, "service")
         stopProxyBlocking("service_destroyed")
         unregisterNetworkCallback()
+        routeDebouncer.cancel()
         stopWatchdog()
         releaseWakeLock()
         executor.shutdownNow()
@@ -284,27 +289,24 @@ class ProxyForegroundService : Service() {
         val connectivityManager = getSystemService(ConnectivityManager::class.java)
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                val status = networkStatus(connectivityManager.getNetworkCapabilities(network))
-                State.setNetworkStatus(status)
-                State.addLog("network available: $status", LogSeverity.INFO, "network")
+                handleNetworkChanged("network available", networkStatus(connectivityManager.getNetworkCapabilities(network)))
             }
 
             override fun onLost(network: Network) {
-                State.setNetworkStatus("none")
-                State.addLog("network lost", LogSeverity.WARN, "network")
+                handleNetworkChanged("network lost", "none", LogSeverity.WARN)
             }
 
             override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                val status = networkStatus(networkCapabilities)
-                State.setNetworkStatus(status)
-                State.addLog("network capabilities changed: $status", LogSeverity.INFO, "network")
+                handleNetworkChanged("network capabilities changed", networkStatus(networkCapabilities))
             }
         }
         try {
             connectivityManager.registerDefaultNetworkCallback(callback)
             networkCallback = callback
-            State.setNetworkStatus(networkStatus(connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork)))
+            val initialStatus = networkStatus(connectivityManager.getNetworkCapabilities(connectivityManager.activeNetwork))
+            State.setNetworkStatus(initialStatus)
             State.addLog("network callback registered", LogSeverity.INFO, "network")
+            State.addLog("network changed: unknown -> $initialStatus", LogSeverity.INFO, "network")
         } catch (error: Throwable) {
             State.setNetworkStatus("unknown")
             State.addLog("network callback register failed: ${error.message ?: error::class.java.simpleName}", LogSeverity.WARN, "network")
@@ -312,6 +314,7 @@ class ProxyForegroundService : Service() {
     }
 
     private fun unregisterNetworkCallback() {
+        routeDebouncer.cancel()
         val callback = networkCallback ?: return
         try {
             getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(callback)
@@ -321,6 +324,44 @@ class ProxyForegroundService : Service() {
         } finally {
             networkCallback = null
             if (!State.running) State.setNetworkStatus("unknown")
+        }
+    }
+
+    private fun handleNetworkChanged(
+        event: String,
+        status: String,
+        severity: LogSeverity = LogSeverity.INFO,
+    ) {
+        val normalized = status.ifBlank { "unknown" }
+        val previous = State.networkStatus
+        State.setNetworkStatus(normalized)
+        State.addLog("$event: $normalized", severity, "network")
+        State.addLog("network changed: $previous -> $normalized", severity, "network")
+        routeDebouncer.submit(normalized)
+    }
+
+    private fun applyRouteForNetwork(networkStatus: String) {
+        val server = synchronized(lock) { proxyServer }
+        if (server?.isRunning != true) {
+            State.addLog("route unchanged: proxy not running for network=$networkStatus", LogSeverity.INFO, "network")
+            return
+        }
+        val before = server.routeSnapshot()
+        val result = server.applyNetworkRoute(networkStatus)
+        State.updateStats(server.stats())
+        if (result.changed) {
+            State.addLog(
+                "route changed: ${result.previous.configValue} -> ${result.current.configValue} because network=$networkStatus",
+                LogSeverity.INFO,
+                "network",
+            )
+        } else {
+            val override = if (before.configuredRouteMode != NetworkRouteMode.AUTO) {
+                "; manual mode overrides network auto"
+            } else {
+                ""
+            }
+            State.addLog("route unchanged: ${result.current.configValue} for network=$networkStatus$override", LogSeverity.INFO, "network")
         }
     }
 
@@ -519,7 +560,9 @@ class ProxyForegroundService : Service() {
             val secret = context?.let { ProxyRuntimeConfig.partialTelegramSecret(it) } ?: "unknown"
             val dcSummary = context?.let { ProxyRuntimeConfig.dcSummary(it) } ?: "unknown"
             val routeMode = context?.let { ProxyRuntimeConfig.appConfig(it).routeMode.displayName } ?: "unknown"
-            val effectiveRouteMode = statsSnapshot?.effectiveRouteMode ?: context?.let { ProxyRuntimeConfig.proxyServerConfig(it, networkStatus).effectiveRouteMode.displayName } ?: "unknown"
+            val fallbackEffectiveRouteMode = context?.let { ProxyRuntimeConfig.proxyServerConfig(it, networkStatus).effectiveRouteMode.displayName } ?: "unknown"
+            val stats = statsSnapshot
+            val effectiveRouteMode = stats?.effectiveRouteMode ?: fallbackEffectiveRouteMode
             return DiagnosticReportFormatter.format(
                 DiagnosticReportFormatter.snapshot(
                     status = lastStatus,
@@ -530,6 +573,10 @@ class ProxyForegroundService : Service() {
                     network = networkStatus,
                     routeMode = routeMode,
                     effectiveRouteMode = effectiveRouteMode,
+                    previousEffectiveRouteMode = stats?.previousEffectiveRouteMode,
+                    lastRouteChangeReason = stats?.lastRouteChangeReason ?: "unknown",
+                    lastRouteChangeTimeMs = stats?.lastRouteChangeTimeMs,
+                    networkAtLastRouteChange = stats?.networkAtLastRouteChange ?: "unknown",
                     stats = statsSnapshot,
                     logs = logStore.snapshot(),
                 ),

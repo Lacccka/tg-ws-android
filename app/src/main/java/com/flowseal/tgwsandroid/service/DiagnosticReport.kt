@@ -16,6 +16,10 @@ data class DiagnosticSnapshot(
     val network: String,
     val routeMode: String = "unknown",
     val effectiveRouteMode: String = "unknown",
+    val previousEffectiveRouteMode: String? = null,
+    val lastRouteChangeReason: String = "unknown",
+    val lastRouteChangeTimeMs: Long? = null,
+    val networkAtLastRouteChange: String = "unknown",
     val stats: ProxyServerStats?,
     val logs: List<RuntimeLogEntry>,
 )
@@ -32,6 +36,10 @@ object DiagnosticReportFormatter {
         network: String = "unknown",
         routeMode: String = "unknown",
         effectiveRouteMode: String = "unknown",
+        previousEffectiveRouteMode: String? = null,
+        lastRouteChangeReason: String = "unknown",
+        lastRouteChangeTimeMs: Long? = null,
+        networkAtLastRouteChange: String = "unknown",
         stats: ProxyServerStats? = null,
         logs: List<RuntimeLogEntry>,
         clock: Clock = Clock.systemDefaultZone(),
@@ -45,6 +53,10 @@ object DiagnosticReportFormatter {
         network = network.ifBlank { "unknown" },
         routeMode = routeMode.ifBlank { "unknown" },
         effectiveRouteMode = effectiveRouteMode.ifBlank { "unknown" },
+        previousEffectiveRouteMode = previousEffectiveRouteMode,
+        lastRouteChangeReason = lastRouteChangeReason.ifBlank { "unknown" },
+        lastRouteChangeTimeMs = lastRouteChangeTimeMs,
+        networkAtLastRouteChange = networkAtLastRouteChange.ifBlank { "unknown" },
         stats = stats,
         logs = logs,
     )
@@ -58,8 +70,12 @@ object DiagnosticReportFormatter {
         appendLine("DCs: ${snapshot.dcSummary}")
         appendLine("Battery optimization: ${snapshot.batteryOptimization}")
         appendLine("Network: ${snapshot.network}")
-        appendLine("Route mode: ${snapshot.routeMode}")
+        appendLine("Configured route mode: ${snapshot.routeMode}")
         appendLine("Effective route mode: ${snapshot.effectiveRouteMode}")
+        appendLine("Previous effective route mode: ${snapshot.previousEffectiveRouteMode ?: "none"}")
+        appendLine("Last route change reason: ${snapshot.lastRouteChangeReason}")
+        appendLine("Last route change time: ${snapshot.lastRouteChangeTimeMs?.toString() ?: "unknown"}")
+        appendLine("Network at last route change: ${snapshot.networkAtLastRouteChange}")
         appendLine("Stats: ${formatStats(snapshot.stats)}")
         appendLine("---")
         snapshot.logs.forEach { appendLine(it.formatLine()) }
@@ -73,8 +89,10 @@ object DiagnosticReportFormatter {
             "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
             "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +
             "sessionClientClosed=${stats.sessionClientClosed}, sessionSocketClosed=${stats.sessionSocketClosed}, " +
-            "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, routeMode=${stats.routeMode}, " +
-            "effectiveRouteMode=${stats.effectiveRouteMode}, lastRouteUsed=${stats.lastRouteUsed ?: "none"}, " +
+            "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, configuredRouteMode=${stats.routeMode}, " +
+            "effectiveRouteMode=${stats.effectiveRouteMode}, previousEffectiveRouteMode=${stats.previousEffectiveRouteMode ?: "none"}, " +
+            "lastRouteChangeReason=${stats.lastRouteChangeReason}, lastRouteChangeTimeMs=${stats.lastRouteChangeTimeMs ?: "unknown"}, " +
+            "networkAtLastRouteChange=${stats.networkAtLastRouteChange}, lastRouteUsed=${stats.lastRouteUsed ?: "none"}, " +
             "directTimeouts=${stats.directTimeouts}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, poolHits=${stats.poolHits}, " +
             "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}"

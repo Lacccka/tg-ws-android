@@ -6,6 +6,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Android-independent idle direct WebSocket pool keyed by Telegram DC and media route.
@@ -33,6 +34,7 @@ class WebSocketPool(
     private val onRefillError: () -> Unit = {},
 ) {
     private val lock = Any()
+    private val enabled = AtomicBoolean(true)
     private val entries = mutableMapOf<Key, ArrayDeque<Entry>>()
     private val pendingRefills = mutableMapOf<Key, Int>()
 
@@ -48,7 +50,7 @@ class WebSocketPool(
         targetHost: String,
         domains: List<String>,
     ): WebSocketBinaryStream? {
-        if (poolSize <= 0) return null
+        if (poolSize <= 0 || !enabled.get()) return null
         val key = Key(dc, isMedia)
         var pooled: WebSocketBinaryStream? = null
         val expired = mutableListOf<WebSocketBinaryStream>()
@@ -75,6 +77,7 @@ class WebSocketPool(
         wsDomainsProvider: (dc: Int, isMedia: Boolean) -> List<String>,
     ) {
         if (poolSize <= 0 || dcRedirects.isEmpty()) return
+        enabled.set(true)
         logger.log("WS pool warmup started for ${dcRedirects.size} DC(s)")
         for ((dc, targetHost) in dcRedirects) {
             scheduleRefill(dc, isMedia = false, targetHost, wsDomainsProvider(dc, false))
@@ -82,14 +85,25 @@ class WebSocketPool(
         }
     }
 
+    /** Disables future pool use and closes all currently idle sockets without shutting down the refill executor. */
+    fun disableAndClear() {
+        enabled.set(false)
+        clearIdle()
+    }
+
+    /** Enables future pool use without starting warmup by itself. */
+    fun enable() {
+        enabled.set(true)
+    }
+
     /** Closes all idle sockets and forgets pending bookkeeping. */
-    fun reset() = closeAll()
+    fun reset() = clearIdle()
 
     /** Alias for [closeAll] for callers that treat the pool as a closeable lifecycle object. */
     fun close() = closeAll()
 
-    /** Closes all currently idle sockets. In-flight refills are best-effort cancelled by shutdown on owned executors. */
-    fun closeAll() {
+    /** Closes all currently idle sockets and forgets pending bookkeeping without shutting down the executor. */
+    fun clearIdle() {
         val idle = mutableListOf<WebSocketBinaryStream>()
         synchronized(lock) {
             for (queue in entries.values) {
@@ -99,6 +113,12 @@ class WebSocketPool(
             pendingRefills.clear()
         }
         idle.forEach { closeBestEffort(it) }
+    }
+
+    /** Closes all currently idle sockets. In-flight refills are best-effort cancelled by shutdown on owned executors. */
+    fun closeAll() {
+        enabled.set(false)
+        clearIdle()
         if (ownsExecutor) {
             executor.shutdownNow()
             try {
@@ -114,13 +134,15 @@ class WebSocketPool(
         isMedia: Boolean,
     ): Int = synchronized(lock) { entries[Key(dc, isMedia)]?.size ?: 0 }
 
+    fun isEnabled(): Boolean = enabled.get()
+
     private fun scheduleRefill(
         dc: Int,
         isMedia: Boolean,
         targetHost: String,
         domains: List<String>,
     ) {
-        if (poolSize <= 0 || domains.isEmpty()) return
+        if (poolSize <= 0 || domains.isEmpty() || !enabled.get()) return
         val key = Key(dc, isMedia)
         val expired = mutableListOf<WebSocketBinaryStream>()
         val reservations = synchronized(lock) {
@@ -165,7 +187,7 @@ class WebSocketPool(
             synchronized(lock) {
                 val pending = (pendingRefills[key] ?: 1) - 1
                 if (pending > 0) pendingRefills[key] = pending else pendingRefills.remove(key)
-                if (connected != null) {
+                if (connected != null && enabled.get()) {
                     val queue = entries.getOrPut(key) { ArrayDeque() }
                     if (queue.size < poolSize) {
                         queue.addLast(Entry(connected!!, nowMs()))

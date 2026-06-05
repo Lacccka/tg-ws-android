@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     private lateinit var dcText: TextView
     private lateinit var cfFallbackText: TextView
     private lateinit var routeModeText: TextView
+    private lateinit var lastRouteChangeText: TextView
     private lateinit var statsText: TextView
     private lateinit var logsText: TextView
     private lateinit var restartRequiredText: TextView
@@ -154,6 +155,7 @@ class MainActivity : Activity() {
         dcText = createValueText()
         cfFallbackText = createValueText()
         routeModeText = createValueText()
+        lastRouteChangeText = createValueText()
         statsText = createValueText()
         logsText = TextView(this).apply {
             text = "No logs yet"
@@ -206,6 +208,8 @@ class MainActivity : Activity() {
             addView(createCard("Dashboard") {
                 addView(createTextRow("Status", statusText), matchWrapParams())
                 addView(createTextRow("Network", networkText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Route", routeModeText), matchWrapParams(topMargin = rowGap))
+                addView(createTextRow("Last route change", lastRouteChangeText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("Battery optimization", batteryText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("Endpoint", endpointText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("Last status", lastStatusText), matchWrapParams(topMargin = rowGap))
@@ -222,7 +226,6 @@ class MainActivity : Activity() {
                 addView(createTextRow("Secret", secretText), matchWrapParams())
                 addView(createTextRow("DC summary", dcText), matchWrapParams(topMargin = rowGap))
                 addView(createTextRow("CF fallback", cfFallbackText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Route mode", routeModeText), matchWrapParams(topMargin = rowGap))
                 addView(routeModeButton, matchWrapParams(topMargin = rowGap))
                 addView(createSectionTitle("Actions"), matchWrapParams(topMargin = smallPadding))
                 addView(batterySettingsButton, matchWrapParams(topMargin = rowGap))
@@ -490,7 +493,8 @@ class MainActivity : Activity() {
         secretText.text = ProxyRuntimeConfig.partialTelegramSecret()
         dcText.text = ProxyRuntimeConfig.dcSummary()
         cfFallbackText.text = ProxyRuntimeConfig.cfFallbackSummary()
-        routeModeText.text = ProxyRuntimeConfig.routeModeSummary(ProxyForegroundService.State.networkStatus)
+        routeModeText.text = routeSummaryLine()
+        lastRouteChangeText.text = lastRouteChangeLine()
         statsText.text = conciseStatsLine()
         primaryControlButton.text = if (running) "Stop proxy" else "Start proxy"
         restartRequiredText.visibility = if (pendingRestartRequired) View.VISIBLE else View.GONE
@@ -506,6 +510,24 @@ class MainActivity : Activity() {
             .takeIf { it.isNotEmpty() }
             ?.joinToString("\n")
             ?: "No logs yet"
+    }
+
+    private fun routeSummaryLine(): String {
+        val config = ProxyRuntimeConfig.appConfig()
+        val stats = ProxyForegroundService.State.stats()
+        val effective = stats?.effectiveRouteMode
+            ?: ProxyRuntimeConfig.proxyServerConfig(config, ProxyForegroundService.State.networkStatus).effectiveRouteMode.configValue
+        return if (config.routeMode == NetworkRouteMode.AUTO) {
+            "Auto → $effective"
+        } else {
+            "${config.routeMode.configValue} (manual mode overrides network auto)"
+        }
+    }
+
+    private fun lastRouteChangeLine(): String {
+        val stats = ProxyForegroundService.State.stats() ?: return "none"
+        val previous = stats.previousEffectiveRouteMode ?: "none"
+        return "${stats.networkAtLastRouteChange}: $previous → ${stats.effectiveRouteMode} (${stats.lastRouteChangeReason})"
     }
 
     private fun conciseStatsLine(): String {

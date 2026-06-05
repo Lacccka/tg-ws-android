@@ -982,6 +982,106 @@ class ProxyServerTest {
         assertEquals(0L, proxy.stats().poolMisses)
     }
 
+
+    @Test
+    fun networkChangeMobileToWifiUpdatesEffectiveRouteWithoutRecreatingProxyServer() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "mobile"),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        val before = proxy
+        val result = proxy.applyNetworkRoute("Wi-Fi")
+        proxy.stop()
+
+        assertTrue(result.changed)
+        assertTrue(before === proxy)
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().previousEffectiveRouteMode)
+        assertTrue(logs.any { it.contains("effective route changed: cf_first -> direct_first because network=Wi-Fi") })
+    }
+
+    @Test
+    fun networkChangeWifiToMobileUpdatesEffectiveRouteToCfFirst() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi"),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        val result = proxy.applyNetworkRoute("mobile")
+        proxy.stop()
+
+        assertTrue(result.changed)
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().previousEffectiveRouteMode)
+        assertTrue(logs.any { it.contains("effective route changed: direct_first -> cf_first because network=mobile") })
+    }
+
+    @Test
+    fun routeSwitchToCfFirstDisablesAndSkipsPoolForNewSessions() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                poolSize = 1,
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "Wi-Fi",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyNetworkRoute("mobile")
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(0L, proxy.stats().poolHits)
+        assertEquals(0L, proxy.stats().poolMisses)
+        assertTrue(connector.domains.any { it == "kws2.cf.example" })
+        assertTrue(logs.any { it.contains("Direct WS pool warmup skipped because effective route mode cf_first") })
+    }
+
+    @Test
+    fun routeSwitchToDirectFirstAllowsPoolWarmup() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RawWebSocketConnector { _, _, _, _ -> throw IOException("warmup blocked") }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                poolSize = 1,
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                dcRedirects = mapOf(2 to "203.0.113.2"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyNetworkRoute("Wi-Fi")
+        waitUntil { logs.any { it.contains("Direct WS pool warmup started because effective route mode direct_first") } }
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertTrue(logs.any { it.contains("WS pool warmup started") })
+    }
+
     @Test
     fun protoTagsMapToExpectedSplitterProtoInts() {
         assertEquals(MsgSplitter.PROTO_ABRIDGED_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_ABRIDGED))

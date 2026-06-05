@@ -87,6 +87,10 @@ data class ProxyServerStats(
     val sessionUnexpectedErrors: Long = 0,
     val routeMode: String = NetworkRouteMode.AUTO.configValue,
     val effectiveRouteMode: String = NetworkRouteMode.DIRECT_FIRST.configValue,
+    val previousEffectiveRouteMode: String? = null,
+    val lastRouteChangeReason: String = "initial",
+    val lastRouteChangeTimeMs: Long? = null,
+    val networkAtLastRouteChange: String = "unknown",
     val lastRouteUsed: String? = null,
     val directTimeouts: Long = 0,
     val lastCfDomain: String? = null,
@@ -162,6 +166,7 @@ class ProxyServer(
         BridgeSession(client, webSocket, cryptoContext, splitter, counters, config.bufferSizeBytes).runBlocking()
     },
     private val cfProxyBalancer: CfProxyBalancer = CfProxyBalancer(config.cfProxyDomains),
+    private val routeState: RouteState = RouteState(config.routeMode, config.networkStatus),
     private val randomBytes: RelayInit.RandomBytes = RelayInit.SecureRandomBytes,
     private val logger: ProxyLogger = ProxyLogger {},
 ) {
@@ -201,9 +206,10 @@ class ProxyServer(
         if (!running.compareAndSet(false, true)) return
         serverTransport.bind(config.host, config.port)
         if (isDirectPoolEnabled()) {
-            webSocketPool.warmup(config.dcRedirects, ::wsDomains)
+            startDirectPoolWarmup("startup")
         } else if (config.poolSize > 0) {
-            logger.log("Direct WS pool warmup skipped for effective route mode ${config.effectiveRouteMode.configValue}")
+            webSocketPool.disableAndClear()
+            logger.log("Direct WS pool warmup skipped because effective route mode ${effectiveRouteMode().configValue}")
         }
         acceptThread = Thread(::acceptLoop, "ProxyServer-accept-${config.host}:${config.port}").also {
             it.isDaemon = true
@@ -227,30 +233,59 @@ class ProxyServer(
         logger.log("ProxyServer stopped")
     }
 
-    fun stats(): ProxyServerStats = ProxyServerStats(
-        connectionsTotal = connectionsTotal.get(),
-        connectionsActive = connectionsActive.get(),
-        connectionsBad = connectionsBad.get(),
-        wsConnectErrors = wsConnectErrors.get(),
-        cfProxyConnections = cfProxyConnections.get(),
-        cfProxyErrors = cfProxyErrors.get(),
-        bytesUp = bytesUp.get(),
-        bytesDown = bytesDown.get(),
-        sessionTimeouts = sessionTimeouts.get(),
-        sessionEof = sessionEof.get(),
-        sessionClientClosed = sessionClientClosed.get(),
-        sessionSocketClosed = sessionSocketClosed.get(),
-        sessionUnexpectedErrors = sessionUnexpectedErrors.get(),
-        poolHits = poolHits.get(),
-        poolMisses = poolMisses.get(),
-        poolRefillErrors = poolRefillErrors.get(),
-        poolStale = poolStale.get(),
-        routeMode = config.routeMode.configValue,
-        effectiveRouteMode = config.effectiveRouteMode.configValue,
-        lastRouteUsed = lastRouteUsed,
-        directTimeouts = directTimeouts.get(),
-        lastCfDomain = lastCfDomain,
-    )
+    fun stats(): ProxyServerStats {
+        val routeSnapshot = routeState.snapshot()
+        return ProxyServerStats(
+            connectionsTotal = connectionsTotal.get(),
+            connectionsActive = connectionsActive.get(),
+            connectionsBad = connectionsBad.get(),
+            wsConnectErrors = wsConnectErrors.get(),
+            cfProxyConnections = cfProxyConnections.get(),
+            cfProxyErrors = cfProxyErrors.get(),
+            bytesUp = bytesUp.get(),
+            bytesDown = bytesDown.get(),
+            sessionTimeouts = sessionTimeouts.get(),
+            sessionEof = sessionEof.get(),
+            sessionClientClosed = sessionClientClosed.get(),
+            sessionSocketClosed = sessionSocketClosed.get(),
+            sessionUnexpectedErrors = sessionUnexpectedErrors.get(),
+            poolHits = poolHits.get(),
+            poolMisses = poolMisses.get(),
+            poolRefillErrors = poolRefillErrors.get(),
+            poolStale = poolStale.get(),
+            routeMode = routeSnapshot.configuredRouteMode.configValue,
+            effectiveRouteMode = routeSnapshot.effectiveRouteMode.configValue,
+            previousEffectiveRouteMode = routeSnapshot.previousEffectiveRouteMode?.configValue,
+            lastRouteChangeReason = routeSnapshot.lastRouteChangeReason,
+            lastRouteChangeTimeMs = routeSnapshot.lastRouteChangeTimeMs,
+            networkAtLastRouteChange = routeSnapshot.networkAtLastRouteChange,
+            lastRouteUsed = lastRouteUsed,
+            directTimeouts = directTimeouts.get(),
+            lastCfDomain = lastCfDomain,
+        )
+    }
+
+    fun applyNetworkRoute(networkStatus: String): RouteChangeResult =
+        applyEffectiveRouteMode(routeState.desiredEffectiveRouteMode(networkStatus), "network=$networkStatus", networkStatus)
+
+    fun applyEffectiveRouteMode(
+        desiredEffectiveRouteMode: NetworkRouteMode,
+        reason: String,
+        networkStatus: String,
+    ): RouteChangeResult {
+        val result = routeState.applyEffectiveRouteMode(desiredEffectiveRouteMode, reason, networkStatus)
+        if (result.changed) {
+            logger.log(
+                "effective route changed: ${result.previous.configValue} -> ${result.current.configValue} because $reason",
+            )
+            handlePoolForRouteChange(result.previous, result.current)
+        } else {
+            logger.log("effective route unchanged: ${result.current.configValue} because $reason")
+        }
+        return result
+    }
+
+    fun routeSnapshot(): RouteSnapshot = routeState.snapshot()
 
     private fun acceptLoop() {
         while (running.get()) {
@@ -335,7 +370,7 @@ class ProxyServer(
             return
         }
 
-        when (config.effectiveRouteMode) {
+        when (effectiveRouteMode()) {
             NetworkRouteMode.CF_ONLY -> {
                 if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
                 logger.log("DC${parsed.dcId} no route available after CF-only attempts")
@@ -598,7 +633,26 @@ class ProxyServer(
         logger.log(message)
     }
 
-    private fun isDirectPoolEnabled(): Boolean = isDirectPoolEnabledFor(config.effectiveRouteMode)
+    private fun effectiveRouteMode(): NetworkRouteMode = routeState.effectiveRouteMode
+
+    private fun isDirectPoolEnabled(): Boolean = isDirectPoolEnabledFor(effectiveRouteMode())
+
+    private fun handlePoolForRouteChange(previous: NetworkRouteMode, current: NetworkRouteMode) {
+        if (isDirectPoolEnabledFor(current)) {
+            if (!isDirectPoolEnabledFor(previous)) startDirectPoolWarmup("route change") else webSocketPool.enable()
+        } else {
+            webSocketPool.disableAndClear()
+            if (config.poolSize > 0) {
+                logger.log("Direct WS pool warmup skipped because effective route mode ${current.configValue}")
+            }
+        }
+    }
+
+    private fun startDirectPoolWarmup(reason: String) {
+        if (config.poolSize <= 0) return
+        logger.log("Direct WS pool warmup started because effective route mode ${effectiveRouteMode().configValue} ($reason)")
+        webSocketPool.warmup(config.dcRedirects, ::wsDomains)
+    }
 
     private fun closeClient(client: TcpClientTransport) {
         try {
