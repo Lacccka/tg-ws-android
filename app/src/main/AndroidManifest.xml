@@ -9,6 +9,7 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
         android:label="tg-ws-android"
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
@@ -39,7 +40,7 @@
         <service
             android:name=".service.ProxyQuickSettingsTileService"
             android:exported="true"
-            android:icon="@mipmap/ic_launcher"
+            android:icon="@drawable/ic_qs_tg_proxy"
             android:label="TG Proxy"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
