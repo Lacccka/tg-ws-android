@@ -23,6 +23,7 @@ data class DirectRouteHealthSnapshot(
     val settlingUntilMs: Long,
     val lastError: String?,
     val lastSuccessTimeMs: Long?,
+    val probeThrottleUntilMs: Long,
 )
 
 class DirectRouteHealth(
@@ -43,6 +44,7 @@ class DirectRouteHealth(
     private val cooldownUntilMs = AtomicLong(0)
     private val settlingUntilMs = AtomicLong(0)
     private val lastSuccessTimeMs = AtomicLong(0)
+    private val probeThrottleUntilMs = AtomicLong(0)
     @Volatile private var lastError: String? = null
     @Volatile private var consecutiveSuccesses: Int = 0
 
@@ -56,6 +58,7 @@ class DirectRouteHealth(
         settlingUntilMs = settlingUntilMs.get(),
         lastError = lastError,
         lastSuccessTimeMs = lastSuccessTimeMs.get().takeIf { it > 0L },
+        probeThrottleUntilMs = probeThrottleUntilMs.get(),
     )
 
     fun currentState(): DirectHealthState {
@@ -73,8 +76,13 @@ class DirectRouteHealth(
 
     fun resetForSafeRoute() {
         consecutiveSuccesses = 0
+        probeThrottleUntilMs.set(0)
         state.set(DirectHealthState.UNKNOWN)
     }
+
+    fun isProbeThrottled(): Boolean = probeThrottleUntilMs.get() > nowMs()
+
+    fun probeThrottleUntilMs(): Long = probeThrottleUntilMs.get()
 
     fun recordPromotion() {
         promotions.incrementAndGet()
@@ -94,7 +102,12 @@ class DirectRouteHealth(
     fun startPromotionProbe(
         shouldContinue: () -> Boolean,
         onPromote: () -> Unit,
+        throttleMs: Long = 0L,
     ) {
+        if (isProbeThrottled()) {
+            logger.log("direct promotion skipped: direct health probe throttled until ${probeThrottleUntilMs.get()}")
+            return
+        }
         if (!checking.compareAndSet(false, true)) {
             logger.log("direct promotion skipped: direct health probe already checking")
             return
@@ -103,7 +116,7 @@ class DirectRouteHealth(
             try {
                 state.set(DirectHealthState.CHECKING)
                 while (shouldContinue() && canPromote() && consecutiveSuccesses < requiredConsecutiveSuccesses) {
-                    if (!probeOnce()) break
+                    if (!probeOnce(throttleMs)) break
                 }
                 if (shouldContinue() && canPromote() && consecutiveSuccesses >= requiredConsecutiveSuccesses) {
                     onPromote()
@@ -122,7 +135,7 @@ class DirectRouteHealth(
         }
     }
 
-    fun probeOnce(): Boolean {
+    fun probeOnce(throttleMs: Long = 0L): Boolean {
         logger.log("direct health probe started")
         val targets = listOf(2, 4).mapNotNull { dc -> dcRedirects[dc]?.let { dc to it } }
             .ifEmpty { dcRedirects.entries.map { it.key to it.value } }
@@ -134,7 +147,9 @@ class DirectRouteHealth(
                     socket = connector.connect(targetHost, domain, ProxyServer.DEFAULT_WS_PATH, probeTimeoutMs.coerceIn(1_500, 2_500))
                     successes.incrementAndGet()
                     consecutiveSuccesses += 1
-                    lastSuccessTimeMs.set(nowMs())
+                    val successTime = nowMs()
+                    lastSuccessTimeMs.set(successTime)
+                    if (throttleMs > 0L) probeThrottleUntilMs.set(successTime + throttleMs)
                     lastError = null
                     state.set(DirectHealthState.HEALTHY)
                     logger.log("direct health probe success: DC$dc via $domain")

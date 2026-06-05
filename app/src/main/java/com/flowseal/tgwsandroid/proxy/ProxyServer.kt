@@ -110,6 +110,10 @@ data class ProxyServerStats(
     val routeSettlingUntil: Long = 0,
     val directProbeLastError: String? = null,
     val directProbeLastSuccessTime: Long? = null,
+    val directProbeSkippedBecauseAlreadyHealthy: Long = 0,
+    val wifiCapabilityEventsIgnored: Long = 0,
+    val routeChurnAvoided: Long = 0,
+    val directProbeThrottleUntil: Long = 0,
 )
 
 fun interface ProxyLogger {
@@ -208,6 +212,9 @@ class ProxyServer(
     private val directTimeouts = AtomicLong(0)
     private val directAttempts = AtomicLong(0)
     private val directAttemptsSkippedBecauseRoute = AtomicLong(0)
+    private val directProbeSkippedBecauseAlreadyHealthy = AtomicLong(0)
+    private val wifiCapabilityEventsIgnored = AtomicLong(0)
+    private val routeChurnAvoided = AtomicLong(0)
     private val poolRefillsCancelled = AtomicLong(0)
     private val poolResultsDiscardedAfterRouteChange = AtomicLong(0)
     private val routeChangesImmediate = AtomicLong(0)
@@ -315,6 +322,10 @@ class ProxyServer(
             routeSettlingUntil = directHealthSnapshot.settlingUntilMs,
             directProbeLastError = directHealthSnapshot.lastError,
             directProbeLastSuccessTime = directHealthSnapshot.lastSuccessTimeMs,
+            directProbeSkippedBecauseAlreadyHealthy = directProbeSkippedBecauseAlreadyHealthy.get(),
+            wifiCapabilityEventsIgnored = wifiCapabilityEventsIgnored.get(),
+            routeChurnAvoided = routeChurnAvoided.get(),
+            directProbeThrottleUntil = directHealthSnapshot.probeThrottleUntilMs,
         )
     }
 
@@ -326,9 +337,25 @@ class ProxyServer(
 
     private fun applyNetworkRoute(networkStatus: String, immediate: Boolean): RouteChangeResult {
         val normalized = networkStatus.ifBlank { "unknown" }
+        val previousNetworkStatus = currentNetworkStatus
+        if (shouldIgnoreHealthyWifiCapabilityEvent(previousNetworkStatus, normalized)) {
+            wifiCapabilityEventsIgnored.incrementAndGet()
+            routeChurnAvoided.incrementAndGet()
+            directProbeSkippedBecauseAlreadyHealthy.incrementAndGet()
+            currentNetworkStatus = normalized
+            logger.log("effective route unchanged: ${NetworkRouteMode.DIRECT_FIRST.configValue} because Wi-Fi capabilities changed; direct route already healthy")
+            return routeState.applyEffectiveRouteMode(
+                NetworkRouteMode.DIRECT_FIRST,
+                "Wi-Fi capabilities changed; direct route already healthy",
+                normalized,
+                source = if (immediate) "immediate" else "debounce",
+            )
+        }
         currentNetworkStatus = normalized
         routeGeneration.incrementAndGet()
-        directRouteHealth.markSettling(ROUTE_SETTLING_WINDOW_MS)
+        if (!isWifi(previousNetworkStatus) || !isWifi(normalized)) {
+            directRouteHealth.markSettling(ROUTE_SETTLING_WINDOW_MS)
+        }
         if (normalized.equals("none", ignoreCase = true)) {
             networkNoneEvents.incrementAndGet()
             directRouteHealth.resetForSafeRoute()
@@ -342,9 +369,16 @@ class ProxyServer(
             normalized,
             source = if (immediate) "immediate" else "debounce",
         )
-        maybeStartAutoWifiDirectProbe(normalized)
+        maybeStartAutoWifiDirectProbe(normalized, previousNetworkStatus)
         return result
     }
+
+    private fun shouldIgnoreHealthyWifiCapabilityEvent(previousNetworkStatus: String, networkStatus: String): Boolean =
+        routeState.configuredRouteMode == NetworkRouteMode.AUTO &&
+            isWifi(previousNetworkStatus) &&
+            isWifi(networkStatus) &&
+            effectiveRouteMode() == NetworkRouteMode.DIRECT_FIRST &&
+            directRouteHealth.currentState() == DirectHealthState.HEALTHY
 
     fun applyEffectiveRouteMode(
         desiredEffectiveRouteMode: NetworkRouteMode,
@@ -527,9 +561,10 @@ class ProxyServer(
             logger.log("DC${parsed.dcId} direct route skipped because route generation changed")
             return null
         }
-        if (!isDirectAttemptAllowedForCurrentRoute()) {
+        val skipReason = directAttemptSkipReasonForCurrentRoute()
+        if (skipReason != null) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
-            logger.log("DC${parsed.dcId} direct route skipped because effective route mode ${effectiveRouteMode().configValue}")
+            logger.log("DC${parsed.dcId} direct route skipped because $skipReason")
             return null
         }
         if (usePool && isDirectPoolEnabled()) {
@@ -556,9 +591,10 @@ class ProxyServer(
             logger.log("DC${parsed.dcId} direct connect skipped because route generation changed")
             return null
         }
-        if (!isDirectAttemptAllowedForCurrentRoute()) {
+        val skipReason = directAttemptSkipReasonForCurrentRoute()
+        if (skipReason != null) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
-            logger.log("DC${parsed.dcId} direct connect skipped because effective route mode ${effectiveRouteMode().configValue}")
+            logger.log("DC${parsed.dcId} direct connect skipped because $skipReason")
             return null
         }
         return connectWebSocket(parsed, targetHost, timeoutMs)
@@ -773,20 +809,25 @@ class ProxyServer(
 
     private fun isDirectPoolEnabled(): Boolean = isDirectPoolEnabledFor(effectiveRouteMode())
 
-    private fun isDirectAttemptAllowedForCurrentRoute(): Boolean {
+    private fun isDirectAttemptAllowedForCurrentRoute(): Boolean = directAttemptSkipReasonForCurrentRoute() == null
+
+    private fun directAttemptSkipReasonForCurrentRoute(): String? {
         val snapshot = routeState.snapshot()
         if (snapshot.configuredRouteMode == NetworkRouteMode.DIRECT_FIRST) {
-            return snapshot.effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST
+            return if (snapshot.effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST) null
+                else "effective route mode ${snapshot.effectiveRouteMode.configValue}"
         }
         if (currentNetworkStatus.equals("none", ignoreCase = true) || currentNetworkStatus.equals("mobile", ignoreCase = true) ||
-            currentNetworkStatus.equals("cellular", ignoreCase = true) || directRouteHealth.isSettling()
+            currentNetworkStatus.equals("cellular", ignoreCase = true)
         ) {
-            return false
+            return "network=$currentNetworkStatus"
         }
+        if (directRouteHealth.isSettling()) return "route settling"
         return when (snapshot.effectiveRouteMode) {
-            NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> true
-            NetworkRouteMode.CF_FIRST -> snapshot.configuredRouteMode == NetworkRouteMode.CF_FIRST
-            NetworkRouteMode.CF_ONLY -> false
+            NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> null
+            NetworkRouteMode.CF_FIRST -> if (snapshot.configuredRouteMode == NetworkRouteMode.CF_FIRST) null
+                else "effective route mode ${snapshot.effectiveRouteMode.configValue}"
+            NetworkRouteMode.CF_ONLY -> "effective route mode ${snapshot.effectiveRouteMode.configValue}"
         }
     }
 
@@ -808,14 +849,33 @@ class ProxyServer(
     }
 
 
-    private fun maybeStartAutoWifiDirectProbe(networkStatus: String) {
+    private fun maybeStartAutoWifiDirectProbe(
+        networkStatus: String,
+        previousNetworkStatus: String = "unknown",
+    ) {
         if (routeState.configuredRouteMode != NetworkRouteMode.AUTO) return
         if (!isWifi(networkStatus)) return
-        if (effectiveRouteMode() == NetworkRouteMode.DIRECT_FIRST) return
-        if (directRouteHealth.currentState() == DirectHealthState.COOLDOWN) {
+        val healthState = directRouteHealth.currentState()
+        if (effectiveRouteMode() == NetworkRouteMode.DIRECT_FIRST && healthState == DirectHealthState.HEALTHY) {
+            directProbeSkippedBecauseAlreadyHealthy.incrementAndGet()
+            logger.log("direct promotion skipped: direct route already healthy")
+            return
+        }
+        if (healthState == DirectHealthState.COOLDOWN) {
             logger.log("direct promotion skipped: direct route in cooldown")
             return
         }
+        if (directRouteHealth.isProbeThrottled()) {
+            logger.log("direct promotion skipped: direct health probe throttled until ${directRouteHealth.probeThrottleUntilMs()}")
+            return
+        }
+        val transitionedToWifi = !isWifi(previousNetworkStatus) && isWifi(networkStatus)
+        val needsProbe = transitionedToWifi || healthState == DirectHealthState.UNKNOWN || healthState == DirectHealthState.UNHEALTHY
+        if (!needsProbe) {
+            logger.log("direct promotion skipped: Wi-Fi capability event did not require health probe")
+            return
+        }
+        if (effectiveRouteMode() == NetworkRouteMode.DIRECT_FIRST) return
         directRouteHealth.startPromotionProbe(
             shouldContinue = {
                 running.get() &&
@@ -836,6 +896,7 @@ class ProxyServer(
                     logger.log("direct promoted: ${before.configValue} -> ${NetworkRouteMode.DIRECT_FIRST.configValue}")
                 }
             },
+            throttleMs = DIRECT_PROBE_THROTTLE_MS,
         )
     }
 
@@ -905,6 +966,7 @@ class ProxyServer(
         private const val STALE_POOL_MAX_DURATION_MS = 2_000L
         private const val ROUTE_SETTLING_WINDOW_MS = 3_000L
         private const val DIRECT_HEALTH_COOLDOWN_MS = 45_000L
+        private const val DIRECT_PROBE_THROTTLE_MS = 30_000L
         private const val DIRECT_HEALTH_DEGRADE_WINDOW_MS = 10_000L
         private const val DIRECT_POOL_STALE_DOWNGRADE_THRESHOLD = 3L
 

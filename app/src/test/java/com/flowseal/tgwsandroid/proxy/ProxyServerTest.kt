@@ -1369,6 +1369,131 @@ class ProxyServerTest {
         assertTrue(logs.any { it.contains("direct fallback skipped") || it.contains("no route available after CF-first attempts") })
     }
 
+
+    @Test
+    fun wifiCapabilityEventWhileDirectFirstHealthyKeepsDirectFirst() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", poolSize = 0),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().directPromotions == 1L }
+        val promotionsBefore = proxy.stats().directPromotions
+        val successesBefore = proxy.stats().directHealthSuccesses
+        val result = proxy.applyNetworkRoute("Wi-Fi")
+        proxy.stop()
+
+        assertFalse(result.changed)
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(promotionsBefore, proxy.stats().directPromotions)
+        assertEquals(successesBefore, proxy.stats().directHealthSuccesses)
+        assertEquals(1L, proxy.stats().wifiCapabilityEventsIgnored)
+        assertEquals(1L, proxy.stats().routeChurnAvoided)
+        assertTrue(logs.any { it.contains("direct route already healthy") })
+        assertFalse(logs.any { it.contains("effective route changed: direct_first -> cf_first because network=Wi-Fi") })
+    }
+
+    @Test
+    fun repeatedWifiCapabilityEventsDoNotRepromoteOrRepeatWarmup() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", poolSize = 1),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().directPromotions == 1L }
+        waitUntil { logs.count { it.contains("Direct WS pool warmup started because effective route mode direct_first") } == 1 }
+        repeat(5) { proxy.applyNetworkRoute("Wi-Fi") }
+        Thread.sleep(100)
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(1L, proxy.stats().directPromotions)
+        assertEquals(5L, proxy.stats().wifiCapabilityEventsIgnored)
+        assertEquals(5L, proxy.stats().routeChurnAvoided)
+        assertEquals(1, logs.count { it.contains("Direct WS pool warmup started because effective route mode direct_first") })
+    }
+
+    @Test
+    fun healthProbeIsThrottledWhenDirectAlreadyHealthy() {
+        val server = FakeTcpServerTransport()
+        val attempts = AtomicInteger(0)
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ ->
+                attempts.incrementAndGet()
+                FakeWebSocketBinaryStream()
+            },
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", poolSize = 0),
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().directPromotions == 1L }
+        val attemptsBefore = attempts.get()
+        val throttleUntil = proxy.stats().directProbeThrottleUntil
+        repeat(3) { proxy.applyNetworkRoute("Wi-Fi") }
+        Thread.sleep(100)
+        proxy.stop()
+
+        assertEquals(attemptsBefore, attempts.get())
+        assertTrue(throttleUntil > System.currentTimeMillis())
+        assertTrue(proxy.stats().directProbeSkippedBecauseAlreadyHealthy >= 3L)
+    }
+
+    @Test
+    fun directFirstDoesNotSkipBecauseDirectFirstAndUsesDirectPath() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", poolSize = 0),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().directPromotions == 1L }
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertTrue(connector.domains.any { it == "kws2.web.telegram.org" })
+        assertEquals("direct-cold", proxy.stats().lastRouteUsed)
+        assertFalse(logs.any { it.contains("direct route skipped because effective route mode direct_first") })
+        assertFalse(logs.any { it.contains("direct connect skipped because effective route mode direct_first") })
+    }
+
+    @Test
+    fun directFirstDowngradesOnMobileButNotWifiCapabilityEvent() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", poolSize = 0),
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().directPromotions == 1L }
+        proxy.applyNetworkRoute("Wi-Fi")
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        proxy.applyNetworkRouteImmediately("mobile")
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+    }
+
     @Test
     fun protoTagsMapToExpectedSplitterProtoInts() {
         assertEquals(MsgSplitter.PROTO_ABRIDGED_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_ABRIDGED))
