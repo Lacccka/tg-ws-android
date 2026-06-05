@@ -27,6 +27,8 @@ class BatterySettingsNavigator(
         val intent = Intent(action)
         if (packageName != null && className != null) {
             intent.setClassName(packageName, className)
+        } else if (packageName != null) {
+            intent.setPackage(packageName)
         }
         dataPackageName?.let { intent.data = Uri.parse("package:$it") }
         extras.forEach { (key, value) -> intent.putExtra(key, value) }
@@ -52,11 +54,13 @@ object BatterySettingsIntentPlan {
     private const val MIUI_EXTRA_PACKAGE_LABEL = "package_label"
 
     fun candidates(packageName: String, manufacturer: String): List<BatterySettingsIntentSpec> = buildList {
-        add(appDetails(packageName))
         if (isXiaomiFamily(manufacturer)) {
             addAll(xiaomiCandidates(packageName))
         }
+        add(appDetails(packageName))
+        add(batterySaverSettings())
         add(ignoreBatteryOptimizationSettings())
+        add(systemSettings())
     }
 
     fun appDetails(packageName: String): BatterySettingsIntentSpec = BatterySettingsIntentSpec(
@@ -64,13 +68,25 @@ object BatterySettingsIntentPlan {
         dataPackageName = packageName,
     )
 
+    fun batterySaverSettings(): BatterySettingsIntentSpec = BatterySettingsIntentSpec(
+        action = Settings.ACTION_BATTERY_SAVER_SETTINGS,
+    )
+
     fun ignoreBatteryOptimizationSettings(): BatterySettingsIntentSpec = BatterySettingsIntentSpec(
         action = Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
     )
 
+    fun systemSettings(): BatterySettingsIntentSpec = BatterySettingsIntentSpec(
+        action = Settings.ACTION_SETTINGS,
+    )
+
     fun isXiaomiFamily(manufacturer: String): Boolean {
         val normalized = manufacturer.lowercase(Locale.US)
-        return normalized.contains("xiaomi") || normalized.contains("redmi") || normalized.contains("poco")
+        return normalized.contains("xiaomi") ||
+            normalized.contains("redmi") ||
+            normalized.contains("poco") ||
+            normalized.contains("hyperos") ||
+            normalized.contains("miui")
     }
 
     fun xiaomiCandidates(packageName: String): List<BatterySettingsIntentSpec> = listOf(
@@ -93,8 +109,11 @@ object BatterySettingsIntentPlan {
 
 private fun Context.tryStartBatterySettingsActivity(intent: Intent): Boolean = try {
     if (this !is Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-    startActivity(intent)
-    true
+    val resolved = intent.resolveActivity(packageManager)
+    if (resolved == null) false else {
+        startActivity(intent)
+        true
+    }
 } catch (_: ActivityNotFoundException) {
     false
 } catch (_: SecurityException) {

@@ -143,10 +143,53 @@ data class ProxyServerStats(
     val cfAllCooldownSingleAttemptFailures: Long = 0,
     val cfAllCooldownStoppedCycles: Long = 0,
     val cfHealthDomains: List<CfDomainSnapshot> = emptyList(),
-)
+) {
+    val badHandshakeRatio: Double
+        get() = if (connectionsTotal > 0L) connectionsBad.toDouble() / connectionsTotal.toDouble() else 0.0
+
+    val badHandshakeStorm: Boolean
+        get() = connectionsTotal >= BAD_HANDSHAKE_STORM_MIN_TOTAL &&
+            connectionsBad >= BAD_HANDSHAKE_STORM_MIN_BAD &&
+            badHandshakeRatio >= BAD_HANDSHAKE_STORM_MIN_RATIO
+
+    companion object {
+        const val BAD_HANDSHAKE_STORM_MIN_TOTAL: Long = 100
+        const val BAD_HANDSHAKE_STORM_MIN_BAD: Long = 50
+        const val BAD_HANDSHAKE_STORM_MIN_RATIO: Double = 0.5
+    }
+}
 
 fun interface ProxyLogger {
     fun log(message: String)
+}
+
+internal class InvalidHandshakeLogLimiter(
+    private val firstMessagesLimit: Long = 5,
+    private val aggregateWindowMs: Long = 5_000,
+    private val nowMs: () -> Long = { System.currentTimeMillis() },
+) {
+    private val seen = AtomicLong(0)
+    private val suppressed = AtomicLong(0)
+    private val lastAggregateLogMs = AtomicLong(0)
+
+    fun log(message: String, logger: ProxyLogger) {
+        val count = seen.incrementAndGet()
+        if (count <= firstMessagesLimit) {
+            logger.log(message)
+            return
+        }
+        val hidden = suppressed.incrementAndGet()
+        val now = nowMs()
+        val previous = lastAggregateLogMs.get()
+        if (previous == 0L || now - previous >= aggregateWindowMs) {
+            if (lastAggregateLogMs.compareAndSet(previous, now)) {
+                val repeated = suppressed.getAndSet(0)
+                logger.log("Invalid MTProto handshake repeated $repeated times in last 5s")
+            }
+        } else if (hidden == Long.MAX_VALUE) {
+            suppressed.set(0)
+        }
+    }
 }
 
 /** Blocking server socket abstraction so unit tests can run without real networking. */
@@ -255,6 +298,7 @@ class ProxyServer(
     @Volatile private var lastDirectPoolStaleWindowStartMs: Long = 0
     @Volatile private var lastRouteUsed: String? = null
     @Volatile private var lastCfDomain: String? = null
+    private val invalidHandshakeLogLimiter = InvalidHandshakeLogLimiter()
     private val webSocketPool = WebSocketPool(
         poolSize = config.poolSize,
         connector = webSocketConnector,
@@ -957,7 +1001,11 @@ class ProxyServer(
 
     private fun markBad(message: String) {
         connectionsBad.incrementAndGet()
-        logger.log(message)
+        if (message.startsWith(INVALID_MTPROTO_HANDSHAKE_PREFIX)) {
+            invalidHandshakeLogLimiter.log(message, logger)
+        } else {
+            logger.log(message)
+        }
     }
 
     private fun effectiveRouteMode(): NetworkRouteMode = routeState.effectiveRouteMode
@@ -1116,6 +1164,7 @@ class ProxyServer(
 
     companion object {
         const val DEFAULT_WS_PATH = "/apiws"
+        private const val INVALID_MTPROTO_HANDSHAKE_PREFIX = "Invalid MTProto handshake"
         const val DEFAULT_MOBILE_DIRECT_FALLBACK_TIMEOUT_MS = 2_000
         private const val STOP_JOIN_TIMEOUT_MS = 1_000L
         private const val STALE_POOL_MAX_DURATION_MS = 2_000L

@@ -107,6 +107,26 @@ class ProxyServerTest {
         assertTrue(logs.any { it.contains("Invalid MTProto handshake") })
     }
 
+
+    @Test
+    fun invalidHandshakeLogsAreAggregatedButStatsStayExact() {
+        val invalid = handshakeVector("invalid_wrong_secret")
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val config = baseConfig().copy(secretHex = invalid.getString("secret_hex"))
+        val proxy = newProxy(server, config = config, logger = ProxyLogger { logs.add(it) })
+
+        proxy.start()
+        repeat(20) { server.enqueue(FakeTcpClientTransport(invalid.getString("handshake_hex").hexToBytes())) }
+        waitUntil { proxy.stats().connectionsBad == 20L }
+        proxy.stop()
+
+        assertEquals(20L, proxy.stats().connectionsTotal)
+        assertEquals(20L, proxy.stats().connectionsBad)
+        assertTrue(logs.count { it.contains("Invalid MTProto handshake from") } <= 5)
+        assertTrue(logs.any { it.contains("Invalid MTProto handshake repeated") })
+    }
+
     @Test
     fun unknownDcClosesClientAndLogsUnsupportedDc() {
         val vector = handshakeVector("abridged_dc2")

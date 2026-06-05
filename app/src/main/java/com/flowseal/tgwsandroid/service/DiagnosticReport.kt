@@ -87,6 +87,8 @@ object DiagnosticReportFormatter {
         "unknown"
     } else {
         "total=${stats.connectionsTotal}, active=${stats.connectionsActive}, bad=${stats.connectionsBad}, " +
+            "Invalid MTProto handshake storm=${stats.badHandshakeStorm}, badHandshakeRatio=${String.format(Locale.US, "%.3f", stats.badHandshakeRatio)}, " +
+            "badHandshakeRecommendation=${if (stats.badHandshakeStorm) "Отключите прокси в Telegram, закройте Telegram и подключите заново." else "none"}, " +
             "wsErrors=${stats.wsConnectErrors}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
             "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +

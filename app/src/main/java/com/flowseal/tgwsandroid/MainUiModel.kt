@@ -24,8 +24,8 @@ data class UserRouteModeOption(
 
 object SettingsUiText {
     const val BATTERY_BACKGROUND_TITLE = "Работа в фоне"
-    const val BATTERY_XIAOMI_AUTOSTART_TEXT = "На Xiaomi также проверьте автозапуск."
-    const val BATTERY_BUTTON_HELP_TEXT = "Выберите режим без ограничений батареи."
+    const val BATTERY_XIAOMI_AUTOSTART_TEXT = "Если открылся экран приложения, выберите «Батарея» → «Без ограничений». На Xiaomi также проверьте автозапуск."
+    const val BATTERY_BUTTON_HELP_TEXT = "Если открылся экран приложения, выберите «Батарея» → «Без ограничений»."
     const val QS_TILE_TITLE = "Кнопка в шторке"
     const val QS_TILE_TEXT = "Добавьте «TG Proxy» в быстрые настройки Android, чтобы запускать и останавливать прокси из шторки."
     const val QS_TILE_HELP_BUTTON = "Как добавить"
@@ -91,6 +91,18 @@ object DeveloperUiModel {
     }
 }
 
+object TelegramStatusUiText {
+    const val RECONNECT_STATUS = "Нужно переподключить Telegram"
+    const val RECONNECT_HELPER = "Telegram отправляет неверные подключения. Нажмите «Подключить Telegram» заново."
+    const val RECONNECT_EXTRA_HELPER = "Если проблема повторяется, отключите прокси в Telegram, закройте Telegram и подключите заново."
+    const val DEVELOPER_RECOMMENDATION = "Отключите прокси в Telegram, закройте Telegram и подключите заново."
+
+    fun helper(stats: ProxyServerStats?, routeHelper: String?): String? = when {
+        stats?.badHandshakeStorm == true -> listOf(RECONNECT_HELPER, RECONNECT_EXTRA_HELPER).joinToString("\n")
+        else -> routeHelper
+    }
+}
+
 object ConnectionStatusMapper {
     fun status(
         running: Boolean,
@@ -98,10 +110,11 @@ object ConnectionStatusMapper {
         stats: ProxyServerStats?,
         checking: Boolean = false,
     ): String {
-        if (checking) return "Проверяется"
-        if (!running) return "Прокси остановлен"
+        if (!running && !checking) return "Прокси остановлен"
         if (networkStatus.equals("none", ignoreCase = true)) return "Нет сети"
+        if (checking) return "Проверяется"
         if (stats == null) return "Проверяется"
+        if (stats.badHandshakeStorm) return TelegramStatusUiText.RECONNECT_STATUS
 
         val activeSessions = stats.connectionsActive > 0
         val hasSuccessfulConnection = stats.connectionsTotal > stats.connectionsBad ||

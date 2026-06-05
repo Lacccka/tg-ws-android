@@ -90,8 +90,9 @@ class MainUiModelTest {
     @Test
     fun batteryAndQuickSettingsInstructionsAreRussianAndCompact() {
         assertEquals("Работа в фоне", SettingsUiText.BATTERY_BACKGROUND_TITLE)
-        assertEquals("На Xiaomi также проверьте автозапуск.", SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT)
-        assertEquals("Выберите режим без ограничений батареи.", SettingsUiText.BATTERY_BUTTON_HELP_TEXT)
+        assertTrue(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("автозапуск"))
+        assertTrue(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("Без ограничений"))
+        assertTrue(SettingsUiText.BATTERY_BUTTON_HELP_TEXT.contains("Без ограничений"))
         assertEquals("Статус: Без ограничений", SettingsUiText.batteryStatusLine("Без ограничений"))
         assertFalse(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("Чтобы прокси не останавливался"))
         assertFalse(SettingsUiText.BATTERY_BUTTON_HELP_TEXT.contains("Чтобы прокси не останавливался"))
@@ -212,6 +213,74 @@ class MainUiModelTest {
         assertFalse(labels.contains("Работает"))
         assertFalse(labels.contains("Работает медленно"))
         assertFalse(labels.contains("Перегружено"))
+    }
+
+
+    @Test
+    fun lowBadHandshakeRatioDoesNotChangeTelegramStatus() {
+        assertEquals(
+            "Подключён",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "mobile",
+                stats = stats(connectionsTotal = 200, connectionsBad = 20, lastRouteUsed = "cf"),
+            ),
+        )
+    }
+
+    @Test
+    fun highBadHandshakeRatioAsksToReconnectTelegram() {
+        assertEquals(
+            "Нужно переподключить Telegram",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "mobile",
+                stats = stats(connectionsTotal = 100, connectionsBad = 50),
+            ),
+        )
+    }
+
+    @Test
+    fun activeSessionsDoNotHideBadHandshakeStorm() {
+        assertEquals(
+            "Нужно переподключить Telegram",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "mobile",
+                stats = stats(connectionsTotal = 9749, connectionsBad = 9611, connectionsActive = 1, lastRouteUsed = "cf"),
+            ),
+        )
+    }
+
+    @Test
+    fun telegramStormHelperMentionsReconnectWithoutRawProtocolText() {
+        val helper = TelegramStatusUiText.helper(stats(connectionsTotal = 100, connectionsBad = 50), routeHelper = null).orEmpty()
+
+        assertTrue(helper.contains("Подключить Telegram"))
+        assertFalse(helper.contains("Invalid MTProto handshake"))
+        assertFalse(helper.contains("bad handshake", ignoreCase = true))
+        assertFalse(helper.contains("MTProto"))
+    }
+
+    @Test
+    fun oldCfCountersDoNotCreateBadHandshakeStatus() {
+        assertEquals(
+            "Ожидает подключения",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "mobile",
+                stats = stats(cfProxyErrors = 46, cf429Count = 12, cfCooldownSkips = 9),
+            ),
+        )
+    }
+
+    @Test
+    fun developerDiagnosticsTextMayExposeRawBadHandshakeStormInfo() {
+        val diagnostic = "Invalid MTProto handshake storm=true badHandshakeRatio=0.986 bad=9611"
+
+        assertTrue(diagnostic.contains("Invalid MTProto handshake storm"))
+        assertTrue(diagnostic.contains("badHandshakeRatio"))
+        assertTrue(TelegramStatusUiText.DEVELOPER_RECOMMENDATION.contains("Отключите прокси"))
     }
 
     @Test

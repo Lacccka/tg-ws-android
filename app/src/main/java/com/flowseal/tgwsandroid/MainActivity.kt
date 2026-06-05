@@ -354,19 +354,23 @@ class MainActivity : Activity() {
             val routeLabel = userRouteLabel()
             networkText.text = userNetworkLabel(ProxyForegroundService.State.networkStatus)
             routeText.text = routeLabel
+            val stats = ProxyForegroundService.State.stats()
+            val badHandshakeStorm = stats?.badHandshakeStorm == true
             qualityText.text = ConnectionStatusMapper.status(
                 running = running,
                 networkStatus = ProxyForegroundService.State.networkStatus,
-                stats = ProxyForegroundService.State.stats(),
+                stats = stats,
                 checking = transitionStatus == TransitionStatus.STARTING,
             )
             primaryControlButton.text = if (running) "Остановить" else "Запустить"
+            connectTelegramButton.text = if (badHandshakeStorm) "Подключить Telegram заново" else "Подключить Telegram"
             val showRestartWarning = pendingRestartRequired && running
             restartRequiredText.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
             restartPendingButton.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
             val mobileRouteHelper = HomeRouteLabelMapper.mobileCompatibleHelper(ProxyForegroundService.State.networkStatus, routeLabel)
-            telegramCleanupHintText.text = mobileRouteHelper.orEmpty()
-            telegramCleanupHintText.visibility = if (mobileRouteHelper == null) View.GONE else View.VISIBLE
+            val telegramHelper = TelegramStatusUiText.helper(stats, mobileRouteHelper)
+            telegramCleanupHintText.text = telegramHelper.orEmpty()
+            telegramCleanupHintText.visibility = if (telegramHelper == null) View.GONE else View.VISIBLE
             refreshHints()
         }
 
