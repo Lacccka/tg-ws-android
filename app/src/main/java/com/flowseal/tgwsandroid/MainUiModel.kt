@@ -98,7 +98,7 @@ object TelegramStatusUiText {
     const val DEVELOPER_RECOMMENDATION = "Отключите прокси в Telegram, закройте Telegram и подключите заново."
 
     fun helper(stats: ProxyServerStats?, routeHelper: String?): String? = when {
-        stats?.badHandshakeStorm == true -> listOf(RECONNECT_HELPER, RECONNECT_EXTRA_HELPER).joinToString("\n")
+        stats?.badHandshakeStormRecent == true -> listOf(RECONNECT_HELPER, RECONNECT_EXTRA_HELPER).joinToString("\n")
         else -> routeHelper
     }
 }
@@ -127,11 +127,11 @@ object ConnectionStatusMapper {
             stats.directHealthSuccesses > 0
         val hasCurrentSessionErrors = stats.wsConnectErrors + stats.sessionTimeouts + stats.sessionUnexpectedErrors > 0
         val allConnectionsFailed = stats.connectionsTotal > 0 && stats.connectionsBad >= stats.connectionsTotal
-        val hasFailuresWithoutSuccess = stats.connectionsTotal > 0 &&
-            !hasSuccessfulConnection &&
+        val hasRecentBadHandshakeFailures = stats.recentInvalidHandshakeCount > 0L
+        val hasFailuresWithoutSuccess = !hasSuccessfulConnection &&
             !freshAcceptedHandshake &&
             !freshSuccessfulRoute &&
-            (stats.connectionsBad > 0 || hasCurrentSessionErrors || stats.directHealthState.equals("unhealthy", ignoreCase = true))
+            (hasRecentBadHandshakeFailures || hasCurrentSessionErrors || stats.directHealthState.equals("unhealthy", ignoreCase = true))
 
         return when {
             activeSessions && hasRouteUsed -> "Подключён"

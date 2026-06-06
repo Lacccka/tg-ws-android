@@ -230,16 +230,22 @@ class MainUiModelTest {
 
     @Test
     fun recentBadHandshakeStormAsksToReconnectTelegram() {
+        val recentStormStats = stats(
+            connectionsTotal = 100,
+            connectionsBad = 50,
+            recentInvalidHandshakeCount = 100,
+            recentAcceptedHandshakeCount = 0,
+            lastAcceptedHandshakeTimeMs = 0,
+            lastSuccessfulRouteTimeMs = 0,
+        )
+
+        assertTrue(recentStormStats.badHandshakeStormRecent)
         assertEquals(
             "Нужно переподключить Telegram",
             ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "mobile",
-                stats = stats(
-                    connectionsTotal = 100,
-                    connectionsBad = 50,
-                    recentInvalidHandshakeCount = 100,
-                ),
+                stats = recentStormStats,
             ),
         )
     }
@@ -276,12 +282,46 @@ class MainUiModelTest {
     fun oldCumulativeBadHandshakeStormAloneDoesNotAskForever() {
         assertEquals(
             "Old cumulative bad-handshake counters without a recent storm must not show reconnect forever",
-            "Нестабильное соединение",
+            "Ожидает подключения",
             ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "mobile",
-                stats = stats(connectionsTotal = 9749, connectionsBad = 9611),
+                stats = stats(
+                    connectionsTotal = 9749,
+                    connectionsBad = 9611,
+                    recentInvalidHandshakeCount = 0,
+                    recentAcceptedHandshakeCount = 0,
+                    lastAcceptedHandshakeTimeMs = 0,
+                    lastSuccessfulRouteTimeMs = 0,
+                ),
             ),
+        )
+    }
+
+    @Test
+    fun cumulativeBadHandshakeStormDoesNotShowReconnectHelperWithoutRecentStorm() {
+        val cumulativeOnlyStats = stats(
+            connectionsTotal = 9749,
+            connectionsBad = 9611,
+            recentInvalidHandshakeCount = 0,
+            recentAcceptedHandshakeCount = 0,
+            lastAcceptedHandshakeTimeMs = 0,
+            lastSuccessfulRouteTimeMs = 0,
+        )
+
+        assertTrue(cumulativeOnlyStats.badHandshakeStormCumulative)
+        assertFalse(cumulativeOnlyStats.badHandshakeStormRecent)
+        assertEquals(
+            "Ожидает подключения",
+            ConnectionStatusMapper.status(
+                running = true,
+                networkStatus = "mobile",
+                stats = cumulativeOnlyStats,
+            ),
+        )
+        assertEquals(
+            "route helper",
+            TelegramStatusUiText.helper(cumulativeOnlyStats, routeHelper = "route helper"),
         )
     }
 
