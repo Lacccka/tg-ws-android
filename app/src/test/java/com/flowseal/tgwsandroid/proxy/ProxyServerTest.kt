@@ -1292,6 +1292,49 @@ class ProxyServerTest {
         assertTrue(logs.any { it.contains("direct promoted: cf_first -> direct_first") })
     }
 
+
+    @Test
+    fun autoDirectPromotionAllowsColdDirectDuringRouteSettling() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = MultiSocketRecordingConnector()
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                poolSize = 1,
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyNetworkRoute("Wi-Fi")
+        waitUntil { proxy.stats().directPromotions == 1L }
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().previousEffectiveRouteMode)
+        assertTrue(proxy.stats().routeSettlingUntil > System.currentTimeMillis())
+
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertEquals("direct-cold", proxy.stats().lastRouteUsed)
+        assertEquals(0L, proxy.stats().directDowngrades)
+        assertTrue(connector.domains.any { it == "kws2.web.telegram.org" })
+        assertFalse("CF must not be the only usable route immediately after direct probe success", connector.domains.any { it == "kws2.cf.example" })
+        assertTrue(logs.any { it.contains("direct promoted: cf_first -> direct_first") })
+        assertTrue(logs.any { it.contains("route settling prohibits direct pool") && it.contains("allows cold direct") })
+        assertTrue(logs.any { it.contains("client uses cold direct during route settling") })
+        assertFalse(logs.any { it.contains("direct route skipped because route settling") })
+        assertFalse(logs.any { it.contains("no route available after direct WebSocket attempts") })
+        assertFalse(logs.any { it.contains("direct route downgraded to cf_first because health degraded") })
+    }
+
     @Test
     fun failedAutoWifiHealthProbeKeepsCfFirst() {
         val server = FakeTcpServerTransport()

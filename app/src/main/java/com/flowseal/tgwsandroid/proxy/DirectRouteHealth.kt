@@ -74,6 +74,8 @@ class DirectRouteHealth(
 
     fun isSettling(): Boolean = settlingUntilMs.get() > nowMs()
 
+    fun settlingUntilMs(): Long = settlingUntilMs.get()
+
     fun resetForSafeRoute() {
         consecutiveSuccesses = 0
         probeThrottleUntilMs.set(0)

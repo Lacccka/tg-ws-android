@@ -723,23 +723,40 @@ class ProxyServer(
             logger.log("DC${parsed.dcId} direct route skipped because route generation changed")
             return null
         }
-        val skipReason = directAttemptSkipReasonForCurrentRoute()
+        val allowColdDuringSettling = directColdAllowedDuringSettling()
+        val skipReason = directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling)
         if (skipReason != null) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
             logger.log("DC${parsed.dcId} direct route skipped because $skipReason")
             return null
         }
+        val settling = directRouteHealth.isSettling()
         if (usePool && isDirectPoolEnabled()) {
-            val pooled = webSocketPool.get(parsed.dcId, parsed.isMedia, targetHost, wsDomains(parsed.dcId, parsed.isMedia))
-            if (pooled != null) {
-                poolHits.incrementAndGet()
-                logger.log("DC${parsed.dcId} direct WS pool hit")
-                return WebSocketRoute(pooled, "direct-pool")
+            if (settling && allowColdDuringSettling) {
+                logger.log(
+                    "DC${parsed.dcId} route settling prohibits direct pool until ${directRouteHealth.settlingUntilMs()} but allows cold direct",
+                )
+            } else {
+                val pooled = webSocketPool.get(parsed.dcId, parsed.isMedia, targetHost, wsDomains(parsed.dcId, parsed.isMedia))
+                if (pooled != null) {
+                    poolHits.incrementAndGet()
+                    logger.log("DC${parsed.dcId} direct WS pool hit")
+                    return WebSocketRoute(pooled, "direct-pool")
+                }
+                poolMisses.incrementAndGet()
+                logger.log("DC${parsed.dcId} direct WS pool miss")
             }
-            poolMisses.incrementAndGet()
-            logger.log("DC${parsed.dcId} direct WS pool miss")
         }
-        return guardedConnectWebSocket(parsed, targetHost, timeoutMs, expectedGeneration)?.let { WebSocketRoute(it, "direct-cold") }
+        if (settling && allowColdDuringSettling) {
+            logger.log("DC${parsed.dcId} client uses cold direct during route settling until ${directRouteHealth.settlingUntilMs()}")
+        }
+        return guardedConnectWebSocket(
+            parsed,
+            targetHost,
+            timeoutMs,
+            expectedGeneration,
+            allowColdDuringSettling = allowColdDuringSettling,
+        )?.let { WebSocketRoute(it, "direct-cold") }
     }
 
     private fun guardedConnectWebSocket(
@@ -747,29 +764,31 @@ class ProxyServer(
         targetHost: String,
         timeoutMs: Int,
         expectedGeneration: Long? = null,
+        allowColdDuringSettling: Boolean = directColdAllowedDuringSettling(),
     ): WebSocketBinaryStream? {
         if (expectedGeneration != null && routeGeneration.get() != expectedGeneration) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
             logger.log("DC${parsed.dcId} direct connect skipped because route generation changed")
             return null
         }
-        val skipReason = directAttemptSkipReasonForCurrentRoute()
+        val skipReason = directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling)
         if (skipReason != null) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
             logger.log("DC${parsed.dcId} direct connect skipped because $skipReason")
             return null
         }
-        return connectWebSocket(parsed, targetHost, timeoutMs)
+        return connectWebSocket(parsed, targetHost, timeoutMs, allowColdDuringSettling)
     }
 
     private fun connectWebSocket(
         parsed: MtprotoHandshake.Result,
         targetHost: String,
         timeoutMs: Int,
+        allowColdDuringSettling: Boolean = directColdAllowedDuringSettling(),
     ): WebSocketBinaryStream? {
         val failures = mutableListOf<String>()
         for (domain in wsDomains(parsed.dcId, parsed.isMedia)) {
-            if (!isDirectAttemptAllowedForCurrentRoute()) {
+            if (!isDirectAttemptAllowedForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling)) {
                 directAttemptsSkippedBecauseRoute.incrementAndGet()
                 logger.log("DC${parsed.dcId} direct WebSocket attempt skipped before $domain because route/network changed")
                 break
@@ -1105,9 +1124,10 @@ class ProxyServer(
 
     private fun isDirectPoolEnabled(): Boolean = isDirectPoolEnabledFor(effectiveRouteMode())
 
-    private fun isDirectAttemptAllowedForCurrentRoute(): Boolean = directAttemptSkipReasonForCurrentRoute() == null
+    private fun isDirectAttemptAllowedForCurrentRoute(allowColdDuringSettling: Boolean = false): Boolean =
+        directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling) == null
 
-    private fun directAttemptSkipReasonForCurrentRoute(): String? {
+    private fun directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling: Boolean = false): String? {
         val snapshot = routeState.snapshot()
         if (snapshot.configuredRouteMode == NetworkRouteMode.DIRECT_FIRST) {
             return if (snapshot.effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST) null
@@ -1118,13 +1138,21 @@ class ProxyServer(
         ) {
             return "network=$currentNetworkStatus"
         }
-        if (directRouteHealth.isSettling()) return "route settling"
+        if (directRouteHealth.isSettling() && !allowColdDuringSettling) return "route settling"
         return when (snapshot.effectiveRouteMode) {
             NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> null
             NetworkRouteMode.CF_FIRST -> if (snapshot.configuredRouteMode == NetworkRouteMode.CF_FIRST) null
                 else "effective route mode ${snapshot.effectiveRouteMode.configValue}"
             NetworkRouteMode.CF_ONLY -> "effective route mode ${snapshot.effectiveRouteMode.configValue}"
         }
+    }
+
+    private fun directColdAllowedDuringSettling(): Boolean {
+        val snapshot = routeState.snapshot()
+        return snapshot.configuredRouteMode == NetworkRouteMode.AUTO &&
+            snapshot.effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST &&
+            isWifi(currentNetworkStatus) &&
+            directRouteHealth.currentState() == DirectHealthState.HEALTHY
     }
 
     private fun handlePoolForRouteChange(previous: NetworkRouteMode, current: NetworkRouteMode) {
@@ -1199,6 +1227,10 @@ class ProxyServer(
     private fun downgradeDirectRouteBecauseHealthDegraded(reason: String) {
         if (routeState.configuredRouteMode != NetworkRouteMode.AUTO) return
         if (effectiveRouteMode() != NetworkRouteMode.DIRECT_FIRST) return
+        if (directRouteHealth.isSettling() && reason.contains("no route available", ignoreCase = true)) {
+            logger.log("direct downgrade skipped because no route available was caused by route settling: $reason")
+            return
+        }
         directRouteHealth.startCooldown(DIRECT_HEALTH_COOLDOWN_MS, reason)
         val result = applyEffectiveRouteMode(
             NetworkRouteMode.CF_FIRST,
@@ -1230,7 +1262,7 @@ class ProxyServer(
         if (snapshot.effectiveRouteMode != NetworkRouteMode.DIRECT_FIRST) return false
         if (snapshot.configuredRouteMode == NetworkRouteMode.DIRECT_FIRST) return true
         if (!isWifi(currentNetworkStatus)) return false
-        if (directRouteHealth.isSettling()) return false
+        if (directRouteHealth.isSettling() && !directColdAllowedDuringSettling()) return false
         return true
     }
 
