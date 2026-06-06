@@ -1005,6 +1005,96 @@ class ProxyServerTest {
     }
 
 
+
+    @Test
+    fun cfAllCooldownCircuitSuppressesRepeatedCfConnectButKeepsDirectFallback() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val domains = CopyOnWriteArrayList<String>()
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
+            domains.add(domain)
+            if (domain.endsWith(".cf.example")) throw IOException("HTTP 429 planned for $domain")
+            FakeWebSocketBinaryStream()
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_FIRST,
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { domains.count { it == "kws2.cf.example" } == 1 && domains.any { it == "kws2.web.telegram.org" } }
+
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil {
+            domains.count { it == "kws2.cf.example" } == 2 &&
+                domains.count { it == "kws2.web.telegram.org" } == 2
+        }
+
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { proxy.stats().connectionsTotal == 3L && domains.count { it == "kws2.web.telegram.org" } == 3 }
+        proxy.stop()
+
+        assertEquals(
+            "normal CF failure plus one allowed all-cooldown least-bad attempt are expected; suppressed retry must not start a third CF connect",
+            2,
+            domains.count { it == "kws2.cf.example" },
+        )
+        assertEquals(
+            "CF_FIRST direct fallback must still run after normal, allowed all-cooldown, and suppressed all-cooldown CF failures",
+            3,
+            domains.count { it == "kws2.web.telegram.org" },
+        )
+        assertEquals("exactly one repeated all-cooldown attempt should be suppressed", 1L, proxy.stats().cfAllCooldownAttemptsSuppressed)
+        assertEquals("suppression should be counted as a controlled failure", 1L, proxy.stats().cfAllCooldownControlledFailures)
+        assertTrue(logs.any { it.contains("CF all-cooldown circuit suppressed single least-bad attempt for DC2") })
+    }
+
+    @Test
+    fun cfAllCooldownCircuitSuppressionFailsWhenNoFallbackRouteAllowed() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val domains = CopyOnWriteArrayList<String>()
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
+            domains.add(domain)
+            throw IOException("HTTP 429 planned for $domain")
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_ONLY,
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { domains.count { it == "kws2.cf.example" } == 1 }
+
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { domains.count { it == "kws2.cf.example" } == 2 }
+
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { proxy.stats().connectionsTotal == 3L && logs.count { it.contains("no route available after CF-only attempts") } == 3 }
+        proxy.stop()
+
+        assertEquals(
+            "CF_ONLY should perform the initial CF failure and one allowed all-cooldown attempt, but suppression must not open another CF connect",
+            2,
+            domains.count { it == "kws2.cf.example" },
+        )
+        assertEquals("CF_ONLY must not use direct fallback", 0, domains.count { it.endsWith(".web.telegram.org") })
+        assertEquals("third CF-only all-cooldown attempt should be suppressed", 1L, proxy.stats().cfAllCooldownAttemptsSuppressed)
+        assertTrue(logs.any { it.contains("CF all-cooldown controlled failure for DC2 instead of starting another connect") })
+    }
+
     @Test
     fun networkChangeMobileToWifiKeepsCfFirstUntilDirectHealthSucceeds() {
         val server = FakeTcpServerTransport()

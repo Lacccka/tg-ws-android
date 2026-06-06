@@ -188,6 +188,77 @@ class CfProxyDomainsTest {
         assertEquals(2L, health.snapshot().allCooldownStoppedCycles)
     }
 
+
+    @Test
+    fun allCooldownCircuitSuppressesRepeatedLeastBadAttemptsWithinWindow() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        health.recordFailure(2, false, "two.example", RuntimeException("HTTP 503"), "mobile", false)
+
+        val first = health.selectDomains(2)
+        val second = health.selectDomains(2)
+
+        assertTrue(first.allDomainsInCooldownFallback)
+        assertTrue(first.allDomainsInCooldownCircuitOpened)
+        assertEquals(1, first.ordered.size)
+        assertTrue(second.allDomainsInCooldownCircuitSuppressed)
+        assertTrue(second.ordered.isEmpty())
+        val snapshot = health.snapshot()
+        assertEquals(1L, snapshot.allCooldownAttemptsAllowed)
+        assertEquals(1L, snapshot.allCooldownAttemptsSuppressed)
+        assertEquals(1L, snapshot.allCooldownControlledFailures)
+        assertEquals(1L, snapshot.allCooldownCircuitOpenCount)
+        assertEquals(1_000L + CfDomainHealth.ALL_COOLDOWN_SINGLE_ATTEMPT_WINDOW_MS, snapshot.allCooldownCircuitOpenByDc[2])
+    }
+
+    @Test
+    fun allCooldownCircuitAllowsNewAttemptAfterWindow() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        health.recordFailure(2, false, "two.example", RuntimeException("HTTP 503"), "mobile", false)
+
+        assertTrue(health.selectDomains(2).allDomainsInCooldownFallback)
+        now += CfDomainHealth.ALL_COOLDOWN_SINGLE_ATTEMPT_WINDOW_MS + 1
+        val second = health.selectDomains(2)
+
+        assertTrue(second.allDomainsInCooldownFallback)
+        assertEquals(2L, health.snapshot().allCooldownAttemptsAllowed)
+    }
+
+    @Test
+    fun allCooldownCircuitResetsAfterCfSuccess() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        health.recordFailure(2, false, "two.example", RuntimeException("HTTP 503"), "mobile", false)
+        assertTrue(health.selectDomains(2).allDomainsInCooldownFallback)
+
+        health.recordSuccess(2, false, "one.example", latencyMs = 100)
+
+        assertFalse(health.snapshot().allCooldownCircuitOpenByDc.containsKey(2))
+        assertEquals("one.example", health.selectDomains(2).ordered.first().domain)
+    }
+
+    @Test
+    fun allCooldownCircuitIsPerDcNotGlobal() {
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { 1_000L }, jitterRatio = { 0.0 })
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        health.recordFailure(2, false, "two.example", RuntimeException("HTTP 503"), "mobile", false)
+        health.recordFailure(4, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        health.recordFailure(4, false, "two.example", RuntimeException("HTTP 503"), "mobile", false)
+
+        val dc2 = health.selectDomains(2)
+        val dc4 = health.selectDomains(4)
+        val dc2Suppressed = health.selectDomains(2)
+
+        assertTrue(dc2.allDomainsInCooldownFallback)
+        assertTrue(dc4.allDomainsInCooldownFallback)
+        assertTrue(dc2Suppressed.allDomainsInCooldownCircuitSuppressed)
+        assertEquals(2L, health.snapshot().allCooldownAttemptsAllowed)
+    }
+
     @Test
     fun cfOrderingIsPerDc() {
         val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { 1_000L })

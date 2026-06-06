@@ -140,6 +140,11 @@ data class ProxyServerStats(
     val cf429BackoffCount: Long = 0,
     val cfAllCooldownWaits: Long = 0,
     val cfAllCooldownWaitMs: Long = 0,
+    val cfAllCooldownCircuitOpenCount: Long = 0,
+    val cfAllCooldownAttemptsAllowed: Long = 0,
+    val cfAllCooldownAttemptsSuppressed: Long = 0,
+    val cfAllCooldownControlledFailures: Long = 0,
+    val cfAllCooldownCircuitOpenByDc: Map<Int, Long> = emptyMap(),
     val cfAllCooldownSingleAttempts: Long = 0,
     val cfAllCooldownSingleAttemptFailures: Long = 0,
     val cfAllCooldownStoppedCycles: Long = 0,
@@ -470,6 +475,11 @@ class ProxyServer(
             cf429BackoffCount = cfHealthSnapshot.backoffCount,
             cfAllCooldownWaits = cfHealthSnapshot.allCooldownWaits,
             cfAllCooldownWaitMs = cfHealthSnapshot.allCooldownWaitMs,
+            cfAllCooldownCircuitOpenCount = cfHealthSnapshot.allCooldownCircuitOpenCount,
+            cfAllCooldownAttemptsAllowed = cfHealthSnapshot.allCooldownAttemptsAllowed,
+            cfAllCooldownAttemptsSuppressed = cfHealthSnapshot.allCooldownAttemptsSuppressed,
+            cfAllCooldownControlledFailures = cfHealthSnapshot.allCooldownControlledFailures,
+            cfAllCooldownCircuitOpenByDc = cfHealthSnapshot.allCooldownCircuitOpenByDc,
             cfAllCooldownSingleAttempts = cfHealthSnapshot.allCooldownSingleAttempts,
             cfAllCooldownSingleAttemptFailures = cfHealthSnapshot.allCooldownSingleAttemptFailures,
             cfAllCooldownStoppedCycles = cfHealthSnapshot.allCooldownStoppedCycles,
@@ -852,15 +862,34 @@ class ProxyServer(
             logger.log("CF domain skipped because in-flight DC${parsed.dcId} domain=${skipped.domain}")
         }
         if (selectionPlan.allDomainsInCooldownWaitMs > 0) {
-            logger.log("CF all domains in cooldown; waiting ${selectionPlan.allDomainsInCooldownWaitMs}ms for DC${parsed.dcId}")
+            logger.log(
+                "CF all domains in cooldown; client waits ${selectionPlan.allDomainsInCooldownWaitMs}ms " +
+                    "for nearest cooldown on DC${parsed.dcId}",
+            )
             sleepQuietly(selectionPlan.allDomainsInCooldownWaitMs)
+            logger.log("CF all domains in cooldown wait ended; retry route selection for DC${parsed.dcId}")
             return tryCfProxyFallbackCycle(client, parsed, relayInit, cryptoContext, splitter, cycleState)
+        }
+        if (selectionPlan.allDomainsInCooldownCircuitSuppressed) {
+            logger.log(
+                "CF all-cooldown circuit suppressed single least-bad attempt for DC${parsed.dcId}; " +
+                    "retryAt=${selectionPlan.allDomainsInCooldownCircuitRetryAtMs}",
+            )
+            logger.log("CF all-cooldown controlled failure for DC${parsed.dcId} instead of starting another connect")
+            return false
         }
         if (selectionPlan.allDomainsInCooldownStoppedCycle) {
             logger.log("CF all-cooldown single attempt failed; stop fallback cycle for DC${parsed.dcId}")
             return false
         }
         if (selectionPlan.allDomainsInCooldownFallback) {
+            if (selectionPlan.allDomainsInCooldownCircuitOpened) {
+                logger.log(
+                    "CF all-cooldown circuit opened for DC${parsed.dcId}; " +
+                        "nextAllowedAt=${selectionPlan.allDomainsInCooldownCircuitRetryAtMs}",
+                )
+            }
+            logger.log("CF all-cooldown circuit allowed single least-bad attempt for DC${parsed.dcId}")
             logger.log("CF all domains in cooldown; single least-bad attempt for DC${parsed.dcId}")
         }
 
@@ -940,8 +969,9 @@ class ProxyServer(
             try {
                 cfProxyConnections.incrementAndGet()
                 lastCfDomain = domain
-                cfDomainHealth.recordSuccess(parsed.dcId, parsed.isMedia, baseDomain, latencyMs)
+                val circuitReset = cfDomainHealth.recordSuccess(parsed.dcId, parsed.isMedia, baseDomain, latencyMs)
                 lastSuccessfulRouteTimeMs.set(System.currentTimeMillis())
+                if (circuitReset) logger.log("CF all-cooldown circuit reset after success for DC${parsed.dcId}")
                 logger.log("CF domain success DC${parsed.dcId} $baseDomain latencyMs=$latencyMs")
                 logger.log("DC${parsed.dcId} CF proxy connected via $domain")
                 cfProxyBalancer.updateDomainForDc(parsed.dcId, baseDomain)

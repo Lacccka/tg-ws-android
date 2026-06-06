@@ -173,9 +173,14 @@ class RuntimeLogStoreTest {
             cf429BackoffCount = 24,
             cfAllCooldownWaits = 25,
             cfAllCooldownWaitMs = 250,
-            cfAllCooldownSingleAttempts = 26,
-            cfAllCooldownSingleAttemptFailures = 27,
-            cfAllCooldownStoppedCycles = 28,
+            cfAllCooldownCircuitOpenCount = 26,
+            cfAllCooldownAttemptsAllowed = 27,
+            cfAllCooldownAttemptsSuppressed = 28,
+            cfAllCooldownControlledFailures = 29,
+            cfAllCooldownCircuitOpenByDc = mapOf(2 to 123_456L),
+            cfAllCooldownSingleAttempts = 30,
+            cfAllCooldownSingleAttemptFailures = 31,
+            cfAllCooldownStoppedCycles = 32,
             cfHealthDomains = listOf(
                 CfDomainSnapshot(
                     dcId = 2,
@@ -228,7 +233,11 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("cfConnectQueueWaits=21"))
         assertTrue(report.contains("cf429BackoffCount=24"))
         assertTrue(report.contains("cfQueueControlledFailures=23"))
-        assertTrue(report.contains("cfAllCooldownSingleAttempts=26"))
+        assertTrue(report.contains("cfAllCooldownAttemptsAllowed=27"))
+        assertTrue(report.contains("cfAllCooldownAttemptsSuppressed=28"))
+        assertTrue(report.contains("cfAllCooldownControlledFailures=29"))
+        assertTrue(report.contains("cfAllCooldownCircuitOpenByDc={DC2=123456}"))
+        assertTrue(report.contains("cfAllCooldownSingleAttempts=30"))
         assertTrue(report.contains("CF health:"))
         assertTrue(report.contains("best=kws2.one.example latency=123"))
         assertTrue(report.contains("02:45:30 INFO proxy ProxyServer listening"))

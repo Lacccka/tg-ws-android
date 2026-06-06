@@ -141,6 +141,11 @@ object DiagnosticReportFormatter {
             "cfMaxConcurrentConnectsByDc=${formatIntByDc(stats.cfMaxConcurrentConnectsByDc)}, " +
             "cf429BackoffCount=${stats.cf429BackoffCount}, cfAllCooldownWaits=${stats.cfAllCooldownWaits}, " +
             "cfAllCooldownWaitMs=${stats.cfAllCooldownWaitMs}, " +
+            "cfAllCooldownCircuitOpenCount=${stats.cfAllCooldownCircuitOpenCount}, " +
+            "cfAllCooldownAttemptsAllowed=${stats.cfAllCooldownAttemptsAllowed}, " +
+            "cfAllCooldownAttemptsSuppressed=${stats.cfAllCooldownAttemptsSuppressed}, " +
+            "cfAllCooldownControlledFailures=${stats.cfAllCooldownControlledFailures}, " +
+            "cfAllCooldownCircuitOpenByDc=${formatLongByDc(stats.cfAllCooldownCircuitOpenByDc)}, " +
             "cfAllCooldownSingleAttempts=${stats.cfAllCooldownSingleAttempts}, " +
             "cfAllCooldownSingleAttemptFailures=${stats.cfAllCooldownSingleAttemptFailures}, " +
             "cfAllCooldownStoppedCycles=${stats.cfAllCooldownStoppedCycles}, " +
@@ -191,6 +196,13 @@ object DiagnosticReportFormatter {
         }
 
     private fun formatIntByDc(valuesByDc: Map<Int, Int>): String =
+        if (valuesByDc.isEmpty()) {
+            "none"
+        } else {
+            valuesByDc.toSortedMap().entries.joinToString(prefix = "{", postfix = "}") { (dcId, value) -> "DC$dcId=$value" }
+        }
+
+    private fun formatLongByDc(valuesByDc: Map<Int, Long>): String =
         if (valuesByDc.isEmpty()) {
             "none"
         } else {

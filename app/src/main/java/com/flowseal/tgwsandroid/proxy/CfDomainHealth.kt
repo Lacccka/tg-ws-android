@@ -30,6 +30,10 @@ class CfDomainHealth(
     private var queueWaitMs: Long = 0
     private var allCooldownWaits: Long = 0
     private var allCooldownWaitMs: Long = 0
+    private var allCooldownCircuitOpenCount: Long = 0
+    private var allCooldownAttemptsAllowed: Long = 0
+    private var allCooldownAttemptsSuppressed: Long = 0
+    private var allCooldownControlledFailures: Long = 0
     private var allCooldownSingleAttempts: Long = 0
     private var allCooldownSingleAttemptFailures: Long = 0
     private var allCooldownStoppedCycles: Long = 0
@@ -40,6 +44,7 @@ class CfDomainHealth(
     private val activeConnectsByDc = mutableMapOf<Int, Int>()
     private val maxConcurrentConnectsByDc = mutableMapOf<Int, Int>()
     private val inFlightByDomain = mutableMapOf<CfDomainKey, Int>()
+    private val allCooldownCircuitByDc = mutableMapOf<Int, MutableCfAllCooldownCircuitState>()
 
     @Synchronized
     fun updateDomainsList(domainsList: List<String>) {
@@ -105,6 +110,7 @@ class CfDomainHealth(
 
         val soonestCooldown = entries.minOfOrNull { it.cooldownUntilMs } ?: 0L
         val waitMs = (soonestCooldown - now).coerceAtLeast(0L)
+        val circuitState = allCooldownCircuitByDc.getOrPut(dcId) { MutableCfAllCooldownCircuitState() }
         if (waitMs in 1..ALL_COOLDOWN_WAIT_THRESHOLD_MS) {
             val waitWithJitterMs = waitMs + ALL_COOLDOWN_WAIT_JITTER_MS
             allCooldownWaits += 1
@@ -129,9 +135,28 @@ class CfDomainHealth(
             )
         }
 
-        cycleState.allCooldownFallbackUsed = true
         allDomainsInCooldownFallbacks += 1
+        val nextAllowedAtMs = circuitState.nextAllowedAttemptAtMs
+        if (nextAllowedAtMs > now) {
+            allCooldownAttemptsSuppressed += 1
+            allCooldownControlledFailures += 1
+            return CfDomainSelectionPlan(
+                ordered = emptyList(),
+                skippedCooldown = entries.sortedWith(cooldownFallbackComparator()),
+                skippedInflight = emptyList(),
+                allDomainsInCooldownFallback = false,
+                allDomainsInCooldownCircuitSuppressed = true,
+                allDomainsInCooldownCircuitRetryAtMs = minOf(nextAllowedAtMs, soonestCooldown.takeIf { it > now } ?: nextAllowedAtMs),
+            )
+        }
+
+        cycleState.allCooldownFallbackUsed = true
+        allCooldownCircuitOpenCount += 1
+        allCooldownAttemptsAllowed += 1
         allCooldownSingleAttempts += 1
+        val openUntilMs = minOf(now + ALL_COOLDOWN_SINGLE_ATTEMPT_WINDOW_MS, soonestCooldown.takeIf { it > now } ?: Long.MAX_VALUE)
+        circuitState.nextAllowedAttemptAtMs = if (openUntilMs == Long.MAX_VALUE) now + ALL_COOLDOWN_SINGLE_ATTEMPT_WINDOW_MS else openUntilMs
+        circuitState.lastOpenedAtMs = now
         return CfDomainSelectionPlan(
             ordered = entries
                 .sortedWith(cooldownFallbackComparator())
@@ -140,6 +165,8 @@ class CfDomainHealth(
             skippedCooldown = emptyList(),
             skippedInflight = emptyList(),
             allDomainsInCooldownFallback = true,
+            allDomainsInCooldownCircuitOpened = true,
+            allDomainsInCooldownCircuitRetryAtMs = circuitState.nextAllowedAttemptAtMs,
         )
     }
 
@@ -151,8 +178,8 @@ class CfDomainHealth(
     }
 
     @Synchronized
-    fun recordSuccess(dcId: Int, isMedia: Boolean, baseDomain: String, latencyMs: Long) {
-        val normalized = normalizeKnownDomain(baseDomain) ?: return
+    fun recordSuccess(dcId: Int, isMedia: Boolean, baseDomain: String, latencyMs: Long): Boolean {
+        val normalized = normalizeKnownDomain(baseDomain) ?: return false
         val state = stateFor(dcId, isMedia, normalized)
         val now = nowMs()
         state.successes += 1
@@ -168,7 +195,9 @@ class CfDomainHealth(
         state.ewmaLatencyMs = state.ewmaLatencyMs?.let { (it * 0.7) + (latencyMs * 0.3) } ?: latencyMs.toDouble()
         state.cooldownUntilMs = 0
         state.lastErrorKind = null
+        val circuitReset = allCooldownCircuitByDc.remove(dcId) != null
         lastConnectLatencyMs = latencyMs
+        return circuitReset
     }
 
     @Synchronized
@@ -375,6 +404,14 @@ class CfDomainHealth(
             backoffCount = rows.sumOf { it.total429 },
             allCooldownWaits = allCooldownWaits,
             allCooldownWaitMs = allCooldownWaitMs,
+            allCooldownCircuitOpenCount = allCooldownCircuitOpenCount,
+            allCooldownAttemptsAllowed = allCooldownAttemptsAllowed,
+            allCooldownAttemptsSuppressed = allCooldownAttemptsSuppressed,
+            allCooldownControlledFailures = allCooldownControlledFailures,
+            allCooldownCircuitOpenByDc = allCooldownCircuitByDc
+                .filterValues { it.nextAllowedAttemptAtMs > now }
+                .mapValues { (_, state) -> state.nextAllowedAttemptAtMs }
+                .toSortedMap(),
             allCooldownSingleAttempts = allCooldownSingleAttempts,
             allCooldownSingleAttemptFailures = allCooldownSingleAttemptFailures,
             allCooldownStoppedCycles = allCooldownStoppedCycles,
@@ -481,6 +518,7 @@ class CfDomainHealth(
         const val DEFAULT_MAX_CONCURRENT_CF_CONNECTS_PER_DC: Int = 2
         const val CONNECT_QUEUE_WAIT_MS: Long = 250L
         const val ALL_COOLDOWN_WAIT_THRESHOLD_MS: Long = 500L
+        const val ALL_COOLDOWN_SINGLE_ATTEMPT_WINDOW_MS: Long = 3_000L
         private const val ALL_COOLDOWN_WAIT_JITTER_MS: Long = 25L
         private val TRANSIENT_NETWORK_ERROR_VALUES = setOf(
             CfDomainErrorKind.UNKNOWN_HOST.configValue,
@@ -498,6 +536,9 @@ data class CfDomainSelectionPlan(
     val skippedInflight: List<CfDomainSelection> = emptyList(),
     val allDomainsInCooldownWaitMs: Long = 0L,
     val allDomainsInCooldownStoppedCycle: Boolean = false,
+    val allDomainsInCooldownCircuitOpened: Boolean = false,
+    val allDomainsInCooldownCircuitSuppressed: Boolean = false,
+    val allDomainsInCooldownCircuitRetryAtMs: Long = 0L,
 )
 
 class CfDomainFallbackCycleState {
@@ -557,6 +598,11 @@ data class CfDomainHealthSnapshot(
     val backoffCount: Long,
     val allCooldownWaits: Long,
     val allCooldownWaitMs: Long,
+    val allCooldownCircuitOpenCount: Long,
+    val allCooldownAttemptsAllowed: Long,
+    val allCooldownAttemptsSuppressed: Long,
+    val allCooldownControlledFailures: Long,
+    val allCooldownCircuitOpenByDc: Map<Int, Long>,
     val allCooldownSingleAttempts: Long,
     val allCooldownSingleAttemptFailures: Long,
     val allCooldownStoppedCycles: Long,
@@ -606,6 +652,11 @@ private data class CfDomainKey(
     val isMedia: Boolean,
     val domain: String,
 )
+
+private class MutableCfAllCooldownCircuitState {
+    var nextAllowedAttemptAtMs: Long = 0
+    var lastOpenedAtMs: Long = 0
+}
 
 private class MutableCfDomainState {
     var successes: Long = 0
