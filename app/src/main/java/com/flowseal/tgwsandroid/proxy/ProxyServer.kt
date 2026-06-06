@@ -169,6 +169,14 @@ data class ProxyServerStats(
     val cfFailuresIgnoredBecauseNetworkChanged: Long = 0,
     val cfCooldownsSkippedBecauseNetworkSettling: Long = 0,
     val cfTransientCooldownsClearedOnNetworkAvailable: Long = 0,
+    val networkSettlingWaits: Long = 0,
+    val networkSettlingWaitMs: Long = 0,
+    val networkSettlingResumedAfterAvailable: Long = 0,
+    val networkSettlingControlledFailures: Long = 0,
+    val networkSettlingStaleAttemptsIgnored: Long = 0,
+    val networkSettlingUntilMs: Long = 0,
+    val lastNetworkLostAtMs: Long = 0,
+    val lastNetworkAvailableAtMs: Long = 0,
     val cfHealthDomains: List<CfDomainSnapshot> = emptyList(),
     val recentInvalidHandshakeCount: Long = 0,
     val recentAcceptedHandshakeCount: Long = 0,
@@ -459,7 +467,16 @@ class ProxyServer(
     private val poolResultsDiscardedAfterRouteChange = AtomicLong(0)
     private val routeChangesImmediate = AtomicLong(0)
     private val networkNoneEvents = AtomicLong(0)
+    private val networkSettlingWaits = AtomicLong(0)
+    private val networkSettlingWaitMs = AtomicLong(0)
+    private val networkSettlingResumedAfterAvailable = AtomicLong(0)
+    private val networkSettlingControlledFailures = AtomicLong(0)
+    private val networkSettlingStaleAttemptsIgnored = AtomicLong(0)
     private val routeGeneration = AtomicLong(0)
+    private val networkStateMonitor = Object()
+    private val networkSettlingUntilMs = AtomicLong(0)
+    private val lastNetworkLostAtMs = AtomicLong(0)
+    private val lastNetworkAvailableAtMs = AtomicLong(0)
     @Volatile private var currentNetworkStatus: String = config.networkStatus.ifBlank { "unknown" }
     @Volatile private var directPoolStaleInWindow: Long = 0
     @Volatile private var lastDirectPoolStaleWindowStartMs: Long = 0
@@ -504,6 +521,7 @@ class ProxyServer(
 
     fun stop() {
         if (!running.compareAndSet(true, false)) return
+        synchronized(networkStateMonitor) { networkStateMonitor.notifyAll() }
         try {
             serverTransport.close()
         } catch (_: Throwable) {
@@ -606,6 +624,14 @@ class ProxyServer(
             cfFailuresIgnoredBecauseNetworkChanged = cfHealthSnapshot.failuresIgnoredBecauseNetworkChanged,
             cfCooldownsSkippedBecauseNetworkSettling = cfHealthSnapshot.cooldownsSkippedBecauseNetworkSettling,
             cfTransientCooldownsClearedOnNetworkAvailable = cfHealthSnapshot.transientCooldownsClearedOnNetworkAvailable,
+            networkSettlingWaits = networkSettlingWaits.get(),
+            networkSettlingWaitMs = networkSettlingWaitMs.get(),
+            networkSettlingResumedAfterAvailable = networkSettlingResumedAfterAvailable.get(),
+            networkSettlingControlledFailures = networkSettlingControlledFailures.get(),
+            networkSettlingStaleAttemptsIgnored = networkSettlingStaleAttemptsIgnored.get(),
+            networkSettlingUntilMs = networkSettlingUntilMs.get(),
+            lastNetworkLostAtMs = lastNetworkLostAtMs.get(),
+            lastNetworkAvailableAtMs = lastNetworkAvailableAtMs.get(),
             cfHealthDomains = cfHealthSnapshot.domains,
             recentInvalidHandshakeCount = recentInvalidHandshakeTimes.size.toLong(),
             recentAcceptedHandshakeCount = recentAcceptedHandshakeTimes.size.toLong(),
@@ -630,6 +656,11 @@ class ProxyServer(
             routeChurnAvoided.incrementAndGet()
             directProbeSkippedBecauseAlreadyHealthy.incrementAndGet()
             currentNetworkStatus = normalized
+            if (!normalized.equals("none", ignoreCase = true)) {
+                lastNetworkAvailableAtMs.set(System.currentTimeMillis())
+                networkSettlingUntilMs.set(0L)
+                synchronized(networkStateMonitor) { networkStateMonitor.notifyAll() }
+            }
             logger.log("effective route unchanged: ${NetworkRouteMode.DIRECT_FIRST.configValue} because Wi-Fi capabilities changed; direct route already healthy")
             return routeState.applyEffectiveRouteMode(
                 NetworkRouteMode.DIRECT_FIRST,
@@ -645,12 +676,21 @@ class ProxyServer(
         }
         if (normalized.equals("none", ignoreCase = true)) {
             networkNoneEvents.incrementAndGet()
+            val now = System.currentTimeMillis()
+            lastNetworkLostAtMs.set(now)
+            networkSettlingUntilMs.set(now + NETWORK_SETTLING_WINDOW_MS)
+            logger.log("network settling started after network lost until ${networkSettlingUntilMs.get()}")
             directRouteHealth.resetForSafeRoute()
             webSocketPool.disableAndClear()
             if (immediate) logger.log("network lost: applying safe route immediately")
-        } else if (previousNetworkStatus.equals("none", ignoreCase = true)) {
-            val cleared = cfDomainHealth.clearTransientNetworkCooldowns()
-            if (cleared > 0) logger.log("CF transient DNS cooldowns cleared after network available: $cleared")
+        } else {
+            lastNetworkAvailableAtMs.set(System.currentTimeMillis())
+            networkSettlingUntilMs.set(0L)
+            synchronized(networkStateMonitor) { networkStateMonitor.notifyAll() }
+            if (previousNetworkStatus.equals("none", ignoreCase = true)) {
+                val cleared = cfDomainHealth.clearTransientNetworkCooldowns()
+                if (cleared > 0) logger.log("CF transient DNS cooldowns cleared after network available: $cleared")
+            }
         }
         if (immediate) routeChangesImmediate.incrementAndGet()
         val result = applyEffectiveRouteMode(
@@ -765,6 +805,8 @@ class ProxyServer(
         )
         val splitter = MsgSplitter(relayInit, protoInt)
 
+        if (!waitForNetworkSettlingBeforeRoute(parsed.dcId)) return
+
         if (targetHost == null) {
             if (config.cfproxyEnabled) {
                 logger.log("DC${parsed.dcId} has no direct redirect configured; trying CF fallback")
@@ -801,6 +843,45 @@ class ProxyServer(
         }
     }
 
+
+    private fun waitForNetworkSettlingBeforeRoute(dcId: Int): Boolean {
+        val initialGeneration = routeGeneration.get()
+        val now = System.currentTimeMillis()
+        val settlingUntil = networkSettlingUntilMs.get()
+        if (!currentNetworkStatus.equals("none", ignoreCase = true)) return true
+        if (now < settlingUntil) {
+            val waitMs = (settlingUntil - now).coerceAtMost(NETWORK_SETTLING_CLIENT_WAIT_MAX_MS)
+            networkSettlingWaits.incrementAndGet()
+            networkSettlingWaitMs.addAndGet(waitMs)
+            logger.log("DC$dcId client route waits ${waitMs}ms for network settling until $settlingUntil")
+            synchronized(networkStateMonitor) {
+                if (currentNetworkStatus.equals("none", ignoreCase = true) && System.currentTimeMillis() < networkSettlingUntilMs.get()) {
+                    try {
+                        networkStateMonitor.wait(waitMs.coerceAtLeast(1L))
+                    } catch (_: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                    }
+                }
+            }
+            val newGeneration = routeGeneration.get()
+            val current = currentNetworkStatus
+            if (newGeneration != initialGeneration) {
+                networkSettlingStaleAttemptsIgnored.incrementAndGet()
+                logger.log("DC$dcId route attempt ignored stale network generation $initialGeneration -> $newGeneration after network settling wait")
+            }
+            if (!current.equals("none", ignoreCase = true)) {
+                networkSettlingResumedAfterAvailable.incrementAndGet()
+                logger.log("DC$dcId network appeared during settling as $current; retrying route selection")
+                return true
+            }
+            networkSettlingControlledFailures.incrementAndGet()
+            logger.log("DC$dcId network still none after settling wait; controlled no-route failure")
+            return false
+        }
+        networkSettlingControlledFailures.incrementAndGet()
+        logger.log("DC$dcId network=none outside settling window; controlled no-route failure")
+        return false
+    }
 
     private fun tryDirectRoute(
         client: TcpClientTransport,
@@ -1443,6 +1524,8 @@ class ProxyServer(
         private const val STOP_JOIN_TIMEOUT_MS = 1_000L
         private const val STALE_POOL_MAX_DURATION_MS = 2_000L
         private const val ROUTE_SETTLING_WINDOW_MS = 3_000L
+        private const val NETWORK_SETTLING_WINDOW_MS = 1_500L
+        private const val NETWORK_SETTLING_CLIENT_WAIT_MAX_MS = 1_500L
         private const val DIRECT_HEALTH_COOLDOWN_MS = 45_000L
         private const val DIRECT_PROBE_THROTTLE_MS = 30_000L
         private const val DIRECT_HEALTH_DEGRADE_WINDOW_MS = 10_000L

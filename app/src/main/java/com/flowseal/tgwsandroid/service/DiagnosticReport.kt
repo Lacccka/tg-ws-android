@@ -156,7 +156,12 @@ object DiagnosticReportFormatter {
             "cfFailuresIgnoredBecauseNetworkChanged=${stats.cfFailuresIgnoredBecauseNetworkChanged}, " +
             "cfCooldownsSkippedBecauseNetworkSettling=${stats.cfCooldownsSkippedBecauseNetworkSettling}, " +
             "cfTransientCooldownsClearedOnNetworkAvailable=${stats.cfTransientCooldownsClearedOnNetworkAvailable}, " +
-            "networkGeneration=${stats.networkGeneration}"
+            "networkSettlingWaits=${stats.networkSettlingWaits}, networkSettlingWaitMs=${stats.networkSettlingWaitMs}, " +
+            "networkSettlingResumedAfterAvailable=${stats.networkSettlingResumedAfterAvailable}, " +
+            "networkSettlingControlledFailures=${stats.networkSettlingControlledFailures}, " +
+            "networkSettlingStaleAttemptsIgnored=${stats.networkSettlingStaleAttemptsIgnored}, " +
+            "networkSettlingUntilMs=${stats.networkSettlingUntilMs}, lastNetworkLostAtMs=${stats.lastNetworkLostAtMs}, " +
+            "lastNetworkAvailableAtMs=${stats.lastNetworkAvailableAtMs}, networkGeneration=${stats.networkGeneration}"
     }
 
     private fun StringBuilder.appendCfHealth(stats: ProxyServerStats?) {

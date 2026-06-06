@@ -323,6 +323,126 @@ class ProxyServerTest {
 
 
     @Test
+    fun transientNetworkNoneFollowedByMobileWithinSettlingWindowResumesRouteAttempt() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyNetworkRouteImmediately("none")
+        val generationAtNone = proxy.stats().networkGeneration
+        server.enqueue(client)
+        waitUntil { proxy.stats().networkSettlingWaits == 1L }
+        proxy.applyNetworkRouteImmediately("mobile")
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(listOf("kws2.cf.example"), connector.domains)
+        assertTrue(stats.networkGeneration > generationAtNone)
+        assertEquals(1L, stats.networkSettlingResumedAfterAvailable)
+        assertEquals(1L, stats.networkSettlingStaleAttemptsIgnored)
+        assertEquals(0L, stats.networkSettlingControlledFailures)
+        assertTrue(stats.lastNetworkLostAtMs > 0L)
+        assertTrue(stats.lastNetworkAvailableAtMs > 0L)
+        assertTrue(logs.any { it.contains("network settling started after network lost") })
+        assertTrue(logs.any { it.contains("client route waits") })
+        assertTrue(logs.any { it.contains("network appeared during settling") })
+    }
+
+    @Test
+    fun networkNoneBeyondSettlingWindowReturnsControlledFailureWithoutConnects() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "mobile"),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyNetworkRouteImmediately("none")
+        Thread.sleep(1_650L)
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertTrue(connector.domains.isEmpty())
+        assertEquals(1L, proxy.stats().networkSettlingControlledFailures)
+        assertTrue(logs.any { it.contains("network=none outside settling window; controlled no-route failure") })
+    }
+
+    @Test
+    fun routeAttemptDuringNetworkSettlingDoesNotStartCfConnectWhileNetworkIsNone() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_ONLY,
+                networkStatus = "mobile",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
+        )
+
+        proxy.start()
+        proxy.applyNetworkRouteImmediately("none")
+        server.enqueue(client)
+        waitUntil { proxy.stats().networkSettlingWaits == 1L }
+        Thread.sleep(150L)
+        assertTrue(connector.domains.isEmpty())
+        proxy.applyNetworkRouteImmediately("mobile")
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("kws2.cf.example"), connector.domains)
+    }
+
+    @Test
+    fun routeAttemptDuringNetworkSettlingDoesNotStartDirectConnectWhileNetworkIsNone() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.DIRECT_FIRST, networkStatus = "Wi-Fi", cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        proxy.applyNetworkRouteImmediately("none")
+        server.enqueue(client)
+        waitUntil { proxy.stats().networkSettlingWaits == 1L }
+        Thread.sleep(150L)
+        assertTrue(connector.domains.isEmpty())
+        proxy.applyNetworkRouteImmediately("Wi-Fi")
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(listOf("kws2.web.telegram.org"), connector.domains)
+    }
+
+    @Test
     fun missingDirectRedirectWithCfEnabledAttemptsCfProxyDomain() {
         val client = FakeTcpClientTransport(buildClientHandshake(dcIdx = 5, protoTag = RelayInit.PROTO_TAG_ABRIDGED))
         val server = FakeTcpServerTransport()
@@ -1513,7 +1633,12 @@ class ProxyServerTest {
         val proxy = newProxy(
             server = server,
             connector = connector,
-            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", cfproxyEnabled = false),
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = true,
+                cfProxyDomains = listOf("cf.example"),
+            ),
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -1524,10 +1649,24 @@ class ProxyServerTest {
         waitUntil { client.closed }
         proxy.stop()
 
-        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
-        assertEquals(0, connector.domains.size)
-        assertTrue(proxy.stats().directAttemptsSkippedBecauseRoute > 0L)
-        assertTrue(logs.any { it.contains("direct fallback skipped") || it.contains("no route available after CF-first attempts") })
+        val stats = proxy.stats()
+        assertEquals("persistent network=none should settle back to the safe CF-first route", NetworkRouteMode.CF_FIRST.configValue, stats.effectiveRouteMode)
+        assertEquals("persistent network=none must not start direct or CF connects", 0, connector.domains.size)
+        assertEquals("settling gate should wait once for the transient network=none window", 1L, stats.networkSettlingWaits)
+        assertEquals("persistent network=none should be reported as a controlled settling failure", 1L, stats.networkSettlingControlledFailures)
+        assertEquals("route selection is suppressed before direct skip accounting when network=none persists", 0L, stats.directAttemptsSkippedBecauseRoute)
+        assertTrue(
+            "expected controlled no-route log after bounded settling wait",
+            logs.any { it.contains("network still none after settling wait; controlled no-route failure") },
+        )
+        assertFalse(
+            "persistent network=none must not run stale-pool cold direct retry",
+            logs.any { it.contains("retrying with cold direct route after stale pool") },
+        )
+        assertFalse(
+            "persistent network=none must not enter CF/direct route selection",
+            logs.any { it.contains("no route available after CF-first attempts") || it.contains("direct fallback skipped") },
+        )
     }
 
 
