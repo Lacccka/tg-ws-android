@@ -1127,6 +1127,86 @@ class ProxyServerTest {
 
 
 
+
+    @Test
+    fun saturatedCfPressureSuppressesCfButKeepsAllowedDirectFallback() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val domains = CopyOnWriteArrayList<String>()
+        val health = CfDomainHealth(listOf("one.example", "two.example"), jitterRatio = { 0.0 })
+        repeat(8) { index ->
+            health.recordFailure(2, false, if (index % 2 == 0) "one.example" else "two.example", RuntimeException("HTTP 429"), "mobile", false)
+        }
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
+            domains.add(domain)
+            if (domain.endsWith(".example")) throw IOException("HTTP 429 planned for $domain")
+            FakeWebSocketBinaryStream()
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_FIRST,
+                networkStatus = "Wi-Fi",
+                cfProxyDomains = listOf("one.example", "two.example"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+            cfDomainHealth = health,
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { domains.any { it.endsWith(".web.telegram.org") } }
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { domains.count { it.endsWith(".web.telegram.org") } == 2 }
+        proxy.stop()
+
+        assertEquals("only the saturated probe should start a CF connect", 1, domains.count { it.startsWith("kws2.") && it.endsWith(".example") })
+        assertEquals("direct fallback policy must remain available under CF pressure", 2, domains.count { it.endsWith(".web.telegram.org") })
+        assertTrue("expected second saturated request to suppress a probe inside the probe window", proxy.stats().cfPressureProbeSuppressed >= 1L)
+        assertTrue("expected suppressed saturated probe to be counted as a pressure controlled failure", proxy.stats().cfPressureControlledFailures >= 1L)
+        assertTrue("expected pressure suppression log", logs.any { it.contains("CF pressure saturated: probe suppressed") })
+    }
+
+    @Test
+    fun saturatedCfPressureDoesNotUseDirectFallbackWhenCfOnlyForbidsIt() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val domains = CopyOnWriteArrayList<String>()
+        val health = CfDomainHealth(listOf("one.example", "two.example"), jitterRatio = { 0.0 })
+        repeat(8) { index ->
+            health.recordFailure(2, false, if (index % 2 == 0) "one.example" else "two.example", RuntimeException("HTTP 429"), "mobile", false)
+        }
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
+            domains.add(domain)
+            throw IOException("HTTP 429 planned for $domain")
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_ONLY,
+                networkStatus = "Wi-Fi",
+                cfProxyDomains = listOf("one.example", "two.example"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+            cfDomainHealth = health,
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { logs.any { it.contains("no route available after CF-only attempts") } }
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { logs.count { it.contains("no route available after CF-only attempts") } == 2 }
+        proxy.stop()
+
+        assertEquals("CF_ONLY should allow exactly one saturated CF probe in the probe window", 1, domains.count { it.startsWith("kws2.") && it.endsWith(".example") })
+        assertEquals("CF_ONLY must not use direct fallback when saturated pressure suppresses CF", 0, domains.count { it.endsWith(".web.telegram.org") })
+        assertTrue("expected saturated CF_ONLY request to suppress second probe", proxy.stats().cfPressureProbeSuppressed >= 1L)
+        assertTrue("expected saturated CF_ONLY suppression to be a pressure controlled failure", proxy.stats().cfPressureControlledFailures >= 1L)
+        assertTrue("expected pressure suppression log", logs.any { it.contains("CF pressure saturated: probe suppressed") })
+    }
+
     @Test
     fun cfAllCooldownCircuitSuppressesRepeatedCfConnectButKeepsDirectFallback() {
         val server = FakeTcpServerTransport()
@@ -1807,12 +1887,14 @@ class ProxyServerTest {
         runner: ProxyBridgeRunner = ProxyBridgeRunner { _, _, _, _, _ -> },
         config: ProxyServerConfig = baseConfig(),
         logger: ProxyLogger = ProxyLogger {},
+        cfDomainHealth: CfDomainHealth = CfDomainHealth(config.cfProxyDomains),
     ): ProxyServer =
         ProxyServer(
             config = config,
             serverTransport = server,
             webSocketConnector = connector,
             bridgeRunner = runner,
+            cfDomainHealth = cfDomainHealth,
             randomBytes = DeterministicRandomBytes,
             logger = logger,
         )

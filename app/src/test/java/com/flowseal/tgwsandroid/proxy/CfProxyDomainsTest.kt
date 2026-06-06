@@ -557,4 +557,128 @@ class CfProxyDomainsTest {
         assertTrue(health.snapshot().activeConnectsByDc.isEmpty())
     }
 
+
+    @Test
+    fun pressureRecentFailuresMoveDcToDegradedThenSaturated() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now }, jitterRatio = { 0.0 })
+
+        repeat(5) { index ->
+            health.recordFailure(2, false, if (index % 2 == 0) "one.example" else "two.example", RuntimeException("HTTP 429"), "mobile", false)
+            now += 1
+        }
+        assertEquals(CfPressureLevel.DEGRADED, health.beginPressureManagedCycle(2, "mobile").level)
+
+        repeat(3) { index ->
+            health.recordFailure(2, false, if (index % 2 == 0) "one.example" else "two.example", SocketTimeoutException("timeout"), "mobile", false)
+            now += 1
+        }
+
+        val saturated = health.beginPressureManagedCycle(2, "mobile")
+        assertEquals(CfPressureLevel.SATURATED, saturated.level)
+        assertTrue(saturated.probeAllowed)
+        val snapshot = health.snapshot().pressure
+        assertEquals("saturated", snapshot.levelByDc[2])
+        assertEquals(5L, snapshot.recent429ByDc[2])
+        assertEquals(3L, snapshot.recentTimeoutByDc[2])
+    }
+
+    @Test
+    fun pressureNormalKeepsCfSelectionBehavior() {
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { 1_000L })
+        health.recordSuccess(2, false, "two.example", latencyMs = 120)
+
+        val decision = health.beginPressureManagedCycle(2, "mobile")
+        val plan = health.selectDomains(2)
+
+        assertEquals(CfPressureLevel.NORMAL, decision.level)
+        assertEquals(Int.MAX_VALUE, decision.maxAttempts)
+        assertEquals("two.example", plan.ordered.first().domain)
+    }
+
+    @Test
+    fun pressureDegradedLimitsMobileAttemptsPerClientCycle() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        health.recordSuccess(2, false, "one.example", latencyMs = 90)
+        repeat(5) {
+            now += 1
+            health.recordFailure(2, false, "two.example", RuntimeException("HTTP 429"), "mobile", false)
+        }
+
+        val mobile = health.beginPressureManagedCycle(2, "mobile")
+        val wifi = health.beginPressureManagedCycle(2, "Wi-Fi")
+
+        assertEquals(CfPressureLevel.DEGRADED, mobile.level)
+        assertEquals(CfDomainHealth.DEGRADED_MOBILE_MAX_ATTEMPTS_PER_CYCLE, mobile.maxAttempts)
+        assertEquals(CfDomainHealth.DEGRADED_DEFAULT_MAX_ATTEMPTS_PER_CYCLE, wifi.maxAttempts)
+        assertEquals(CfDomainHealth.DEGRADED_CONNECT_QUEUE_WAIT_MS, mobile.connectQueueWaitMs)
+    }
+
+    @Test
+    fun pressureSaturatedSuppressesNormalConnectsAndAllowsOneProbePerWindow() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        repeat(8) { index ->
+            health.recordFailure(2, false, if (index % 2 == 0) "one.example" else "two.example", RuntimeException("HTTP 429"), "mobile", false)
+            now += 1
+        }
+
+        val probe = health.beginPressureManagedCycle(2, "mobile")
+        val suppressed = health.beginPressureManagedCycle(2, "mobile")
+        now = probe.nextProbeAtMs + 1
+        val nextProbe = health.beginPressureManagedCycle(2, "mobile")
+
+        assertEquals(CfPressureLevel.SATURATED, probe.level)
+        assertTrue(probe.probeAllowed)
+        assertFalse(probe.controlledFailure)
+        assertEquals(1, probe.maxAttempts)
+        assertTrue(suppressed.controlledFailure)
+        assertFalse(suppressed.probeAllowed)
+        assertTrue(nextProbe.probeAllowed)
+        val snapshot = health.snapshot().pressure
+        assertEquals(2L, snapshot.probeAllowed)
+        assertEquals(1L, snapshot.probeSuppressed)
+        assertEquals(1L, snapshot.controlledFailures)
+    }
+
+    @Test
+    fun pressureProbeSuccessRelaxesSaturatedDcButProbeFailureDelaysNextProbe() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        repeat(8) { index ->
+            health.recordFailure(2, false, if (index % 2 == 0) "one.example" else "two.example", RuntimeException("HTTP 429"), "mobile", false)
+            now += 1
+        }
+
+        val firstProbe = health.beginPressureManagedCycle(2, "mobile")
+        health.recordFailure(2, false, "one.example", SocketTimeoutException("timeout"), "mobile", false)
+        val delayed = health.beginPressureManagedCycle(2, "mobile")
+        now = firstProbe.nextProbeAtMs + 1
+        assertTrue(health.beginPressureManagedCycle(2, "mobile").probeAllowed)
+        health.recordSuccess(2, false, "one.example", latencyMs = 80)
+        val relaxed = health.beginPressureManagedCycle(2, "mobile")
+
+        assertTrue(firstProbe.probeAllowed)
+        assertTrue(delayed.controlledFailure)
+        assertTrue(relaxed.level == CfPressureLevel.DEGRADED || relaxed.level == CfPressureLevel.NORMAL)
+        assertFalse(relaxed.controlledFailure)
+    }
+
+    @Test
+    fun pressureStateIsPerDcNotGlobal() {
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { 1_000L }, jitterRatio = { 0.0 })
+        repeat(8) { index ->
+            health.recordFailure(2, false, if (index % 2 == 0) "one.example" else "two.example", RuntimeException("HTTP 429"), "mobile", false)
+        }
+
+        val dc2 = health.beginPressureManagedCycle(2, "mobile")
+        val dc4 = health.beginPressureManagedCycle(4, "mobile")
+
+        assertEquals(CfPressureLevel.SATURATED, dc2.level)
+        assertEquals(CfPressureLevel.NORMAL, dc4.level)
+        assertEquals("saturated", health.snapshot().pressure.levelByDc[2])
+        assertEquals("normal", health.snapshot().pressure.levelByDc[4])
+    }
+
 }

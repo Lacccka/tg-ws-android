@@ -165,6 +165,22 @@ data class ProxyServerStats(
     val cfAllCooldownSingleAttempts: Long = 0,
     val cfAllCooldownSingleAttemptFailures: Long = 0,
     val cfAllCooldownStoppedCycles: Long = 0,
+    val cfPressureLevelByDc: Map<Int, String> = emptyMap(),
+    val cfPressureScoreByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureRecentSuccessByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureRecent429ByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureRecentTimeoutByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureRecentUnknownHostByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureRecentQueueFailureByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureRecentAllCooldownSuppressedByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureRecentMaxInflightByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureRecentRouteFailureAfterCfByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureProbeAllowed: Long = 0,
+    val cfPressureProbeSuppressed: Long = 0,
+    val cfPressureControlledFailures: Long = 0,
+    val cfPressureLimitedAttempts: Long = 0,
+    val cfPressureLevelChanges: Long = 0,
+    val cfPressureNextProbeAtByDc: Map<Int, Long> = emptyMap(),
     val cfTransientNetworkFailures: Long = 0,
     val cfFailuresIgnoredBecauseNetworkChanged: Long = 0,
     val cfCooldownsSkippedBecauseNetworkSettling: Long = 0,
@@ -620,6 +636,22 @@ class ProxyServer(
             cfAllCooldownSingleAttempts = cfHealthSnapshot.allCooldownSingleAttempts,
             cfAllCooldownSingleAttemptFailures = cfHealthSnapshot.allCooldownSingleAttemptFailures,
             cfAllCooldownStoppedCycles = cfHealthSnapshot.allCooldownStoppedCycles,
+            cfPressureLevelByDc = cfHealthSnapshot.pressure.levelByDc,
+            cfPressureScoreByDc = cfHealthSnapshot.pressure.scoreByDc,
+            cfPressureRecentSuccessByDc = cfHealthSnapshot.pressure.recentSuccessByDc,
+            cfPressureRecent429ByDc = cfHealthSnapshot.pressure.recent429ByDc,
+            cfPressureRecentTimeoutByDc = cfHealthSnapshot.pressure.recentTimeoutByDc,
+            cfPressureRecentUnknownHostByDc = cfHealthSnapshot.pressure.recentUnknownHostByDc,
+            cfPressureRecentQueueFailureByDc = cfHealthSnapshot.pressure.recentQueueFailureByDc,
+            cfPressureRecentAllCooldownSuppressedByDc = cfHealthSnapshot.pressure.recentAllCooldownSuppressedByDc,
+            cfPressureRecentMaxInflightByDc = cfHealthSnapshot.pressure.recentMaxInflightByDc,
+            cfPressureRecentRouteFailureAfterCfByDc = cfHealthSnapshot.pressure.recentRouteFailureAfterCfByDc,
+            cfPressureProbeAllowed = cfHealthSnapshot.pressure.probeAllowed,
+            cfPressureProbeSuppressed = cfHealthSnapshot.pressure.probeSuppressed,
+            cfPressureControlledFailures = cfHealthSnapshot.pressure.controlledFailures,
+            cfPressureLimitedAttempts = cfHealthSnapshot.pressure.limitedAttempts,
+            cfPressureLevelChanges = cfHealthSnapshot.pressure.levelChanges,
+            cfPressureNextProbeAtByDc = cfHealthSnapshot.pressure.nextProbeAtByDc,
             cfTransientNetworkFailures = cfHealthSnapshot.transientNetworkFailures,
             cfFailuresIgnoredBecauseNetworkChanged = cfHealthSnapshot.failuresIgnoredBecauseNetworkChanged,
             cfCooldownsSkippedBecauseNetworkSettling = cfHealthSnapshot.cooldownsSkippedBecauseNetworkSettling,
@@ -1052,6 +1084,29 @@ class ProxyServer(
             return false
         }
         val attemptGeneration = routeGeneration.get()
+        val pressureDecision = cfDomainHealth.beginPressureManagedCycle(parsed.dcId, currentNetworkStatus)
+        logCfPressureLevelChanges()
+        if (pressureDecision.controlledFailure) {
+            logger.log(
+                "CF pressure saturated: probe suppressed for DC${parsed.dcId}, " +
+                    "nextProbeAt=${pressureDecision.nextProbeAtMs}; controlled failure instead of starting connect; " +
+                    "existing active sessions untouched",
+            )
+            logger.log("CF pressure kept existing active sessions untouched for DC${parsed.dcId}")
+            return false
+        }
+        if (pressureDecision.level == CfPressureLevel.DEGRADED) {
+            logger.log(
+                "CF pressure degraded: limiting attempts per client for DC${parsed.dcId} " +
+                    "maxAttempts=${pressureDecision.maxAttempts} queueWaitMs=${pressureDecision.connectQueueWaitMs}",
+            )
+        }
+        if (pressureDecision.probeAllowed) {
+            logger.log(
+                "CF pressure saturated: probe allowed for DC${parsed.dcId} " +
+                    "nextProbeAt=${pressureDecision.nextProbeAtMs}",
+            )
+        }
         val selectionPlan = cfDomainHealth.selectDomains(parsed.dcId, parsed.isMedia, cycleState)
         for (skipped in selectionPlan.skippedCooldown) {
             logger.log(
@@ -1071,6 +1126,7 @@ class ProxyServer(
             return tryCfProxyFallbackCycle(client, parsed, relayInit, cryptoContext, splitter, cycleState)
         }
         if (selectionPlan.allDomainsInCooldownCircuitSuppressed) {
+            logCfPressureLevelChanges()
             logger.log(
                 "CF all-cooldown circuit suppressed single least-bad attempt for DC${parsed.dcId}; " +
                     "retryAt=${selectionPlan.allDomainsInCooldownCircuitRetryAtMs}",
@@ -1094,13 +1150,25 @@ class ProxyServer(
         }
 
         var attempted = false
+        var pressureAttempts = 0
         cfSelectionLoop@ for (selection in selectionPlan.ordered) {
+            if (pressureAttempts >= pressureDecision.maxAttempts) {
+                cfDomainHealth.recordPressureLimitedAttempt(parsed.dcId)
+                logCfPressureLevelChanges()
+                logger.log(
+                    "CF pressure controlled failure instead of starting connect for DC${parsed.dcId}: " +
+                        "attempt limit ${pressureDecision.maxAttempts} reached at level=${pressureDecision.level.configValue}",
+                )
+                break@cfSelectionLoop
+            }
             val baseDomain = selection.domain
             attempted = true
+            pressureAttempts += 1
             val domain = "kws${parsed.dcId}.$baseDomain"
-            when (cfDomainHealth.acquireConnectDecision(parsed.dcId, parsed.isMedia, baseDomain)) {
+            when (cfDomainHealth.acquireConnectDecision(parsed.dcId, parsed.isMedia, baseDomain, pressureDecision.connectQueueWaitMs)) {
                 CfConnectAcquireResult.ACQUIRED -> Unit
                 CfConnectAcquireResult.QUEUE_TIMEOUT -> {
+                    logCfPressureLevelChanges()
                     logger.log("CF connect queue controlled failure DC${parsed.dcId} domain=$baseDomain")
                     if (selectionPlan.allDomainsInCooldownFallback) {
                         cfDomainHealth.recordAllCooldownSingleAttemptFailure()
@@ -1109,6 +1177,7 @@ class ProxyServer(
                     return false
                 }
                 CfConnectAcquireResult.DOMAIN_IN_FLIGHT, CfConnectAcquireResult.UNAVAILABLE -> {
+                    logCfPressureLevelChanges()
                     logger.log("CF domain skipped because in-flight DC${parsed.dcId} domain=$baseDomain")
                     if (selectionPlan.allDomainsInCooldownFallback) {
                         cfDomainHealth.recordAllCooldownSingleAttemptFailure()
@@ -1145,6 +1214,7 @@ class ProxyServer(
                     directRouteHealth.isSettling(),
                     routeGeneration.get() != attemptGeneration,
                 )
+                logCfPressureLevelChanges()
                 logger.log("DC${parsed.dcId} CF proxy failed via $baseDomain: $detail")
                 if (decision.counted && decision.cooldownUntilMs > 0) {
                     logger.log(
@@ -1170,13 +1240,17 @@ class ProxyServer(
                 cfProxyConnections.incrementAndGet()
                 lastCfDomain = domain
                 val circuitReset = cfDomainHealth.recordSuccess(parsed.dcId, parsed.isMedia, baseDomain, latencyMs)
+                logCfPressureLevelChanges()
                 lastSuccessfulRouteTimeMs.set(System.currentTimeMillis())
                 if (circuitReset) logger.log("CF all-cooldown circuit reset after success for DC${parsed.dcId}")
+                logger.log("CF pressure reset/relaxed after success for DC${parsed.dcId} $baseDomain")
                 logger.log("CF domain success DC${parsed.dcId} $baseDomain latencyMs=$latencyMs")
                 logger.log("DC${parsed.dcId} CF proxy connected via $domain")
                 cfProxyBalancer.updateDomainForDc(parsed.dcId, baseDomain)
                 val result = runWebSocketRoute(client, parsed, WebSocketRoute(webSocket, "cf"), relayInit, cryptoContext, splitter)
                 if (!result.failed) return true
+                cfDomainHealth.recordCfRouteFailureAfterConnect(parsed.dcId)
+                logCfPressureLevelChanges()
                 cfProxyErrors.incrementAndGet()
                 logger.log("DC${parsed.dcId} CF proxy route failed via $baseDomain")
             } catch (error: Throwable) {
@@ -1190,6 +1264,15 @@ class ProxyServer(
             logger.log("DC${parsed.dcId} all CF proxy fallback attempts failed")
         }
         return false
+    }
+
+    private fun logCfPressureLevelChanges() {
+        for (change in cfDomainHealth.drainPressureLevelChanges()) {
+            logger.log(
+                "CF pressure level changed for DC${change.dcId}: " +
+                    "${change.from.configValue} -> ${change.to.configValue}",
+            )
+        }
     }
 
     private fun sleepQuietly(delayMs: Long) {

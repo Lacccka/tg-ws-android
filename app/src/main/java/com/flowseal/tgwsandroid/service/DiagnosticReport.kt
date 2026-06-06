@@ -152,6 +152,22 @@ object DiagnosticReportFormatter {
             "cfAllCooldownSingleAttempts=${stats.cfAllCooldownSingleAttempts}, " +
             "cfAllCooldownSingleAttemptFailures=${stats.cfAllCooldownSingleAttemptFailures}, " +
             "cfAllCooldownStoppedCycles=${stats.cfAllCooldownStoppedCycles}, " +
+            "cfPressureLevelByDc=${formatStringByDc(stats.cfPressureLevelByDc)}, " +
+            "cfPressureScoreByDc=${formatLongByDc(stats.cfPressureScoreByDc)}, " +
+            "cfPressureRecentSuccessByDc=${formatLongByDc(stats.cfPressureRecentSuccessByDc)}, " +
+            "cfPressureRecent429ByDc=${formatLongByDc(stats.cfPressureRecent429ByDc)}, " +
+            "cfPressureRecentTimeoutByDc=${formatLongByDc(stats.cfPressureRecentTimeoutByDc)}, " +
+            "cfPressureRecentUnknownHostByDc=${formatLongByDc(stats.cfPressureRecentUnknownHostByDc)}, " +
+            "cfPressureRecentQueueFailureByDc=${formatLongByDc(stats.cfPressureRecentQueueFailureByDc)}, " +
+            "cfPressureRecentAllCooldownSuppressedByDc=${formatLongByDc(stats.cfPressureRecentAllCooldownSuppressedByDc)}, " +
+            "cfPressureRecentMaxInflightByDc=${formatLongByDc(stats.cfPressureRecentMaxInflightByDc)}, " +
+            "cfPressureRecentRouteFailureAfterCfByDc=${formatLongByDc(stats.cfPressureRecentRouteFailureAfterCfByDc)}, " +
+            "cfPressureProbeAllowed=${stats.cfPressureProbeAllowed}, " +
+            "cfPressureProbeSuppressed=${stats.cfPressureProbeSuppressed}, " +
+            "cfPressureControlledFailures=${stats.cfPressureControlledFailures}, " +
+            "cfPressureLimitedAttempts=${stats.cfPressureLimitedAttempts}, " +
+            "cfPressureLevelChanges=${stats.cfPressureLevelChanges}, " +
+            "cfPressureNextProbeAtByDc=${formatLongByDc(stats.cfPressureNextProbeAtByDc)}, " +
             "cfTransientNetworkFailures=${stats.cfTransientNetworkFailures}, " +
             "cfFailuresIgnoredBecauseNetworkChanged=${stats.cfFailuresIgnoredBecauseNetworkChanged}, " +
             "cfCooldownsSkippedBecauseNetworkSettling=${stats.cfCooldownsSkippedBecauseNetworkSettling}, " +
@@ -180,6 +196,16 @@ object DiagnosticReportFormatter {
                 val cooldownCount = domains.count { it.cooldownUntilMs > 0 }
                 appendLine("DC$dcId:")
                 appendLine(
+                    "  cfPressureLevel=${stats.cfPressureLevelByDc[dcId] ?: "normal"} " +
+                        "score=${stats.cfPressureScoreByDc[dcId] ?: 0L} " +
+                        "recentSuccess=${stats.cfPressureRecentSuccessByDc[dcId] ?: 0L} " +
+                        "recent429=${stats.cfPressureRecent429ByDc[dcId] ?: 0L} " +
+                        "recentTimeout=${stats.cfPressureRecentTimeoutByDc[dcId] ?: 0L} " +
+                        "recentQueueFailure=${stats.cfPressureRecentQueueFailureByDc[dcId] ?: 0L} " +
+                        "recentAllCooldownSuppressed=${stats.cfPressureRecentAllCooldownSuppressedByDc[dcId] ?: 0L} " +
+                        "nextProbeAt=${stats.cfPressureNextProbeAtByDc[dcId] ?: 0L}",
+                )
+                appendLine(
                     "  best=$best latency=${bestRow?.ewmaLatencyMs ?: bestRow?.lastLatencyMs ?: "unknown"} " +
                         "cooldown=$cooldownCount 429=${domains.sumOf { it.total429 }} " +
                         "503=${domains.sumOf { it.total503 }} unknownHost=${domains.sumOf { it.totalUnknownHost }} " +
@@ -204,6 +230,13 @@ object DiagnosticReportFormatter {
         }
 
     private fun formatIntByDc(valuesByDc: Map<Int, Int>): String =
+        if (valuesByDc.isEmpty()) {
+            "none"
+        } else {
+            valuesByDc.toSortedMap().entries.joinToString(prefix = "{", postfix = "}") { (dcId, value) -> "DC$dcId=$value" }
+        }
+
+    private fun formatStringByDc(valuesByDc: Map<Int, String>): String =
         if (valuesByDc.isEmpty()) {
             "none"
         } else {

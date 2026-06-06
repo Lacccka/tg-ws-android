@@ -181,6 +181,19 @@ class RuntimeLogStoreTest {
             cfAllCooldownSingleAttempts = 30,
             cfAllCooldownSingleAttemptFailures = 31,
             cfAllCooldownStoppedCycles = 32,
+            cfPressureLevelByDc = mapOf(2 to "degraded"),
+            cfPressureScoreByDc = mapOf(2 to 42),
+            cfPressureRecentSuccessByDc = mapOf(2 to 1),
+            cfPressureRecent429ByDc = mapOf(2 to 4),
+            cfPressureRecentTimeoutByDc = mapOf(2 to 2),
+            cfPressureRecentQueueFailureByDc = mapOf(2 to 3),
+            cfPressureRecentAllCooldownSuppressedByDc = mapOf(2 to 1),
+            cfPressureProbeAllowed = 5,
+            cfPressureProbeSuppressed = 6,
+            cfPressureControlledFailures = 7,
+            cfPressureLimitedAttempts = 8,
+            cfPressureLevelChanges = 9,
+            cfPressureNextProbeAtByDc = mapOf(2 to 654_321L),
             recentInvalidHandshakeCount = 120,
             recentAcceptedHandshakeCount = 0,
             lastInvalidHandshakeTimeMs = 1_717_469_129_000,
@@ -243,6 +256,9 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("cfAllCooldownControlledFailures=29"))
         assertTrue(report.contains("cfAllCooldownCircuitOpenByDc={DC2=123456}"))
         assertTrue(report.contains("cfAllCooldownSingleAttempts=30"))
+        assertTrue(report.contains("cfPressureLevelByDc={DC2=degraded}"))
+        assertTrue(report.contains("cfPressureProbeSuppressed=6"))
+        assertTrue(report.contains("cfPressureLevel=degraded score=42"))
         assertTrue(report.contains("handshakeDiagnosticState=fatal_secret_mismatch"))
         assertTrue(report.contains("handshakeDiagnosticReason=many_recent_invalid_handshakes_without_accepted_handshake_or_successful_route"))
         assertTrue(report.contains("badHandshakeRecommendation=Telegram подключается с неправильным secret"))
