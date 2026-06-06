@@ -345,7 +345,7 @@ class MainUiModelTest {
     fun telegramStormHelperMentionsReconnectWithoutRawProtocolText() {
         val helper = TelegramStatusUiText.helper(stats(connectionsTotal = 100, connectionsBad = 50, recentInvalidHandshakeCount = 100), routeHelper = null).orEmpty()
 
-        assertTrue(helper.contains("Подключить Telegram"))
+        assertTrue(helper.contains("актуальной ссылке"))
         assertFalse(helper.contains("Invalid MTProto handshake"))
         assertFalse(helper.contains("bad handshake", ignoreCase = true))
         assertFalse(helper.contains("MTProto"))
@@ -369,7 +369,7 @@ class MainUiModelTest {
 
         assertTrue(diagnostic.contains("Invalid MTProto handshake storm"))
         assertTrue(diagnostic.contains("badHandshakeRatio"))
-        assertTrue(TelegramStatusUiText.DEVELOPER_RECOMMENDATION.contains("Отключите прокси"))
+        assertTrue(TelegramStatusUiText.DEVELOPER_RECOMMENDATION.contains("Отключите proxy"))
     }
 
     @Test

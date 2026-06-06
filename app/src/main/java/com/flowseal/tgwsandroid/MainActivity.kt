@@ -387,6 +387,7 @@ class MainActivity : Activity() {
             rawRouteDetailsText.text = routeDetailsLine()
             cfDetailsText.text = cfDetailsLine()
             directDetailsText.text = directDetailsLine()
+            secretStateText.text = secretStateLine()
             logsText.text = ProxyForegroundService.State.recentLogs()
                 .takeLast(MAX_VISIBLE_LOG_LINES)
                 .takeIf { it.isNotEmpty() }
@@ -488,8 +489,13 @@ class MainActivity : Activity() {
 
     private fun directDetailsLine(): String {
         val stats = ProxyForegroundService.State.stats() ?: return "direct health: unknown"
-        return "direct health=${stats.directHealthState}, attempts=${stats.directAttempts}, failures=${stats.directHealthFailures}, cooldownUntil=${stats.directCooldownUntil}, route state=${stats.lastRouteUsed ?: "none"}"
+        return "direct health=${stats.directHealthState}, attempts=${stats.directAttempts}, failures=${stats.directHealthFailures}, cooldownUntil=${stats.directCooldownUntil}, route state=${stats.lastRouteUsed ?: "none"}; " +
+            "Invalid MTProto handshake storm=${stats.badHandshakeStormRecent}, badHandshakeRatio=${String.format(java.util.Locale.US, "%.3f", stats.badHandshakeRatio)}, " +
+            "badHandshakeRecommendation=${if (stats.badHandshakeStormRecent) TelegramStatusUiText.DEVELOPER_RECOMMENDATION else "none"}"
     }
+
+    private fun secretStateLine(): String = "Текущий secret: ${ProxyRuntimeConfig.partialTelegramSecret(applicationContext)}; " +
+        "источник=${ProxyRuntimeConfig.secretSource(applicationContext)}; ссылка актуальна=${ProxyRuntimeConfig.proxyLinkCurrent(applicationContext)}"
 
     private fun startProxyService() {
         prefs.edit().putBoolean(PREF_PROXY_EVER_STARTED, true).apply()
@@ -526,14 +532,14 @@ class MainActivity : Activity() {
     private fun resetSecret() {
         ProxyRuntimeConfig.resetSecret(applicationContext)
         val running = ProxyForegroundService.State.running
-        pendingRestartRequired = running
+        pendingRestartRequired = false
         val logMessage = if (running) {
-            "proxy secret reset; restart required to apply new secret"
+            "proxy secret reset; restarting proxy to apply new secret"
         } else {
             "proxy secret reset; will apply on next proxy start"
         }
         ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
-        if (::secretStateText.isInitialized) secretStateText.text = ""
+        if (running) restartProxyService()
         Toast.makeText(this, SecretUpdatedMessageModel.MESSAGE, Toast.LENGTH_LONG).show()
         refreshState()
     }
@@ -556,7 +562,7 @@ class MainActivity : Activity() {
 
     private fun copyProxyLink() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Ссылка прокси Telegram", ProxyRuntimeConfig.telegramProxyUrl(this)))
+        clipboard.setPrimaryClip(ClipData.newPlainText("Ссылка прокси Telegram", ProxyRuntimeConfig.telegramProxyUri(this)))
     }
 
     private fun copyDiagnostics() {

@@ -74,6 +74,15 @@ class ProxyRuntimeConfigTest {
     }
 
     @Test
+    fun proxyServerRestartConfigKeepsSameSecret() {
+        val firstStart = ProxyRuntimeConfig.proxyServerConfig(appConfig)
+        val restarted = ProxyRuntimeConfig.proxyServerConfig(appConfig)
+
+        assertEquals(firstStart.secretHex, restarted.secretHex)
+        assertEquals("4014e15dd34e4b05c42413eab68c3da8", restarted.secretHex)
+    }
+
+    @Test
     fun telegramProxyUrlContainsEndpointAndSecretFromAppConfigSecret() {
         val config = appConfig.copy(secret = "0123456789abcdeffedcba9876543210")
 

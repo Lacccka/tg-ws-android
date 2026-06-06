@@ -7,6 +7,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppConfigStoreTest {
+
+    @Test
+    fun `first launch creates and persists generated secret`() {
+        val storage = MemoryStorage()
+        val firstStore = AppConfigStore(storage) { "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
+
+        val first = firstStore.loadConfig()
+        val second = AppConfigStore(storage) { "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" }.loadConfig()
+
+        assertEquals("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", first.secret)
+        assertEquals(first.secret, second.secret)
+        assertTrue(AppConfigStore.isValidSecretHex(second.secret))
+    }
+
+    @Test
+    fun `resetSecret is the only manual operation that changes a valid persisted secret`() {
+        val storage = MemoryStorage()
+        val store = AppConfigStore(storage) { "11111111111111111111111111111111" }
+        val first = store.loadConfig()
+
+        val reloaded = AppConfigStore(storage) { "22222222222222222222222222222222" }.loadConfig()
+        val resetConfig = AppConfigStore(storage) { "33333333333333333333333333333333" }.resetConfig()
+        val resetSecret = AppConfigStore(storage) { "44444444444444444444444444444444" }.resetSecret()
+
+        assertEquals(first.secret, reloaded.secret)
+        assertEquals(first.secret, resetConfig.secret)
+        assertEquals("44444444444444444444444444444444", resetSecret.secret)
+        assertNotEquals(first.secret, resetSecret.secret)
+    }
     @Test
     fun `resetSecret changes only secret and preserves runtime settings`() {
         val store = testStore(

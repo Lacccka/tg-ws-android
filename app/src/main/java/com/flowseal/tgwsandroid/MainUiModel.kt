@@ -93,9 +93,9 @@ object DeveloperUiModel {
 
 object TelegramStatusUiText {
     const val RECONNECT_STATUS = "Нужно переподключить Telegram"
-    const val RECONNECT_HELPER = "Telegram отправляет неверные подключения. Нажмите «Подключить Telegram» заново."
-    const val RECONNECT_EXTRA_HELPER = "Если проблема повторяется, отключите прокси в Telegram, закройте Telegram и подключите заново."
-    const val DEVELOPER_RECOMMENDATION = "Отключите прокси в Telegram, закройте Telegram и подключите заново."
+    const val RECONNECT_HELPER = "Telegram подключается с неправильным secret."
+    const val RECONNECT_EXTRA_HELPER = "Отключите proxy в Telegram, закройте Telegram и подключите заново по актуальной ссылке."
+    const val DEVELOPER_RECOMMENDATION = "Telegram подключается с неправильным secret. Отключите proxy в Telegram, закройте Telegram и подключите заново по актуальной ссылке."
 
     const val CONNECT_ACTION = "Подключить Telegram"
     const val RECONNECT_ACTION = "Подключить Telegram заново"
@@ -213,7 +213,7 @@ object HomeRouteLabelMapper {
 
 
 object SecretUpdatedMessageModel {
-    const val MESSAGE = "Секрет обновлён. Подключите Telegram заново."
+    const val MESSAGE = "Секрет обновлён. Отключите proxy в Telegram, закройте Telegram и подключитесь заново по новой ссылке."
 
     fun visibleByDefault(): Boolean = false
     fun visibleAfterRouteModeChange(): Boolean = false

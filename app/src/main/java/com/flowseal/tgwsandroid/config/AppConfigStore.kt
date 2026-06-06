@@ -18,17 +18,23 @@ class AppConfigStore(
             return stored.withStoredValidSecret()
         }
 
-        return defaultConfigWithSecret().also(::saveConfig)
+        return defaultConfigWithSecret().also {
+            saveConfig(it)
+            storage.putString(KEY_SECRET_SOURCE, SecretSource.GENERATED.configValue)
+        }
     }
 
     fun saveConfig(config: AppConfig) {
         storage.putString(KEY_CONFIG_JSON, config.toJson().toString())
     }
 
+    fun secretSource(): SecretSource = SecretSource.fromConfigValue(storage.getString(KEY_SECRET_SOURCE)) ?: SecretSource.PERSISTED
+
     fun resetSecret(): AppConfig {
         val current = loadConfig()
         val updated = current.copy(secret = secretGenerator().lowercase())
         saveConfig(updated)
+        storage.putString(KEY_SECRET_SOURCE, SecretSource.RESET.configValue)
         return updated
     }
 
@@ -47,7 +53,17 @@ class AppConfigStore(
 
     private fun AppConfig.withStoredValidSecret(): AppConfig {
         val normalizedSecret = secret.takeIf(::isValidSecretHex)?.lowercase() ?: secretGenerator().lowercase()
-        return if (normalizedSecret == secret) this else copy(secret = normalizedSecret).also(::saveConfig)
+        return if (normalizedSecret == secret) {
+            if (secretSource() == SecretSource.GENERATED) {
+                storage.putString(KEY_SECRET_SOURCE, SecretSource.PERSISTED.configValue)
+            }
+            this
+        } else {
+            copy(secret = normalizedSecret).also {
+                saveConfig(it)
+                storage.putString(KEY_SECRET_SOURCE, SecretSource.GENERATED.configValue)
+            }
+        }
     }
 
     interface Storage {
@@ -68,6 +84,7 @@ class AppConfigStore(
     companion object {
         private const val PREFS_NAME = "app_config"
         private const val KEY_CONFIG_JSON = "config_json"
+        private const val KEY_SECRET_SOURCE = "secret_source"
         private val SECRET_REGEX = Regex("^[0-9a-fA-F]{32}$")
 
         fun from(context: Context): AppConfigStore = AppConfigStore(
@@ -76,6 +93,8 @@ class AppConfigStore(
 
         fun getConfig(context: Context): AppConfig = from(context).loadConfig()
 
+        fun getSecretSource(context: Context): SecretSource = from(context).secretSource()
+
         fun resetSecret(context: Context): AppConfig = from(context).resetSecret()
 
         fun resetConfig(context: Context): AppConfig = from(context).resetConfig()
@@ -83,6 +102,19 @@ class AppConfigStore(
         fun isValidSecretHex(secret: String): Boolean = SECRET_REGEX.matches(secret)
 
         fun telegramSecret(secret: String): String = "dd${secret.lowercase()}"
+    }
+}
+
+enum class SecretSource(val configValue: String) {
+    PERSISTED("persisted"),
+    GENERATED("generated"),
+    RESET("reset"),
+    ;
+
+    companion object {
+        fun fromConfigValue(value: String?): SecretSource? = entries.firstOrNull {
+            it.configValue.equals(value, ignoreCase = true)
+        }
     }
 }
 

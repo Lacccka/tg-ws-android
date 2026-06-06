@@ -78,6 +78,14 @@ object ProxyRuntimeConfig {
 
     fun partialTelegramSecret(): String = partialTelegramSecret(config)
 
+    fun secretSource(context: Context): String = AppConfigStore.getSecretSource(context.applicationContext).configValue
+
+    fun proxyLinkCurrent(context: Context): Boolean {
+        val inMemoryUri = telegramProxyUri()
+        val persistedUri = telegramProxyUri(appConfig(context))
+        return inMemoryUri == persistedUri
+    }
+
     internal fun partialTelegramSecret(config: AppConfig): String = telegramSecretHex(config).toPartialSecret()
 
     fun telegramProxyUri(context: Context): String = telegramProxyUri(appConfig(context))

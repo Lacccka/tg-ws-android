@@ -11,6 +11,8 @@ data class DiagnosticSnapshot(
     val status: String,
     val endpoint: String,
     val secret: String,
+    val secretSource: String = "unknown",
+    val proxyLinkCurrent: Boolean = true,
     val dcSummary: String,
     val batteryOptimization: String,
     val network: String,
@@ -25,12 +27,15 @@ data class DiagnosticSnapshot(
 )
 
 object DiagnosticReportFormatter {
+    const val BAD_HANDSHAKE_RECOMMENDATION = "Telegram подключается с неправильным secret. Отключите proxy в Telegram, закройте Telegram и подключите заново по актуальной ссылке."
     private val GENERATED_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
 
     fun snapshot(
         status: String,
         endpoint: String,
         secret: String,
+        secretSource: String = "unknown",
+        proxyLinkCurrent: Boolean = true,
         dcSummary: String,
         batteryOptimization: String = "unknown",
         network: String = "unknown",
@@ -48,6 +53,8 @@ object DiagnosticReportFormatter {
         status = status.ifBlank { "unknown" },
         endpoint = endpoint.ifBlank { "unknown" },
         secret = secret.ifBlank { "unknown" },
+        secretSource = secretSource.ifBlank { "unknown" },
+        proxyLinkCurrent = proxyLinkCurrent,
         dcSummary = dcSummary.ifBlank { "unknown" },
         batteryOptimization = batteryOptimization.ifBlank { "unknown" },
         network = network.ifBlank { "unknown" },
@@ -67,6 +74,8 @@ object DiagnosticReportFormatter {
         appendLine("Status: ${snapshot.status}")
         appendLine("Endpoint: ${snapshot.endpoint}")
         appendLine("Secret: ${snapshot.secret}")
+        appendLine("Secret source: ${snapshot.secretSource}")
+        appendLine("Proxy link current: ${snapshot.proxyLinkCurrent}")
         appendLine("DCs: ${snapshot.dcSummary}")
         appendLine("Battery optimization: ${snapshot.batteryOptimization}")
         appendLine("Network: ${snapshot.network}")
@@ -94,7 +103,7 @@ object DiagnosticReportFormatter {
             "lastInvalidHandshakeTimeMs=${stats.lastInvalidHandshakeTimeMs}, lastAcceptedHandshakeTimeMs=${stats.lastAcceptedHandshakeTimeMs}, " +
             "lastSuccessfulRouteTimeMs=${stats.lastSuccessfulRouteTimeMs}, " +
             "recentHandshakeDiagnostic=${if (stats.badHandshakeStormRecent) "Recent invalid Telegram handshakes detected" else "none"}, " +
-            "badHandshakeRecommendation=${if (stats.badHandshakeStormRecent) "Отключите прокси в Telegram, закройте Telegram и подключите заново." else "none"}, " +
+            "badHandshakeRecommendation=${if (stats.badHandshakeStormRecent) BAD_HANDSHAKE_RECOMMENDATION else "none"}, " +
             "wsErrors=${stats.wsConnectErrors}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
             "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +

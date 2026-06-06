@@ -571,6 +571,8 @@ class ProxyForegroundService : Service() {
             val context = appContext
             val endpoint = context?.let { ProxyRuntimeConfig.endpointSummary(it) } ?: "unknown"
             val secret = context?.let { ProxyRuntimeConfig.partialTelegramSecret(it) } ?: "unknown"
+            val secretSource = context?.let { ProxyRuntimeConfig.secretSource(it) } ?: "unknown"
+            val proxyLinkCurrent = context?.let { ProxyRuntimeConfig.proxyLinkCurrent(it) } ?: false
             val dcSummary = context?.let { ProxyRuntimeConfig.dcSummary(it) } ?: "unknown"
             val routeMode = context?.let { ProxyRuntimeConfig.appConfig(it).routeMode.name } ?: "unknown"
             val fallbackEffectiveRouteMode = context?.let { ProxyRuntimeConfig.proxyServerConfig(it, networkStatus).effectiveRouteMode.name } ?: "unknown"
@@ -581,6 +583,8 @@ class ProxyForegroundService : Service() {
                     status = lastStatus,
                     endpoint = endpoint,
                     secret = secret,
+                    secretSource = secretSource,
+                    proxyLinkCurrent = proxyLinkCurrent,
                     dcSummary = dcSummary,
                     batteryOptimization = batteryOptimizationStatus,
                     network = networkStatus,
