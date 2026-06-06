@@ -95,23 +95,13 @@ object TelegramStatusUiText {
     const val RECONNECT_STATUS = "Нужно переподключить Telegram"
     const val RECONNECT_HELPER = "Telegram подключается с неправильным secret."
     const val RECONNECT_EXTRA_HELPER = "Отключите proxy в Telegram, закройте Telegram и подключите заново по актуальной ссылке."
-    const val DEVELOPER_RECOMMENDATION = "Telegram подключается с неправильным secret. Отключите proxy в Telegram, закройте Telegram и подключите заново по актуальной ссылке."
+    const val DEVELOPER_RECOMMENDATION = ProxyServerStats.BAD_HANDSHAKE_RECONNECT_RECOMMENDATION
 
     const val CONNECT_ACTION = "Подключить Telegram"
     const val RECONNECT_ACTION = "Подключить Telegram заново"
 
-    fun showTelegramReconnectWarning(stats: ProxyServerStats?): Boolean {
-        if (stats?.badHandshakeStormRecent != true) return false
-
-        val now = System.currentTimeMillis()
-        val hasActiveSession = stats.connectionsActive > 0
-        val hasFreshAcceptedHandshake = stats.lastAcceptedHandshakeTimeMs > 0L &&
-            now - stats.lastAcceptedHandshakeTimeMs <= ProxyServerStats.BAD_HANDSHAKE_FRESH_SUCCESS_MS
-        val hasFreshSuccessfulRoute = stats.lastSuccessfulRouteTimeMs > 0L &&
-            now - stats.lastSuccessfulRouteTimeMs <= ProxyServerStats.BAD_HANDSHAKE_FRESH_SUCCESS_MS
-
-        return !hasActiveSession && !hasFreshAcceptedHandshake && !hasFreshSuccessfulRoute
-    }
+    fun showTelegramReconnectWarning(stats: ProxyServerStats?): Boolean =
+        stats?.badHandshakeRecommendation != "none"
 
     fun actionText(stats: ProxyServerStats?): String = if (showTelegramReconnectWarning(stats)) {
         RECONNECT_ACTION

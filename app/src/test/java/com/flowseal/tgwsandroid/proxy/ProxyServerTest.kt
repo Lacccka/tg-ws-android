@@ -125,6 +125,7 @@ class ProxyServerTest {
         assertEquals(20L, proxy.stats().connectionsBad)
         assertTrue(logs.count { it.contains("Invalid MTProto handshake from") } <= 5)
         assertTrue(logs.any { it.contains("Invalid MTProto handshake repeated") })
+        assertTrue(logs.any { it.contains("classified=") && it.contains("severity=debug") })
     }
 
     @Test

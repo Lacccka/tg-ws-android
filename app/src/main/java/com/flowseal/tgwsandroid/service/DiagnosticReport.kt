@@ -27,7 +27,6 @@ data class DiagnosticSnapshot(
 )
 
 object DiagnosticReportFormatter {
-    const val BAD_HANDSHAKE_RECOMMENDATION = "Telegram подключается с неправильным secret. Отключите proxy в Telegram, закройте Telegram и подключите заново по актуальной ссылке."
     private val GENERATED_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss", Locale.US)
 
     fun snapshot(
@@ -102,8 +101,12 @@ object DiagnosticReportFormatter {
             "recentInvalidHandshakeCount=${stats.recentInvalidHandshakeCount}, recentAcceptedHandshakeCount=${stats.recentAcceptedHandshakeCount}, " +
             "lastInvalidHandshakeTimeMs=${stats.lastInvalidHandshakeTimeMs}, lastAcceptedHandshakeTimeMs=${stats.lastAcceptedHandshakeTimeMs}, " +
             "lastSuccessfulRouteTimeMs=${stats.lastSuccessfulRouteTimeMs}, " +
-            "recentHandshakeDiagnostic=${if (stats.badHandshakeStormRecent) "Recent invalid Telegram handshakes detected" else "none"}, " +
-            "badHandshakeRecommendation=${if (stats.badHandshakeStormRecent) BAD_HANDSHAKE_RECOMMENDATION else "none"}, " +
+            "secondsSinceLastAcceptedHandshake=${stats.secondsSinceLastAcceptedHandshake?.toString() ?: "unknown"}, " +
+            "secondsSinceLastSuccessfulRoute=${stats.secondsSinceLastSuccessfulRoute?.toString() ?: "unknown"}, " +
+            "handshakeDiagnosticState=${stats.handshakeDiagnosticState}, " +
+            "handshakeDiagnosticReason=${stats.handshakeDiagnosticReason}, " +
+            "recentHandshakeDiagnostic=${stats.handshakeDiagnosticReason}, " +
+            "badHandshakeRecommendation=${stats.badHandshakeRecommendation}, " +
             "wsErrors=${stats.wsConnectErrors}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
             "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +

@@ -1,5 +1,6 @@
 package com.flowseal.tgwsandroid
 
+import com.flowseal.tgwsandroid.proxy.HandshakeDiagnosticState
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import org.junit.Assert.assertEquals
@@ -349,6 +350,86 @@ class MainUiModelTest {
         assertFalse(helper.contains("Invalid MTProto handshake"))
         assertFalse(helper.contains("bad handshake", ignoreCase = true))
         assertFalse(helper.contains("MTProto"))
+    }
+
+
+    @Test
+    fun manyInvalidWithRecentSuccessfulRouteIsBackgroundNoiseWithoutRecommendation() {
+        val healthyStats = stats(
+            connectionsTotal = 457_547,
+            connectionsBad = 457_308,
+            connectionsActive = 1,
+            recentInvalidHandshakeCount = 2_226,
+            recentAcceptedHandshakeCount = 0,
+            lastSuccessfulRouteTimeMs = System.currentTimeMillis(),
+            lastRouteUsed = "direct-pool",
+            effectiveRouteMode = NetworkRouteMode.DIRECT_FIRST.configValue,
+            directHealthState = "healthy",
+        )
+
+        assertEquals(HandshakeDiagnosticState.BACKGROUND_NOISE.configValue, healthyStats.handshakeDiagnosticState)
+        assertTrue(healthyStats.handshakeDiagnosticReason.contains("active_route_session") || healthyStats.handshakeDiagnosticReason.contains("recent_successful_route"))
+        assertEquals("none", healthyStats.badHandshakeRecommendation)
+        assertFalse(healthyStats.badHandshakeStormRecent)
+        assertFalse(TelegramStatusUiText.showTelegramReconnectWarning(healthyStats))
+    }
+
+    @Test
+    fun manyInvalidWithoutAcceptedOrSuccessfulRouteRecommendsReconnect() {
+        val mismatchStats = stats(
+            connectionsTotal = 200,
+            connectionsBad = 180,
+            recentInvalidHandshakeCount = 120,
+            recentAcceptedHandshakeCount = 0,
+            lastAcceptedHandshakeTimeMs = 0,
+            lastSuccessfulRouteTimeMs = 0,
+            lastRouteUsed = null,
+        )
+
+        assertEquals(HandshakeDiagnosticState.FATAL_SECRET_MISMATCH.configValue, mismatchStats.handshakeDiagnosticState)
+        assertEquals(ProxyServerStats.BAD_HANDSHAKE_RECONNECT_RECOMMENDATION, mismatchStats.badHandshakeRecommendation)
+        assertTrue(TelegramStatusUiText.showTelegramReconnectWarning(mismatchStats))
+    }
+
+    @Test
+    fun highCumulativeBadHandshakeRatioWithHealthyRecentStateIsNotFatal() {
+        val healthyLegacyCounters = stats(
+            connectionsTotal = 457_547,
+            connectionsBad = 457_308,
+            recentInvalidHandshakeCount = 100,
+            recentAcceptedHandshakeCount = 1,
+            lastAcceptedHandshakeTimeMs = System.currentTimeMillis(),
+            lastSuccessfulRouteTimeMs = System.currentTimeMillis(),
+            lastRouteUsed = "direct-pool",
+        )
+
+        assertTrue(healthyLegacyCounters.badHandshakeStormCumulative)
+        assertEquals(HandshakeDiagnosticState.BACKGROUND_NOISE.configValue, healthyLegacyCounters.handshakeDiagnosticState)
+        assertEquals("none", healthyLegacyCounters.badHandshakeRecommendation)
+        assertFalse(TelegramStatusUiText.showTelegramReconnectWarning(healthyLegacyCounters))
+    }
+
+    @Test
+    fun handshakeDiagnosticsDoNotExposeAutomaticSecretResetState() {
+        val mismatchStats = stats(recentInvalidHandshakeCount = 120, connectionsTotal = 200, connectionsBad = 180)
+
+        assertEquals(HandshakeDiagnosticState.FATAL_SECRET_MISMATCH.configValue, mismatchStats.handshakeDiagnosticState)
+        assertFalse(mismatchStats.handshakeDiagnosticReason.contains("reset", ignoreCase = true))
+        assertFalse(mismatchStats.badHandshakeRecommendation.contains("reset", ignoreCase = true))
+    }
+
+    @Test
+    fun persistedSecretAndCurrentProxyLinkAreNotModeledAsMutatedByHandshakeDiagnostics() {
+        val healthyStats = stats(
+            recentInvalidHandshakeCount = 2_226,
+            lastSuccessfulRouteTimeMs = System.currentTimeMillis(),
+            lastRouteUsed = "cf",
+        )
+
+        assertEquals(HandshakeDiagnosticState.BACKGROUND_NOISE.configValue, healthyStats.handshakeDiagnosticState)
+        assertEquals("none", healthyStats.badHandshakeRecommendation)
+        assertFalse(TelegramStatusUiText.DEVELOPER_RECOMMENDATION.contains("обнов", ignoreCase = true))
+        assertFalse(TelegramStatusUiText.DEVELOPER_RECOMMENDATION.contains("reset", ignoreCase = true))
     }
 
     @Test

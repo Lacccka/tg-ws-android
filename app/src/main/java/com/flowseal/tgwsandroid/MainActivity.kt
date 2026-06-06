@@ -491,7 +491,8 @@ class MainActivity : Activity() {
         val stats = ProxyForegroundService.State.stats() ?: return "direct health: unknown"
         return "direct health=${stats.directHealthState}, attempts=${stats.directAttempts}, failures=${stats.directHealthFailures}, cooldownUntil=${stats.directCooldownUntil}, route state=${stats.lastRouteUsed ?: "none"}; " +
             "Invalid MTProto handshake storm=${stats.badHandshakeStormRecent}, badHandshakeRatio=${String.format(java.util.Locale.US, "%.3f", stats.badHandshakeRatio)}, " +
-            "badHandshakeRecommendation=${if (stats.badHandshakeStormRecent) TelegramStatusUiText.DEVELOPER_RECOMMENDATION else "none"}"
+            "handshakeDiagnosticState=${stats.handshakeDiagnosticState}, handshakeDiagnosticReason=${stats.handshakeDiagnosticReason}, " +
+            "badHandshakeRecommendation=${stats.badHandshakeRecommendation}"
     }
 
     private fun secretStateLine(): String = "Текущий secret: ${ProxyRuntimeConfig.partialTelegramSecret(applicationContext)}; " +

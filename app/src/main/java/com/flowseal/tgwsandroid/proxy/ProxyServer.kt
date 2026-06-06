@@ -67,6 +67,23 @@ data class ProxyServerConfig(
     }
 }
 
+
+/** User-facing classification for invalid MTProto handshake diagnostics. */
+enum class HandshakeDiagnosticState(val configValue: String) {
+    NORMAL("normal"),
+    BACKGROUND_NOISE("background_noise"),
+    SUSPECTED_SECRET_MISMATCH("suspected_secret_mismatch"),
+    FATAL_SECRET_MISMATCH("fatal_secret_mismatch"),
+}
+
+data class HandshakeDiagnostic(
+    val state: HandshakeDiagnosticState,
+    val reason: String,
+    val recommendation: String? = null,
+    val secondsSinceLastAcceptedHandshake: Long? = null,
+    val secondsSinceLastSuccessfulRoute: Long? = null,
+)
+
 /** Immutable snapshot of lightweight local proxy counters. */
 data class ProxyServerStats(
     val connectionsTotal: Long,
@@ -174,21 +191,107 @@ data class ProxyServerStats(
             return if (total > 0L) recentInvalidHandshakeCount.toDouble() / total.toDouble() else 0.0
         }
 
+    val handshakeDiagnostic: HandshakeDiagnostic
+        get() = classifyHandshakeDiagnostics(System.currentTimeMillis())
+
+    val handshakeDiagnosticState: String
+        get() = handshakeDiagnostic.state.configValue
+
+    val handshakeDiagnosticReason: String
+        get() = handshakeDiagnostic.reason
+
+    val badHandshakeRecommendation: String
+        get() = handshakeDiagnostic.recommendation ?: "none"
+
+    val secondsSinceLastAcceptedHandshake: Long?
+        get() = secondsSince(lastAcceptedHandshakeTimeMs, System.currentTimeMillis())
+
+    val secondsSinceLastSuccessfulRoute: Long?
+        get() = secondsSince(lastSuccessfulRouteTimeMs, System.currentTimeMillis())
+
     val badHandshakeStormRecent: Boolean
-        get() {
-            val now = System.currentTimeMillis()
-            val freshAccepted = lastAcceptedHandshakeTimeMs > 0L && now - lastAcceptedHandshakeTimeMs <= BAD_HANDSHAKE_FRESH_SUCCESS_MS
-            val freshRoute = lastSuccessfulRouteTimeMs > 0L && now - lastSuccessfulRouteTimeMs <= BAD_HANDSHAKE_FRESH_SUCCESS_MS
-            val activeRoute = connectionsActive > 0 && !lastRouteUsed.isNullOrBlank() && !lastRouteUsed.equals("none", ignoreCase = true)
-            if (freshAccepted || freshRoute || activeRoute) return false
-            return recentInvalidHandshakeCount >= BAD_HANDSHAKE_RECENT_MIN_INVALID &&
-                recentInvalidHandshakeCount >= (recentAcceptedHandshakeCount * BAD_HANDSHAKE_RECENT_INVALID_TO_ACCEPTED_MULTIPLIER) + BAD_HANDSHAKE_RECENT_INVALID_MARGIN &&
-                recentBadHandshakeRatio >= BAD_HANDSHAKE_STORM_MIN_RATIO
-        }
+        get() = handshakeDiagnostic.state == HandshakeDiagnosticState.SUSPECTED_SECRET_MISMATCH ||
+            handshakeDiagnostic.state == HandshakeDiagnosticState.FATAL_SECRET_MISMATCH
 
     /** Diagnostics/compat only; normal UI must use badHandshakeStormRecent explicitly. */
     val badHandshakeStorm: Boolean
         get() = badHandshakeStormRecent
+
+    private fun classifyHandshakeDiagnostics(now: Long): HandshakeDiagnostic {
+        val acceptedAgeMs = ageMs(lastAcceptedHandshakeTimeMs, now)
+        val routeAgeMs = ageMs(lastSuccessfulRouteTimeMs, now)
+        val secondsSinceAccepted = secondsSince(lastAcceptedHandshakeTimeMs, now)
+        val secondsSinceRoute = secondsSince(lastSuccessfulRouteTimeMs, now)
+        val activeRouteSession = connectionsActive > 0 && !lastRouteUsed.isNullOrBlank() &&
+            !lastRouteUsed.equals("none", ignoreCase = true)
+        val freshAccepted = acceptedAgeMs?.let { it <= BAD_HANDSHAKE_FRESH_SUCCESS_MS } == true
+        val freshRoute = routeAgeMs?.let { it <= BAD_HANDSHAKE_FRESH_SUCCESS_MS } == true
+        val recentAccepted = recentAcceptedHandshakeCount > 0L
+        val recentRouteHealth = directHealthState.equals("healthy", ignoreCase = true) ||
+            directHealthSuccesses > 0L || cfProxyConnections > 0L ||
+            (!lastRouteUsed.isNullOrBlank() && !lastRouteUsed.equals("none", ignoreCase = true))
+
+        if (recentInvalidHandshakeCount <= 0L) {
+            return HandshakeDiagnostic(
+                state = HandshakeDiagnosticState.NORMAL,
+                reason = "no_recent_invalid_handshakes",
+                secondsSinceLastAcceptedHandshake = secondsSinceAccepted,
+                secondsSinceLastSuccessfulRoute = secondsSinceRoute,
+            )
+        }
+
+        if (freshAccepted || freshRoute || activeRouteSession || recentAccepted) {
+            return HandshakeDiagnostic(
+                state = HandshakeDiagnosticState.BACKGROUND_NOISE,
+                reason = when {
+                    activeRouteSession -> "invalid_handshake_noise_with_active_route_session"
+                    freshRoute -> "invalid_handshake_noise_with_recent_successful_route"
+                    freshAccepted || recentAccepted -> "invalid_handshake_noise_with_recent_accepted_handshake"
+                    else -> "invalid_handshake_noise_with_recent_success"
+                },
+                secondsSinceLastAcceptedHandshake = secondsSinceAccepted,
+                secondsSinceLastSuccessfulRoute = secondsSinceRoute,
+            )
+        }
+
+        val recentInvalidDominates = recentInvalidHandshakeCount >= BAD_HANDSHAKE_RECENT_MIN_INVALID &&
+            recentInvalidHandshakeCount >= (recentAcceptedHandshakeCount * BAD_HANDSHAKE_RECENT_INVALID_TO_ACCEPTED_MULTIPLIER) + BAD_HANDSHAKE_RECENT_INVALID_MARGIN &&
+            recentBadHandshakeRatio >= BAD_HANDSHAKE_STORM_MIN_RATIO
+        val noAcceptedForThreshold = acceptedAgeMs == null || acceptedAgeMs >= BAD_HANDSHAKE_NO_SUCCESS_RECOMMENDATION_MS
+        val noRouteForThreshold = routeAgeMs == null || routeAgeMs >= BAD_HANDSHAKE_NO_SUCCESS_RECOMMENDATION_MS
+        val noWorkingSession = connectionsActive <= 0
+
+        if (recentInvalidDominates && recentAcceptedHandshakeCount == 0L && noAcceptedForThreshold && noRouteForThreshold && noWorkingSession) {
+            return HandshakeDiagnostic(
+                state = HandshakeDiagnosticState.FATAL_SECRET_MISMATCH,
+                reason = "many_recent_invalid_handshakes_without_accepted_handshake_or_successful_route",
+                recommendation = BAD_HANDSHAKE_RECONNECT_RECOMMENDATION,
+                secondsSinceLastAcceptedHandshake = secondsSinceAccepted,
+                secondsSinceLastSuccessfulRoute = secondsSinceRoute,
+            )
+        }
+
+        if (recentInvalidDominates && noWorkingSession && !recentRouteHealth) {
+            return HandshakeDiagnostic(
+                state = HandshakeDiagnosticState.SUSPECTED_SECRET_MISMATCH,
+                reason = "recent_invalid_handshakes_dominate_without_confirmed_route_health",
+                recommendation = BAD_HANDSHAKE_RECONNECT_RECOMMENDATION,
+                secondsSinceLastAcceptedHandshake = secondsSinceAccepted,
+                secondsSinceLastSuccessfulRoute = secondsSinceRoute,
+            )
+        }
+
+        return HandshakeDiagnostic(
+            state = HandshakeDiagnosticState.BACKGROUND_NOISE,
+            reason = "invalid_handshake_noise_without_actionable_secret_mismatch_signal",
+            secondsSinceLastAcceptedHandshake = secondsSinceAccepted,
+            secondsSinceLastSuccessfulRoute = secondsSinceRoute,
+        )
+    }
+
+    private fun ageMs(timestampMs: Long, now: Long): Long? = if (timestampMs > 0L) (now - timestampMs).coerceAtLeast(0L) else null
+
+    private fun secondsSince(timestampMs: Long, now: Long): Long? = ageMs(timestampMs, now)?.div(1_000L)
 
     companion object {
         const val BAD_HANDSHAKE_STORM_MIN_TOTAL: Long = 100
@@ -199,6 +302,8 @@ data class ProxyServerStats(
         const val BAD_HANDSHAKE_RECENT_INVALID_TO_ACCEPTED_MULTIPLIER: Long = 3
         const val BAD_HANDSHAKE_RECENT_INVALID_MARGIN: Long = 50
         const val BAD_HANDSHAKE_FRESH_SUCCESS_MS: Long = 15_000
+        const val BAD_HANDSHAKE_NO_SUCCESS_RECOMMENDATION_MS: Long = 45_000
+        const val BAD_HANDSHAKE_RECONNECT_RECOMMENDATION: String = "Telegram подключается с неправильным secret. Отключите proxy в Telegram, закройте Telegram и подключите заново по актуальной ссылке."
     }
 }
 
@@ -215,7 +320,11 @@ internal class InvalidHandshakeLogLimiter(
     private val suppressed = AtomicLong(0)
     private val lastAggregateLogMs = AtomicLong(0)
 
-    fun log(message: String, logger: ProxyLogger) {
+    fun log(
+        message: String,
+        logger: ProxyLogger,
+        diagnostic: () -> HandshakeDiagnostic = { HandshakeDiagnostic(HandshakeDiagnosticState.NORMAL, "unknown") },
+    ) {
         val count = seen.incrementAndGet()
         if (count <= firstMessagesLimit) {
             logger.log(message)
@@ -227,7 +336,17 @@ internal class InvalidHandshakeLogLimiter(
         if (previous == 0L || now - previous >= aggregateWindowMs) {
             if (lastAggregateLogMs.compareAndSet(previous, now)) {
                 val repeated = suppressed.getAndSet(0)
-                logger.log("Invalid MTProto handshake repeated $repeated times in last 5s")
+                val snapshot = diagnostic()
+                val severity = when (snapshot.state) {
+                    HandshakeDiagnosticState.SUSPECTED_SECRET_MISMATCH,
+                    HandshakeDiagnosticState.FATAL_SECRET_MISMATCH -> "warn"
+                    HandshakeDiagnosticState.NORMAL,
+                    HandshakeDiagnosticState.BACKGROUND_NOISE -> "debug"
+                }
+                logger.log(
+                    "Invalid MTProto handshake repeated $repeated times in last 5s; " +
+                        "severity=$severity classified=${snapshot.state.configValue} reason=${snapshot.reason}",
+                )
             }
         } else if (hidden == Long.MAX_VALUE) {
             suppressed.set(0)
@@ -1126,7 +1245,7 @@ class ProxyServer(
         connectionsBad.incrementAndGet()
         if (message.startsWith(INVALID_MTPROTO_HANDSHAKE_PREFIX)) {
             recordInvalidHandshake()
-            invalidHandshakeLogLimiter.log(message, logger)
+            invalidHandshakeLogLimiter.log(message, logger) { stats().handshakeDiagnostic }
         } else {
             logger.log(message)
         }

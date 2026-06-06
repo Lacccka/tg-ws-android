@@ -137,7 +137,7 @@ class RuntimeLogStoreTest {
         store.append("ProxyServer listening", LogSeverity.INFO, "proxy")
         val stats = ProxyServerStats(
             connectionsTotal = 7,
-            connectionsActive = 1,
+            connectionsActive = 0,
             connectionsBad = 0,
             wsConnectErrors = 2,
             cfProxyConnections = 3,
@@ -181,6 +181,11 @@ class RuntimeLogStoreTest {
             cfAllCooldownSingleAttempts = 30,
             cfAllCooldownSingleAttemptFailures = 31,
             cfAllCooldownStoppedCycles = 32,
+            recentInvalidHandshakeCount = 120,
+            recentAcceptedHandshakeCount = 0,
+            lastInvalidHandshakeTimeMs = 1_717_469_129_000,
+            lastAcceptedHandshakeTimeMs = 0,
+            lastSuccessfulRouteTimeMs = 0,
             cfHealthDomains = listOf(
                 CfDomainSnapshot(
                     dcId = 2,
@@ -225,7 +230,7 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("Generated: 2026-06-04 02:45:30"))
         assertTrue(report.contains("Status: proxy running on 127.0.0.1:1443"))
         assertTrue(report.contains("Endpoint: 127.0.0.1:1443"))
-        assertTrue(report.contains("Stats: total=7, active=1"))
+        assertTrue(report.contains("Stats: total=7, active=0"))
         assertTrue(report.contains("poolStale=11"))
         assertTrue(report.contains("cfHealthEnabled=true"))
         assertTrue(report.contains("cf429Count=12"))
@@ -238,6 +243,10 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("cfAllCooldownControlledFailures=29"))
         assertTrue(report.contains("cfAllCooldownCircuitOpenByDc={DC2=123456}"))
         assertTrue(report.contains("cfAllCooldownSingleAttempts=30"))
+        assertTrue(report.contains("handshakeDiagnosticState=fatal_secret_mismatch"))
+        assertTrue(report.contains("handshakeDiagnosticReason=many_recent_invalid_handshakes_without_accepted_handshake_or_successful_route"))
+        assertTrue(report.contains("badHandshakeRecommendation=Telegram подключается с неправильным secret"))
+        assertTrue(report.contains("secondsSinceLastAcceptedHandshake=unknown"))
         assertTrue(report.contains("CF health:"))
         assertTrue(report.contains("best=kws2.one.example latency=123"))
         assertTrue(report.contains("02:45:30 INFO proxy ProxyServer listening"))
