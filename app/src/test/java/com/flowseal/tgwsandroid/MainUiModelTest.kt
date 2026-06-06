@@ -123,7 +123,7 @@ class MainUiModelTest {
             ConnectionStatusMapper.status(
                 running = true,
                 networkStatus = "Wi-Fi",
-                stats = stats(connectionsActive = 1),
+                stats = stats(connectionsActive = 1, lastRouteUsed = "direct-cold"),
             ),
         )
     }
@@ -275,6 +275,7 @@ class MainUiModelTest {
     @Test
     fun oldCumulativeBadHandshakeStormAloneDoesNotAskForever() {
         assertEquals(
+            "Old cumulative bad-handshake counters without a recent storm must not show reconnect forever",
             "Нестабильное соединение",
             ConnectionStatusMapper.status(
                 running = true,

@@ -1210,15 +1210,22 @@ class ProxyServerTest {
         proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
         waitUntil { proxy.stats().directAttempts >= 4L }
         val directDomainsBefore = connector.domains.count { it.endsWith(".web.telegram.org") }
-        proxy.applyNetworkRouteImmediately("none")
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.CF_FIRST, "test downgraded", "Wi-Fi")
         server.enqueue(client)
         waitUntil { client.closed }
         proxy.stop()
 
         val directDomainsAfter = connector.domains.count { it.endsWith(".web.telegram.org") }
-        assertEquals(directDomainsBefore, directDomainsAfter)
-        assertEquals(0L, proxy.stats().poolHits)
-        assertTrue(connector.domains.any { it == "kws2.cf.example" })
+        assertEquals(
+            "New sessions after direct_first -> cf_first must not open additional direct domains",
+            directDomainsBefore,
+            directDomainsAfter,
+        )
+        assertEquals("cf_first sessions must not use the old direct pool", 0L, proxy.stats().poolHits)
+        assertTrue(
+            "New session after direct_first -> cf_first must attempt CF domain",
+            connector.domains.any { it == "kws2.cf.example" },
+        )
     }
 
 
