@@ -97,8 +97,30 @@ object TelegramStatusUiText {
     const val RECONNECT_EXTRA_HELPER = "Если проблема повторяется, отключите прокси в Telegram, закройте Telegram и подключите заново."
     const val DEVELOPER_RECOMMENDATION = "Отключите прокси в Telegram, закройте Telegram и подключите заново."
 
+    const val CONNECT_ACTION = "Подключить Telegram"
+    const val RECONNECT_ACTION = "Подключить Telegram заново"
+
+    fun showTelegramReconnectWarning(stats: ProxyServerStats?): Boolean {
+        if (stats?.badHandshakeStormRecent != true) return false
+
+        val now = System.currentTimeMillis()
+        val hasActiveSession = stats.connectionsActive > 0
+        val hasFreshAcceptedHandshake = stats.lastAcceptedHandshakeTimeMs > 0L &&
+            now - stats.lastAcceptedHandshakeTimeMs <= ProxyServerStats.BAD_HANDSHAKE_FRESH_SUCCESS_MS
+        val hasFreshSuccessfulRoute = stats.lastSuccessfulRouteTimeMs > 0L &&
+            now - stats.lastSuccessfulRouteTimeMs <= ProxyServerStats.BAD_HANDSHAKE_FRESH_SUCCESS_MS
+
+        return !hasActiveSession && !hasFreshAcceptedHandshake && !hasFreshSuccessfulRoute
+    }
+
+    fun actionText(stats: ProxyServerStats?): String = if (showTelegramReconnectWarning(stats)) {
+        RECONNECT_ACTION
+    } else {
+        CONNECT_ACTION
+    }
+
     fun helper(stats: ProxyServerStats?, routeHelper: String?): String? = when {
-        stats?.badHandshakeStormRecent == true -> listOf(RECONNECT_HELPER, RECONNECT_EXTRA_HELPER).joinToString("\n")
+        showTelegramReconnectWarning(stats) -> listOf(RECONNECT_HELPER, RECONNECT_EXTRA_HELPER).joinToString("\n")
         else -> routeHelper
     }
 }
@@ -122,24 +144,18 @@ object ConnectionStatusMapper {
             now - stats.lastAcceptedHandshakeTimeMs <= ProxyServerStats.BAD_HANDSHAKE_FRESH_SUCCESS_MS
         val freshSuccessfulRoute = stats.lastSuccessfulRouteTimeMs > 0L &&
             now - stats.lastSuccessfulRouteTimeMs <= ProxyServerStats.BAD_HANDSHAKE_FRESH_SUCCESS_MS
-        val hasSuccessfulConnection = stats.connectionsTotal > stats.connectionsBad ||
-            stats.cfProxyConnections > 0 ||
-            stats.directHealthSuccesses > 0
         val hasCurrentSessionErrors = stats.wsConnectErrors + stats.sessionTimeouts + stats.sessionUnexpectedErrors > 0
-        val allConnectionsFailed = stats.connectionsTotal > 0 && stats.connectionsBad >= stats.connectionsTotal
         val hasRecentBadHandshakeFailures = stats.recentInvalidHandshakeCount > 0L
-        val hasFailuresWithoutSuccess = !hasSuccessfulConnection &&
-            !freshAcceptedHandshake &&
+        val hasFailuresWithoutSuccess = !freshAcceptedHandshake &&
             !freshSuccessfulRoute &&
             (hasRecentBadHandshakeFailures || hasCurrentSessionErrors || stats.directHealthState.equals("unhealthy", ignoreCase = true))
 
         return when {
             activeSessions && hasRouteUsed -> "Подключён"
             freshAcceptedHandshake || freshSuccessfulRoute -> "Подключён"
-            stats.badHandshakeStormRecent -> TelegramStatusUiText.RECONNECT_STATUS
+            TelegramStatusUiText.showTelegramReconnectWarning(stats) -> TelegramStatusUiText.RECONNECT_STATUS
             checking || stats.routeSettlingUntil > now -> "Проверяется"
-            hasSuccessfulConnection -> "Подключён"
-            hasRouteUsed && !hasCurrentSessionErrors && !allConnectionsFailed -> "Подключён"
+            hasRouteUsed && !hasCurrentSessionErrors -> "Подключён"
             hasFailuresWithoutSuccess -> "Нестабильное соединение"
             else -> "Ожидает подключения"
         }

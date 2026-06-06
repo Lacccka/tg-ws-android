@@ -240,6 +240,7 @@ class MainUiModelTest {
         )
 
         assertTrue(recentStormStats.badHandshakeStormRecent)
+        assertTrue(TelegramStatusUiText.showTelegramReconnectWarning(recentStormStats))
         assertEquals(
             "Нужно переподключить Telegram",
             ConnectionStatusMapper.status(
@@ -248,6 +249,7 @@ class MainUiModelTest {
                 stats = recentStormStats,
             ),
         )
+        assertEquals("Подключить Telegram заново", TelegramStatusUiText.actionText(recentStormStats))
     }
 
     @Test
@@ -280,21 +282,27 @@ class MainUiModelTest {
 
     @Test
     fun oldCumulativeBadHandshakeStormAloneDoesNotAskForever() {
+        val cumulativeOnlyStats = stats(
+            connectionsTotal = 9749,
+            connectionsBad = 9611,
+            recentInvalidHandshakeCount = 0,
+            recentAcceptedHandshakeCount = 0,
+            lastAcceptedHandshakeTimeMs = 0,
+            lastSuccessfulRouteTimeMs = 0,
+        )
+        val status = ConnectionStatusMapper.status(
+            running = true,
+            networkStatus = "mobile",
+            stats = cumulativeOnlyStats,
+        )
+
         assertEquals(
-            "Old cumulative bad-handshake counters without a recent storm must not show reconnect forever",
+            "Old cumulative bad-handshake counters without a recent storm must not show reconnect forever: " +
+                "actualStatus=$status, recent=${cumulativeOnlyStats.badHandshakeStormRecent}, " +
+                "cumulative=${cumulativeOnlyStats.badHandshakeStormCumulative}, " +
+                "badHandshakeRatio=${cumulativeOnlyStats.badHandshakeRatio}",
             "Ожидает подключения",
-            ConnectionStatusMapper.status(
-                running = true,
-                networkStatus = "mobile",
-                stats = stats(
-                    connectionsTotal = 9749,
-                    connectionsBad = 9611,
-                    recentInvalidHandshakeCount = 0,
-                    recentAcceptedHandshakeCount = 0,
-                    lastAcceptedHandshakeTimeMs = 0,
-                    lastSuccessfulRouteTimeMs = 0,
-                ),
-            ),
+            status,
         )
     }
 
@@ -311,18 +319,26 @@ class MainUiModelTest {
 
         assertTrue(cumulativeOnlyStats.badHandshakeStormCumulative)
         assertFalse(cumulativeOnlyStats.badHandshakeStormRecent)
-        assertEquals(
-            "Ожидает подключения",
-            ConnectionStatusMapper.status(
-                running = true,
-                networkStatus = "mobile",
-                stats = cumulativeOnlyStats,
-            ),
+        val status = ConnectionStatusMapper.status(
+            running = true,
+            networkStatus = "mobile",
+            stats = cumulativeOnlyStats,
         )
-        assertEquals(
-            "route helper",
-            TelegramStatusUiText.helper(cumulativeOnlyStats, routeHelper = "route helper"),
-        )
+        val helper = TelegramStatusUiText.helper(cumulativeOnlyStats, routeHelper = "route helper")
+
+        val actionText = TelegramStatusUiText.actionText(cumulativeOnlyStats)
+        val assertionDetails = "actualStatus=$status, actualHelper=$helper, actualAction=$actionText, " +
+            "recent=${cumulativeOnlyStats.badHandshakeStormRecent}, " +
+            "cumulative=${cumulativeOnlyStats.badHandshakeStormCumulative}, " +
+            "badHandshakeRatio=${cumulativeOnlyStats.badHandshakeRatio}"
+
+        assertFalse(assertionDetails, TelegramStatusUiText.showTelegramReconnectWarning(cumulativeOnlyStats))
+        assertEquals(assertionDetails, "Ожидает подключения", status)
+        assertFalse(assertionDetails, status.contains("Нужно переподключить Telegram"))
+        assertEquals(assertionDetails, "route helper", helper)
+        assertFalse(assertionDetails, helper.orEmpty().contains("Telegram отправляет неверные подключения"))
+        assertEquals(assertionDetails, "Подключить Telegram", actionText)
+        assertFalse(assertionDetails, actionText == "Подключить Telegram заново")
     }
 
     @Test

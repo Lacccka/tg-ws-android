@@ -181,7 +181,7 @@ data class ProxyServerStats(
                 recentBadHandshakeRatio >= BAD_HANDSHAKE_STORM_MIN_RATIO
         }
 
-    /** User-facing storm state is intentionally recent/windowed, not cumulative. */
+    /** Diagnostics/compat only; normal UI must use badHandshakeStormRecent explicitly. */
     val badHandshakeStorm: Boolean
         get() = badHandshakeStormRecent
 

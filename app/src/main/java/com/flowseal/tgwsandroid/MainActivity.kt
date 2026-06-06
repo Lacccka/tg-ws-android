@@ -355,7 +355,6 @@ class MainActivity : Activity() {
             networkText.text = userNetworkLabel(ProxyForegroundService.State.networkStatus)
             routeText.text = routeLabel
             val stats = ProxyForegroundService.State.stats()
-            val badHandshakeStorm = stats?.badHandshakeStormRecent == true
             qualityText.text = ConnectionStatusMapper.status(
                 running = running,
                 networkStatus = ProxyForegroundService.State.networkStatus,
@@ -363,7 +362,7 @@ class MainActivity : Activity() {
                 checking = transitionStatus == TransitionStatus.STARTING,
             )
             primaryControlButton.text = if (running) "Остановить" else "Запустить"
-            connectTelegramButton.text = if (badHandshakeStorm) "Подключить Telegram заново" else "Подключить Telegram"
+            connectTelegramButton.text = TelegramStatusUiText.actionText(stats)
             val showRestartWarning = pendingRestartRequired && running
             restartRequiredText.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
             restartPendingButton.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
