@@ -132,6 +132,13 @@ object DiagnosticReportFormatter {
             "mobileDirectRescueSuccesses=${stats.mobileDirectRescueSuccesses}, " +
             "mobileDirectRescueFailures=${stats.mobileDirectRescueFailures}, " +
             "mobileDirectRescueSuppressed=${stats.mobileDirectRescueSuppressed}, " +
+            "mobileRescueSkippedBecauseNetworkChanged=${stats.mobileRescueSkippedBecauseNetworkChanged}, " +
+            "wifiDirectRecoveryAttempts=${stats.wifiDirectRecoveryAttempts}, " +
+            "wifiDirectRecoverySuccesses=${stats.wifiDirectRecoverySuccesses}, " +
+            "wifiDirectRecoveryFailures=${stats.wifiDirectRecoveryFailures}, " +
+            "lastNetworkTypeAtRouteAttempt=${stats.lastNetworkTypeAtRouteAttempt}, " +
+            "routeAttemptNetworkGeneration=${stats.routeAttemptNetworkGeneration}, " +
+            "routeAttemptNetworkChangedBeforeSelection=${stats.routeAttemptNetworkChangedBeforeSelection}, " +
             "mobileDirectRescueCooldownUntil=${formatLongByDc(stats.mobileDirectRescueCooldownUntil)}, " +
             "mobileDirectRescueLastError=${formatStringByDc(stats.mobileDirectRescueLastError)}, " +
             "mobileDirectRescueLastSuccessTime=${formatLongByDc(stats.mobileDirectRescueLastSuccessTime)}, " +

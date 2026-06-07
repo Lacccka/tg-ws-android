@@ -84,6 +84,13 @@ class DirectRouteHealth(
 
     fun isProbeThrottled(): Boolean = probeThrottleUntilMs.get() > nowMs()
 
+    fun isChecking(): Boolean = checking.get()
+
+    fun hasRecentSuccess(windowMs: Long): Boolean {
+        val lastSuccess = lastSuccessTimeMs.get()
+        return lastSuccess > 0L && nowMs() - lastSuccess <= windowMs
+    }
+
     fun probeThrottleUntilMs(): Long = probeThrottleUntilMs.get()
 
     fun recordPromotion() {

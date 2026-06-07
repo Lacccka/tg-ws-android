@@ -136,6 +136,13 @@ data class ProxyServerStats(
     val mobileDirectRescueSuccesses: Long = 0,
     val mobileDirectRescueFailures: Long = 0,
     val mobileDirectRescueSuppressed: Long = 0,
+    val mobileRescueSkippedBecauseNetworkChanged: Long = 0,
+    val wifiDirectRecoveryAttempts: Long = 0,
+    val wifiDirectRecoverySuccesses: Long = 0,
+    val wifiDirectRecoveryFailures: Long = 0,
+    val lastNetworkTypeAtRouteAttempt: String = "unknown",
+    val routeAttemptNetworkGeneration: Long = 0,
+    val routeAttemptNetworkChangedBeforeSelection: Long = 0,
     val mobileDirectRescueCooldownUntil: Map<Int, Long> = emptyMap(),
     val mobileDirectRescueLastError: Map<Int, String> = emptyMap(),
     val mobileDirectRescueLastSuccessTime: Map<Int, Long> = emptyMap(),
@@ -490,6 +497,11 @@ class ProxyServer(
     private val mobileDirectRescueSuccesses = AtomicLong(0)
     private val mobileDirectRescueFailures = AtomicLong(0)
     private val mobileDirectRescueSuppressed = AtomicLong(0)
+    private val mobileRescueSkippedBecauseNetworkChanged = AtomicLong(0)
+    private val wifiDirectRecoveryAttempts = AtomicLong(0)
+    private val wifiDirectRecoverySuccesses = AtomicLong(0)
+    private val wifiDirectRecoveryFailures = AtomicLong(0)
+    private val routeAttemptNetworkChangedBeforeSelection = AtomicLong(0)
     private val mobileDirectRescueByDc = ConcurrentHashMap<Int, MobileDirectRescueState>()
     private val wifiCapabilityEventsIgnored = AtomicLong(0)
     private val routeChurnAvoided = AtomicLong(0)
@@ -508,6 +520,9 @@ class ProxyServer(
     private val lastNetworkLostAtMs = AtomicLong(0)
     private val lastNetworkAvailableAtMs = AtomicLong(0)
     @Volatile private var currentNetworkStatus: String = config.networkStatus.ifBlank { "unknown" }
+    @Volatile private var lastNetworkTypeAtRouteAttempt: String = config.networkStatus.ifBlank { "unknown" }
+    @Volatile private var routeAttemptNetworkGeneration: Long = 0
+    @Volatile private var wifiDirectRecoveryUntilMs: Long = 0
     @Volatile private var directPoolStaleInWindow: Long = 0
     @Volatile private var lastDirectPoolStaleWindowStartMs: Long = 0
     @Volatile private var lastRouteUsed: String? = null
@@ -621,6 +636,13 @@ class ProxyServer(
             mobileDirectRescueSuccesses = mobileDirectRescueSuccesses.get(),
             mobileDirectRescueFailures = mobileDirectRescueFailures.get(),
             mobileDirectRescueSuppressed = mobileDirectRescueSuppressed.get(),
+            mobileRescueSkippedBecauseNetworkChanged = mobileRescueSkippedBecauseNetworkChanged.get(),
+            wifiDirectRecoveryAttempts = wifiDirectRecoveryAttempts.get(),
+            wifiDirectRecoverySuccesses = wifiDirectRecoverySuccesses.get(),
+            wifiDirectRecoveryFailures = wifiDirectRecoveryFailures.get(),
+            lastNetworkTypeAtRouteAttempt = lastNetworkTypeAtRouteAttempt,
+            routeAttemptNetworkGeneration = routeAttemptNetworkGeneration,
+            routeAttemptNetworkChangedBeforeSelection = routeAttemptNetworkChangedBeforeSelection.get(),
             mobileDirectRescueCooldownUntil = mobileDirectRescueByDc.mapValues { (_, state) -> state.cooldownUntilMs }.filterValues { it > 0L }.toSortedMap(),
             mobileDirectRescueLastError = mobileDirectRescueByDc.mapNotNull { (dc, state) -> state.lastError?.let { dc to it } }.toMap().toSortedMap(),
             mobileDirectRescueLastSuccessTime = mobileDirectRescueByDc.mapValues { (_, state) -> state.lastSuccessTimeMs }.filterValues { it > 0L }.toSortedMap(),
@@ -746,6 +768,10 @@ class ProxyServer(
                 val cleared = cfDomainHealth.clearTransientNetworkCooldowns()
                 if (cleared > 0) logger.log("CF transient DNS cooldowns cleared after network available: $cleared")
             }
+            if (isMobile(previousNetworkStatus) && isWifi(normalized)) {
+                wifiDirectRecoveryUntilMs = System.currentTimeMillis() + WIFI_DIRECT_RECOVERY_WINDOW_MS
+                logger.log("network changed from mobile to Wi-Fi; mobile rescue cooldown and CF pressure are ignored for Wi-Fi direct recovery")
+            }
         }
         if (immediate) routeChangesImmediate.incrementAndGet()
         val result = applyEffectiveRouteMode(
@@ -862,6 +888,11 @@ class ProxyServer(
 
         if (!waitForNetworkSettlingBeforeRoute(parsed.dcId)) return
 
+        val routeAttemptStartGeneration = routeGeneration.get()
+        val routeAttemptStartNetwork = currentNetworkStatus
+        lastNetworkTypeAtRouteAttempt = routeAttemptStartNetwork
+        routeAttemptNetworkGeneration = routeAttemptStartGeneration
+
         if (targetHost == null) {
             if (config.cfproxyEnabled) {
                 logger.log("DC${parsed.dcId} has no direct redirect configured; trying CF fallback")
@@ -882,12 +913,41 @@ class ProxyServer(
                 logger.log("DC${parsed.dcId} no route available after CF-only attempts")
             }
             NetworkRouteMode.CF_FIRST -> {
+                if (shouldAttemptWifiDirectRecovery(routeAttemptStartGeneration)) {
+                    if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return
+                }
                 if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
+                val currentGenerationBeforeFallback = routeGeneration.get()
+                if (currentGenerationBeforeFallback != routeAttemptStartGeneration) {
+                    routeAttemptNetworkChangedBeforeSelection.incrementAndGet()
+                    logger.log(
+                        "DC${parsed.dcId} route attempt network changed before fallback selection: " +
+                            "$routeAttemptStartNetwork/$routeAttemptStartGeneration -> $currentNetworkStatus/$currentGenerationBeforeFallback; re-evaluating route policy",
+                    )
+                    if (shouldAttemptWifiDirectRecovery(routeAttemptStartGeneration)) {
+                        if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return
+                    }
+                }
+                if (routeState.snapshot().effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST && isWifi(currentNetworkStatus)) {
+                    logger.log("DC${parsed.dcId} route re-evaluated to direct_first after network change; trying cold direct")
+                    if (tryDirectRoute(
+                            client,
+                            parsed,
+                            targetHost,
+                            relayInit,
+                            cryptoContext,
+                            splitter,
+                            usePool = false,
+                            timeoutMs = config.directFallbackTimeoutMs,
+                            allowWifiDirectRecovery = true,
+                        )
+                    ) return
+                }
                 if (isDirectAttemptAllowedForCurrentRoute()) {
                     logger.log("DC${parsed.dcId} trying short direct fallback after CF-first failure")
                     if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = false, timeoutMs = config.directFallbackTimeoutMs)) return
                 } else {
-                    val rescue = tryMobileDirectRescueIfAllowed(client, parsed, targetHost, relayInit, cryptoContext, splitter)
+                    val rescue = tryMobileDirectRescueIfAllowed(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration)
                     if (rescue.routed) return
                     if (!rescue.attempted) {
                         directAttemptsSkippedBecauseRoute.incrementAndGet()
@@ -954,20 +1014,21 @@ class ProxyServer(
         splitter: MsgSplitter,
         usePool: Boolean,
         timeoutMs: Int,
+        allowWifiDirectRecovery: Boolean = false,
     ): Boolean {
         val attemptGeneration = routeGeneration.get()
-        val directRoute = getPooledOrConnectWebSocket(parsed, targetHost, usePool, timeoutMs, attemptGeneration)
+        val directRoute = getPooledOrConnectWebSocket(parsed, targetHost, usePool, timeoutMs, attemptGeneration, allowWifiDirectRecovery)
         if (directRoute != null) {
             val directResult = runWebSocketRoute(client, parsed, directRoute, relayInit, cryptoContext, splitter)
             if (!directResult.failed) return true
             if (directResult.retryableStalePooled) {
-                if (!directRouteContextAllowsAttempt(attemptGeneration)) {
+                if (!directRouteContextAllowsAttempt(attemptGeneration, allowWifiDirectRecovery)) {
                     directAttemptsSkippedBecauseRoute.incrementAndGet()
                     logger.log("DC${parsed.dcId} cold direct retry skipped after stale pool because route/network changed")
                     return false
                 }
                 logger.log("DC${parsed.dcId} retrying with cold direct route after stale pool")
-                val coldRoute = guardedConnectWebSocket(parsed, targetHost, timeoutMs, attemptGeneration)?.let { WebSocketRoute(it, "direct-cold") }
+                val coldRoute = guardedConnectWebSocket(parsed, targetHost, timeoutMs, attemptGeneration, allowWifiDirectRecovery = allowWifiDirectRecovery)?.let { WebSocketRoute(it, "direct-cold") }
                 if (coldRoute != null) {
                     val coldResult = runWebSocketRoute(client, parsed, coldRoute, relayInit, cryptoContext, splitter)
                     if (!coldResult.failed) return true
@@ -983,6 +1044,35 @@ class ProxyServer(
         return false
     }
 
+    private fun tryWifiDirectRecoveryRoute(
+        client: TcpClientTransport,
+        parsed: MtprotoHandshake.Result,
+        targetHost: String,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+    ): Boolean {
+        wifiDirectRecoveryAttempts.incrementAndGet()
+        logger.log("DC${parsed.dcId} Wi-Fi direct recovery allowed while effective route mode ${effectiveRouteMode().configValue}")
+        val routed = tryDirectRoute(
+            client,
+            parsed,
+            targetHost,
+            relayInit,
+            cryptoContext,
+            splitter,
+            usePool = false,
+            timeoutMs = config.directFallbackTimeoutMs,
+            allowWifiDirectRecovery = true,
+        )
+        if (routed) {
+            wifiDirectRecoverySuccesses.incrementAndGet()
+            return true
+        }
+        wifiDirectRecoveryFailures.incrementAndGet()
+        return false
+    }
+
     private fun tryMobileDirectRescueIfAllowed(
         client: TcpClientTransport,
         parsed: MtprotoHandshake.Result,
@@ -990,14 +1080,15 @@ class ProxyServer(
         relayInit: ByteArray,
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
+        routeAttemptStartGeneration: Long,
     ): MobileDirectRescueRouteResult {
-        val decision = mobileDirectRescueDecision(parsed.dcId)
+        val decision = mobileDirectRescueDecision(parsed.dcId, routeAttemptStartGeneration)
         if (!decision.allowed) {
             if (decision.logMessage != null) logger.log(decision.logMessage)
             return MobileDirectRescueRouteResult(attempted = false, routed = false)
         }
         logger.log("DC${parsed.dcId} mobile direct rescue allowed because CF exhausted (${decision.reason})")
-        val route = connectMobileDirectRescue(parsed, targetHost)?.let { WebSocketRoute(it, "direct-mobile-rescue") }
+        val route = connectMobileDirectRescue(parsed, targetHost, routeAttemptStartGeneration)?.let { WebSocketRoute(it, "direct-mobile-rescue") }
         if (route == null) return MobileDirectRescueRouteResult(attempted = true, routed = false)
         val result = runWebSocketRoute(client, parsed, route, relayInit, cryptoContext, splitter)
         if (!result.failed) return MobileDirectRescueRouteResult(attempted = true, routed = true)
@@ -1005,14 +1096,27 @@ class ProxyServer(
         return MobileDirectRescueRouteResult(attempted = true, routed = false)
     }
 
-    private fun mobileDirectRescueDecision(dcId: Int): MobileDirectRescueDecision {
+    private fun mobileDirectRescueDecision(dcId: Int, routeAttemptStartGeneration: Long): MobileDirectRescueDecision {
+        val currentGeneration = routeGeneration.get()
+        val currentNetwork = currentNetworkStatus
+        if (currentGeneration != routeAttemptStartGeneration && !isMobile(currentNetwork)) {
+            mobileRescueSkippedBecauseNetworkChanged.incrementAndGet()
+            return MobileDirectRescueDecision(
+                false,
+                "network_changed",
+                "DC$dcId mobile direct rescue skipped because network changed before decision: generation $routeAttemptStartGeneration -> $currentGeneration network=$currentNetwork",
+            )
+        }
         val routeSnapshot = routeState.snapshot()
         val cfExhausted = cfDomainHealth.mobileRescueRecommended(dcId)
         if (!cfExhausted) return MobileDirectRescueDecision(false, "CF not exhausted")
         if (routeSnapshot.configuredRouteMode == NetworkRouteMode.CF_ONLY) {
             return MobileDirectRescueDecision(false, "CF_ONLY", "DC$dcId CF exhausted but CF_ONLY forbids direct rescue")
         }
-        if (routeSnapshot.configuredRouteMode != NetworkRouteMode.AUTO || routeSnapshot.effectiveRouteMode != NetworkRouteMode.CF_FIRST || !isMobile(currentNetworkStatus)) {
+        if (!isMobile(currentNetwork)) {
+            return MobileDirectRescueDecision(false, "network", "DC$dcId CF exhausted but mobile direct rescue skipped because current network=$currentNetwork")
+        }
+        if (routeSnapshot.configuredRouteMode != NetworkRouteMode.AUTO || routeSnapshot.effectiveRouteMode != NetworkRouteMode.CF_FIRST) {
             return MobileDirectRescueDecision(false, "route", "DC$dcId CF exhausted on mobile and direct rescue not allowed by route mode")
         }
         val now = System.currentTimeMillis()
@@ -1032,16 +1136,16 @@ class ProxyServer(
         return MobileDirectRescueDecision(true, cfDomainHealth.snapshot().pressure.reasonByDc[dcId] ?: "cf_exhausted")
     }
 
-    private fun connectMobileDirectRescue(parsed: MtprotoHandshake.Result, targetHost: String): WebSocketBinaryStream? {
+    private fun connectMobileDirectRescue(parsed: MtprotoHandshake.Result, targetHost: String, expectedGeneration: Long): WebSocketBinaryStream? {
         val state = mobileDirectRescueByDc.getOrPut(parsed.dcId) { MobileDirectRescueState() }
         val domain = wsDomains(parsed.dcId, parsed.isMedia).firstOrNull()
         if (domain == null) {
             finishMobileDirectRescueFailure(parsed.dcId, "no direct domain")
             return null
         }
-        if (!isMobile(currentNetworkStatus) || routeState.configuredRouteMode != NetworkRouteMode.AUTO || effectiveRouteMode() != NetworkRouteMode.CF_FIRST) {
-            finishMobileDirectRescueFailure(parsed.dcId, "route/network changed")
-            logger.log("DC${parsed.dcId} mobile direct rescue failed: route/network changed")
+        if (routeGeneration.get() != expectedGeneration || !isMobile(currentNetworkStatus) || routeState.configuredRouteMode != NetworkRouteMode.AUTO || effectiveRouteMode() != NetworkRouteMode.CF_FIRST) {
+            finishMobileDirectRescueSkippedBecauseNetworkChanged(parsed.dcId)
+            logger.log("DC${parsed.dcId} mobile direct rescue skipped because network changed before connect")
             return null
         }
         return try {
@@ -1077,12 +1181,21 @@ class ProxyServer(
         mobileDirectRescueFailures.incrementAndGet()
     }
 
+    private fun finishMobileDirectRescueSkippedBecauseNetworkChanged(dcId: Int) {
+        val state = mobileDirectRescueByDc.getOrPut(dcId) { MobileDirectRescueState() }
+        synchronized(state) {
+            state.inFlight = false
+        }
+        mobileRescueSkippedBecauseNetworkChanged.incrementAndGet()
+    }
+
     private fun getPooledOrConnectWebSocket(
         parsed: MtprotoHandshake.Result,
         targetHost: String,
         usePool: Boolean,
         timeoutMs: Int,
         expectedGeneration: Long? = null,
+        allowWifiDirectRecovery: Boolean = false,
     ): WebSocketRoute? {
         if (expectedGeneration != null && routeGeneration.get() != expectedGeneration) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
@@ -1090,7 +1203,7 @@ class ProxyServer(
             return null
         }
         val allowColdDuringSettling = directColdAllowedDuringSettling()
-        val skipReason = directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling)
+        val skipReason = directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling, allowWifiDirectRecovery = allowWifiDirectRecovery)
         if (skipReason != null) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
             logger.log("DC${parsed.dcId} direct route skipped because $skipReason")
@@ -1122,6 +1235,7 @@ class ProxyServer(
             timeoutMs,
             expectedGeneration,
             allowColdDuringSettling = allowColdDuringSettling,
+            allowWifiDirectRecovery = allowWifiDirectRecovery,
         )?.let { WebSocketRoute(it, "direct-cold") }
     }
 
@@ -1131,19 +1245,20 @@ class ProxyServer(
         timeoutMs: Int,
         expectedGeneration: Long? = null,
         allowColdDuringSettling: Boolean = directColdAllowedDuringSettling(),
+        allowWifiDirectRecovery: Boolean = false,
     ): WebSocketBinaryStream? {
         if (expectedGeneration != null && routeGeneration.get() != expectedGeneration) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
             logger.log("DC${parsed.dcId} direct connect skipped because route generation changed")
             return null
         }
-        val skipReason = directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling)
+        val skipReason = directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling, allowWifiDirectRecovery = allowWifiDirectRecovery)
         if (skipReason != null) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
             logger.log("DC${parsed.dcId} direct connect skipped because $skipReason")
             return null
         }
-        return connectWebSocket(parsed, targetHost, timeoutMs, allowColdDuringSettling)
+        return connectWebSocket(parsed, targetHost, timeoutMs, allowColdDuringSettling, allowWifiDirectRecovery)
     }
 
     private fun connectWebSocket(
@@ -1151,10 +1266,11 @@ class ProxyServer(
         targetHost: String,
         timeoutMs: Int,
         allowColdDuringSettling: Boolean = directColdAllowedDuringSettling(),
+        allowWifiDirectRecovery: Boolean = false,
     ): WebSocketBinaryStream? {
         val failures = mutableListOf<String>()
         for (domain in wsDomains(parsed.dcId, parsed.isMedia)) {
-            if (!isDirectAttemptAllowedForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling)) {
+            if (!isDirectAttemptAllowedForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling, allowWifiDirectRecovery = allowWifiDirectRecovery)) {
                 directAttemptsSkippedBecauseRoute.incrementAndGet()
                 logger.log("DC${parsed.dcId} direct WebSocket attempt skipped before $domain because route/network changed")
                 break
@@ -1564,10 +1680,16 @@ class ProxyServer(
 
     private fun isDirectPoolEnabled(): Boolean = isDirectPoolEnabledFor(effectiveRouteMode())
 
-    private fun isDirectAttemptAllowedForCurrentRoute(allowColdDuringSettling: Boolean = false): Boolean =
-        directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling = allowColdDuringSettling) == null
+    private fun isDirectAttemptAllowedForCurrentRoute(allowColdDuringSettling: Boolean = false, allowWifiDirectRecovery: Boolean = false): Boolean =
+        directAttemptSkipReasonForCurrentRoute(
+            allowColdDuringSettling = allowColdDuringSettling,
+            allowWifiDirectRecovery = allowWifiDirectRecovery,
+        ) == null
 
-    private fun directAttemptSkipReasonForCurrentRoute(allowColdDuringSettling: Boolean = false): String? {
+    private fun directAttemptSkipReasonForCurrentRoute(
+        allowColdDuringSettling: Boolean = false,
+        allowWifiDirectRecovery: Boolean = false,
+    ): String? {
         val snapshot = routeState.snapshot()
         if (snapshot.configuredRouteMode == NetworkRouteMode.DIRECT_FIRST) {
             return if (snapshot.effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST) null
@@ -1576,13 +1698,27 @@ class ProxyServer(
         if (currentNetworkStatus.equals("none", ignoreCase = true) || isMobile(currentNetworkStatus)) {
             return "network=$currentNetworkStatus"
         }
-        if (directRouteHealth.isSettling() && !allowColdDuringSettling) return "route settling"
+        if (directRouteHealth.isSettling() && !allowColdDuringSettling && !allowWifiDirectRecovery) return "route settling"
         return when (snapshot.effectiveRouteMode) {
             NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> null
-            NetworkRouteMode.CF_FIRST -> if (snapshot.configuredRouteMode == NetworkRouteMode.CF_FIRST) null
+            NetworkRouteMode.CF_FIRST -> if (snapshot.configuredRouteMode == NetworkRouteMode.CF_FIRST || allowWifiDirectRecovery) null
                 else "effective route mode ${snapshot.effectiveRouteMode.configValue}"
             NetworkRouteMode.CF_ONLY -> "effective route mode ${snapshot.effectiveRouteMode.configValue}"
         }
+    }
+
+    private fun shouldAttemptWifiDirectRecovery(routeAttemptStartGeneration: Long): Boolean {
+        val snapshot = routeState.snapshot()
+        if (snapshot.configuredRouteMode != NetworkRouteMode.AUTO) return false
+        if (snapshot.effectiveRouteMode != NetworkRouteMode.CF_FIRST) return false
+        if (!isWifi(currentNetworkStatus)) return false
+        if (System.currentTimeMillis() > wifiDirectRecoveryUntilMs) return false
+        val generationChanged = routeGeneration.get() != routeAttemptStartGeneration
+        if (generationChanged) {
+            routeAttemptNetworkChangedBeforeSelection.incrementAndGet()
+            return true
+        }
+        return directRouteHealth.isChecking() || directRouteHealth.hasRecentSuccess(WIFI_DIRECT_RECOVERY_RECENT_SUCCESS_MS)
     }
 
     private fun directColdAllowedDuringSettling(): Boolean {
@@ -1694,14 +1830,14 @@ class ProxyServer(
         }
     }
 
-    private fun directRouteContextAllowsAttempt(expectedGeneration: Long? = null): Boolean {
+    private fun directRouteContextAllowsAttempt(expectedGeneration: Long? = null, allowWifiDirectRecovery: Boolean = false): Boolean {
         if (expectedGeneration != null && routeGeneration.get() != expectedGeneration) return false
         val snapshot = routeState.snapshot()
-        if (snapshot.effectiveRouteMode != NetworkRouteMode.DIRECT_FIRST) return false
+        if (snapshot.effectiveRouteMode != NetworkRouteMode.DIRECT_FIRST && !allowWifiDirectRecovery) return false
         if (snapshot.configuredRouteMode == NetworkRouteMode.DIRECT_FIRST) return true
         if (!isWifi(currentNetworkStatus)) return false
-        if (directRouteHealth.isSettling() && !directColdAllowedDuringSettling()) return false
-        return true
+        if (directRouteHealth.isSettling() && !directColdAllowedDuringSettling() && !allowWifiDirectRecovery) return false
+        return snapshot.effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST || allowWifiDirectRecovery
     }
 
     private fun isWifi(networkStatus: String): Boolean =
@@ -1738,6 +1874,8 @@ class ProxyServer(
         private const val NETWORK_SETTLING_CLIENT_WAIT_MAX_MS = 1_500L
         private const val DIRECT_HEALTH_COOLDOWN_MS = 45_000L
         private const val DIRECT_PROBE_THROTTLE_MS = 30_000L
+        private const val WIFI_DIRECT_RECOVERY_RECENT_SUCCESS_MS = 30_000L
+        private const val WIFI_DIRECT_RECOVERY_WINDOW_MS = 5_000L
         private const val DIRECT_HEALTH_DEGRADE_WINDOW_MS = 10_000L
         private const val DIRECT_POOL_STALE_DOWNGRADE_THRESHOLD = 3L
 
