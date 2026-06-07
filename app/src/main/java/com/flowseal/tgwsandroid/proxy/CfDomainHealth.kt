@@ -145,6 +145,7 @@ class CfDomainHealth(
         }
 
         allDomainsInCooldownFallbacks += 1
+        recordPressureEventLocked(dcId, CfPressureEventKind.ALL_DOMAINS_COOLDOWN, now)
         val nextAllowedAtMs = circuitState.nextAllowedAttemptAtMs
         if (nextAllowedAtMs > now) {
             allCooldownAttemptsSuppressed += 1
@@ -407,7 +408,11 @@ class CfDomainHealth(
                 pressureLimitedAttempts += 1
                 CfPressureDecision(
                     level = level,
-                    maxAttempts = if (networkStatus.equals("mobile", ignoreCase = true)) DEGRADED_MOBILE_MAX_ATTEMPTS_PER_CYCLE else DEGRADED_DEFAULT_MAX_ATTEMPTS_PER_CYCLE,
+                    maxAttempts = if (networkStatus.equals("mobile", ignoreCase = true) || networkStatus.equals("cellular", ignoreCase = true)) {
+                        DEGRADED_MOBILE_MAX_ATTEMPTS_PER_CYCLE
+                    } else {
+                        DEGRADED_DEFAULT_MAX_ATTEMPTS_PER_CYCLE
+                    },
                     connectQueueWaitMs = DEGRADED_CONNECT_QUEUE_WAIT_MS,
                 )
             }
@@ -434,6 +439,18 @@ class CfDomainHealth(
                         nextProbeAtMs = state.nextProbeAtMs,
                     )
                 }
+            }
+            CfPressureLevel.EXHAUSTED -> {
+                pressureProbeSuppressed += 1
+                pressureControlledFailures += 1
+                state.nextProbeAtMs = maxOf(state.nextProbeAtMs, now + SATURATED_PROBE_WINDOW_MS)
+                CfPressureDecision(
+                    level = level,
+                    maxAttempts = 0,
+                    connectQueueWaitMs = 0L,
+                    controlledFailure = true,
+                    nextProbeAtMs = state.nextProbeAtMs,
+                )
             }
         }
     }
@@ -507,10 +524,28 @@ class CfDomainHealth(
             cooldownsSkippedBecauseNetworkSettling = cooldownsSkippedBecauseNetworkSettling,
             transientCooldownsClearedOnNetworkAvailable = transientCooldownsClearedOnNetworkAvailable,
             pressure = pressureSnapshotLocked(now),
+            allDomainsCooldownByDc = allDomainsCooldownByDcLocked(rows, now),
             domains = rows.sortedWith(compareBy<CfDomainSnapshot> { it.dcId }.thenBy { it.domain }),
         )
     }
 
+
+    @Synchronized
+    fun mobileRescueRecommended(dcId: Int): Boolean {
+        val now = nowMs()
+        val state = pressureStateFor(dcId)
+        prunePressureEventsLocked(state, now)
+        val counts = countPressureEvents(state.events)
+        val level = evaluatePressureLevel(counts)
+        updatePressureLevelLocked(dcId, state, level, now)
+        val allDomainsCooldown = allDomainsCooldownByDcLocked(
+            states.entries.map { (key, domainState) -> domainState.snapshot(key, now) },
+            now,
+        )[dcId] == true
+        return level >= CfPressureLevel.SATURATED ||
+            allDomainsCooldown ||
+            counts.allCooldownSuppressed >= MOBILE_RESCUE_MIN_ALL_COOLDOWN_SUPPRESSIONS
+    }
 
     private fun pressureStateFor(dcId: Int): MutableCfPressureState =
         pressureByDc.getOrPut(dcId) { MutableCfPressureState() }
@@ -546,6 +581,7 @@ class CfDomainHealth(
         var unknownHost = 0L
         var queue = 0L
         var allCooldown = 0L
+        var allDomainsCooldown = 0L
         var maxInflight = 0L
         var routeFailure = 0L
         for (event in events) {
@@ -556,26 +592,45 @@ class CfDomainHealth(
                 CfPressureEventKind.UNKNOWN_HOST -> unknownHost += 1
                 CfPressureEventKind.QUEUE_FAILURE -> queue += 1
                 CfPressureEventKind.ALL_COOLDOWN_SUPPRESSED -> allCooldown += 1
+                CfPressureEventKind.ALL_DOMAINS_COOLDOWN -> allDomainsCooldown += 1
                 CfPressureEventKind.MAX_INFLIGHT -> maxInflight += 1
                 CfPressureEventKind.ROUTE_FAILURE_AFTER_CF -> routeFailure += 1
             }
         }
-        return CfPressureCounts(success, http429, timeout, unknownHost, queue, allCooldown, maxInflight, routeFailure)
+        return CfPressureCounts(success, http429, timeout, unknownHost, queue, allCooldown, allDomainsCooldown, maxInflight, routeFailure)
     }
 
     private fun evaluatePressureLevel(counts: CfPressureCounts): CfPressureLevel {
         val failures = counts.failureTotal
         val total = failures + counts.success
-        if (total < DEGRADED_MIN_TOTAL && failures < DEGRADED_MIN_FAILURES) return CfPressureLevel.NORMAL
+        if (counts.allDomainsCooldown > 0L && counts.allCooldownSuppressed >= EXHAUSTED_MIN_ALL_COOLDOWN_SUPPRESSIONS) return CfPressureLevel.EXHAUSTED
+        if (total < DEGRADED_MIN_TOTAL && failures < DEGRADED_MIN_FAILURES && counts.allDomainsCooldown == 0L) return CfPressureLevel.NORMAL
         val failureRatio = if (total > 0L) failures.toDouble() / total.toDouble() else 0.0
-        val hardFailures = counts.http429 + counts.timeout + counts.queueFailure + counts.allCooldownSuppressed
-        val saturated = failures >= SATURATED_MIN_FAILURES && failureRatio >= SATURATED_MIN_FAILURE_RATIO && counts.success <= SATURATED_MAX_RECENT_SUCCESSES &&
-            (hardFailures >= SATURATED_MIN_HARD_FAILURES || counts.allCooldownSuppressed >= SATURATED_MIN_ALL_COOLDOWN_SUPPRESSIONS || counts.queueFailure >= SATURATED_MIN_QUEUE_FAILURES)
+        val hardFailures = counts.http429 + counts.timeout + counts.queueFailure + counts.allCooldownSuppressed + counts.allDomainsCooldown
+        val saturated = (failures >= SATURATED_MIN_FAILURES && failureRatio >= SATURATED_MIN_FAILURE_RATIO && counts.success <= SATURATED_MAX_RECENT_SUCCESSES &&
+            (hardFailures >= SATURATED_MIN_HARD_FAILURES || counts.allCooldownSuppressed >= SATURATED_MIN_ALL_COOLDOWN_SUPPRESSIONS || counts.queueFailure >= SATURATED_MIN_QUEUE_FAILURES)) ||
+            (counts.allDomainsCooldown > 0L && counts.allCooldownSuppressed >= SATURATED_MIN_ALL_COOLDOWN_SUPPRESSIONS)
         if (saturated) return CfPressureLevel.SATURATED
         val degraded = failures >= DEGRADED_MIN_FAILURES && failureRatio >= DEGRADED_MIN_FAILURE_RATIO &&
             (hardFailures >= DEGRADED_MIN_HARD_FAILURES || counts.maxInflight >= DEGRADED_MIN_MAX_INFLIGHT_HITS)
         return if (degraded) CfPressureLevel.DEGRADED else CfPressureLevel.NORMAL
     }
+
+    private fun pressureReason(counts: CfPressureCounts): String? = when {
+        counts.allDomainsCooldown > 0L && counts.allCooldownSuppressed >= EXHAUSTED_MIN_ALL_COOLDOWN_SUPPRESSIONS -> "all_domains_cooldown/all_cooldown_suppressed"
+        counts.allDomainsCooldown > 0L -> "all_domains_cooldown"
+        counts.allCooldownSuppressed >= SATURATED_MIN_ALL_COOLDOWN_SUPPRESSIONS -> "all_cooldown_suppressed"
+        counts.http429 > 0L -> "http_429"
+        counts.queueFailure > 0L -> "queue_failure"
+        counts.timeout > 0L -> "timeout"
+        else -> null
+    }
+
+    private fun allDomainsCooldownByDcLocked(rows: List<CfDomainSnapshot>, now: Long): Map<Int, Boolean> = rows
+        .groupBy { it.dcId }
+        .filterValues { dcRows -> dcRows.isNotEmpty() && dcRows.all { it.cooldownUntilMs > now } }
+        .mapValues { true }
+        .toSortedMap()
 
     private fun updatePressureLevelLocked(dcId: Int, state: MutableCfPressureState, level: CfPressureLevel, now: Long) {
         if (state.level == level) return
@@ -600,6 +655,8 @@ class CfDomainHealth(
         val allCooldownSuppressed = mutableMapOf<Int, Long>()
         val maxInflight = mutableMapOf<Int, Long>()
         val routeFailures = mutableMapOf<Int, Long>()
+        val allDomainsCooldown = mutableMapOf<Int, Long>()
+        val reasons = mutableMapOf<Int, String>()
         val nextProbeAt = mutableMapOf<Int, Long>()
         for ((dcId, state) in pressureByDc) {
             prunePressureEventsLocked(state, now)
@@ -616,6 +673,8 @@ class CfDomainHealth(
             allCooldownSuppressed[dcId] = counts.allCooldownSuppressed
             maxInflight[dcId] = counts.maxInflight
             routeFailures[dcId] = counts.routeFailureAfterCf
+            allDomainsCooldown[dcId] = counts.allDomainsCooldown
+            pressureReason(counts)?.let { reasons[dcId] = it }
             if (state.nextProbeAtMs > now) nextProbeAt[dcId] = state.nextProbeAtMs
         }
         return CfPressureSnapshot(
@@ -629,6 +688,8 @@ class CfDomainHealth(
             recentAllCooldownSuppressedByDc = allCooldownSuppressed.toSortedMap(),
             recentMaxInflightByDc = maxInflight.toSortedMap(),
             recentRouteFailureAfterCfByDc = routeFailures.toSortedMap(),
+            allDomainsCooldownByDc = allDomainsCooldown.toSortedMap(),
+            reasonByDc = reasons.toSortedMap(),
             probeAllowed = pressureProbeAllowed,
             probeSuppressed = pressureProbeSuppressed,
             controlledFailures = pressureControlledFailures,
@@ -746,6 +807,8 @@ class CfDomainHealth(
         private const val SATURATED_MIN_HARD_FAILURES: Long = 8L
         private const val SATURATED_MIN_QUEUE_FAILURES: Long = 5L
         private const val SATURATED_MIN_ALL_COOLDOWN_SUPPRESSIONS: Long = 3L
+        private const val EXHAUSTED_MIN_ALL_COOLDOWN_SUPPRESSIONS: Long = 3L
+        private const val MOBILE_RESCUE_MIN_ALL_COOLDOWN_SUPPRESSIONS: Long = 3L
         private const val SATURATED_MAX_RECENT_SUCCESSES: Long = 0L
         private const val SATURATED_MIN_FAILURE_RATIO: Double = 0.85
 
@@ -811,6 +874,7 @@ enum class CfPressureLevel(val configValue: String) {
     NORMAL("normal"),
     DEGRADED("degraded"),
     SATURATED("saturated"),
+    EXHAUSTED("exhausted"),
 }
 
 data class CfPressureDecision(
@@ -840,6 +904,8 @@ data class CfPressureSnapshot(
     val recentAllCooldownSuppressedByDc: Map<Int, Long> = emptyMap(),
     val recentMaxInflightByDc: Map<Int, Long> = emptyMap(),
     val recentRouteFailureAfterCfByDc: Map<Int, Long> = emptyMap(),
+    val allDomainsCooldownByDc: Map<Int, Long> = emptyMap(),
+    val reasonByDc: Map<Int, String> = emptyMap(),
     val probeAllowed: Long = 0,
     val probeSuppressed: Long = 0,
     val controlledFailures: Long = 0,
@@ -887,6 +953,7 @@ data class CfDomainHealthSnapshot(
     val cooldownsSkippedBecauseNetworkSettling: Long,
     val transientCooldownsClearedOnNetworkAvailable: Long,
     val pressure: CfPressureSnapshot = CfPressureSnapshot(),
+    val allDomainsCooldownByDc: Map<Int, Boolean> = emptyMap(),
     val domains: List<CfDomainSnapshot>,
 )
 
@@ -938,6 +1005,7 @@ private enum class CfPressureEventKind {
     UNKNOWN_HOST,
     QUEUE_FAILURE,
     ALL_COOLDOWN_SUPPRESSED,
+    ALL_DOMAINS_COOLDOWN,
     MAX_INFLIGHT,
     ROUTE_FAILURE_AFTER_CF,
 }
@@ -954,11 +1022,12 @@ private data class CfPressureCounts(
     val unknownHost: Long,
     val queueFailure: Long,
     val allCooldownSuppressed: Long,
+    val allDomainsCooldown: Long,
     val maxInflight: Long,
     val routeFailureAfterCf: Long,
 ) {
-    val failureTotal: Long = http429 + timeout + unknownHost + queueFailure + allCooldownSuppressed + maxInflight + routeFailureAfterCf
-    val score: Long = http429 * 3L + timeout * 2L + unknownHost + queueFailure * 2L + allCooldownSuppressed * 2L + maxInflight + routeFailureAfterCf * 2L - success * 3L
+    val failureTotal: Long = http429 + timeout + unknownHost + queueFailure + allCooldownSuppressed + allDomainsCooldown + maxInflight + routeFailureAfterCf
+    val score: Long = http429 * 3L + timeout * 2L + unknownHost + queueFailure * 2L + allCooldownSuppressed * 2L + allDomainsCooldown * 2L + maxInflight + routeFailureAfterCf * 2L - success * 3L
 }
 
 private class MutableCfPressureState {

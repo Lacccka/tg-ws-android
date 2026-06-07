@@ -132,6 +132,13 @@ data class ProxyServerStats(
     val wifiCapabilityEventsIgnored: Long = 0,
     val routeChurnAvoided: Long = 0,
     val directProbeThrottleUntil: Long = 0,
+    val mobileDirectRescueAttempts: Long = 0,
+    val mobileDirectRescueSuccesses: Long = 0,
+    val mobileDirectRescueFailures: Long = 0,
+    val mobileDirectRescueSuppressed: Long = 0,
+    val mobileDirectRescueCooldownUntil: Map<Int, Long> = emptyMap(),
+    val mobileDirectRescueLastError: Map<Int, String> = emptyMap(),
+    val mobileDirectRescueLastSuccessTime: Map<Int, Long> = emptyMap(),
     val cfHealthEnabled: Boolean = false,
     val cfDomainsTotal: Int = 0,
     val cfDomainsInCooldown: Int = 0,
@@ -175,6 +182,8 @@ data class ProxyServerStats(
     val cfPressureRecentAllCooldownSuppressedByDc: Map<Int, Long> = emptyMap(),
     val cfPressureRecentMaxInflightByDc: Map<Int, Long> = emptyMap(),
     val cfPressureRecentRouteFailureAfterCfByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureAllDomainsCooldownByDc: Map<Int, Long> = emptyMap(),
+    val cfPressureReasonByDc: Map<Int, String> = emptyMap(),
     val cfPressureProbeAllowed: Long = 0,
     val cfPressureProbeSuppressed: Long = 0,
     val cfPressureControlledFailures: Long = 0,
@@ -477,6 +486,11 @@ class ProxyServer(
     private val directAttempts = AtomicLong(0)
     private val directAttemptsSkippedBecauseRoute = AtomicLong(0)
     private val directProbeSkippedBecauseAlreadyHealthy = AtomicLong(0)
+    private val mobileDirectRescueAttempts = AtomicLong(0)
+    private val mobileDirectRescueSuccesses = AtomicLong(0)
+    private val mobileDirectRescueFailures = AtomicLong(0)
+    private val mobileDirectRescueSuppressed = AtomicLong(0)
+    private val mobileDirectRescueByDc = ConcurrentHashMap<Int, MobileDirectRescueState>()
     private val wifiCapabilityEventsIgnored = AtomicLong(0)
     private val routeChurnAvoided = AtomicLong(0)
     private val poolRefillsCancelled = AtomicLong(0)
@@ -603,6 +617,13 @@ class ProxyServer(
             wifiCapabilityEventsIgnored = wifiCapabilityEventsIgnored.get(),
             routeChurnAvoided = routeChurnAvoided.get(),
             directProbeThrottleUntil = directHealthSnapshot.probeThrottleUntilMs,
+            mobileDirectRescueAttempts = mobileDirectRescueAttempts.get(),
+            mobileDirectRescueSuccesses = mobileDirectRescueSuccesses.get(),
+            mobileDirectRescueFailures = mobileDirectRescueFailures.get(),
+            mobileDirectRescueSuppressed = mobileDirectRescueSuppressed.get(),
+            mobileDirectRescueCooldownUntil = mobileDirectRescueByDc.mapValues { (_, state) -> state.cooldownUntilMs }.filterValues { it > 0L }.toSortedMap(),
+            mobileDirectRescueLastError = mobileDirectRescueByDc.mapNotNull { (dc, state) -> state.lastError?.let { dc to it } }.toMap().toSortedMap(),
+            mobileDirectRescueLastSuccessTime = mobileDirectRescueByDc.mapValues { (_, state) -> state.lastSuccessTimeMs }.filterValues { it > 0L }.toSortedMap(),
             cfHealthEnabled = cfHealthSnapshot.enabled,
             cfDomainsTotal = cfHealthSnapshot.domainsTotal,
             cfDomainsInCooldown = cfHealthSnapshot.domainsInCooldown,
@@ -646,6 +667,8 @@ class ProxyServer(
             cfPressureRecentAllCooldownSuppressedByDc = cfHealthSnapshot.pressure.recentAllCooldownSuppressedByDc,
             cfPressureRecentMaxInflightByDc = cfHealthSnapshot.pressure.recentMaxInflightByDc,
             cfPressureRecentRouteFailureAfterCfByDc = cfHealthSnapshot.pressure.recentRouteFailureAfterCfByDc,
+            cfPressureAllDomainsCooldownByDc = cfHealthSnapshot.pressure.allDomainsCooldownByDc,
+            cfPressureReasonByDc = cfHealthSnapshot.pressure.reasonByDc,
             cfPressureProbeAllowed = cfHealthSnapshot.pressure.probeAllowed,
             cfPressureProbeSuppressed = cfHealthSnapshot.pressure.probeSuppressed,
             cfPressureControlledFailures = cfHealthSnapshot.pressure.controlledFailures,
@@ -853,6 +876,9 @@ class ProxyServer(
         when (effectiveRouteMode()) {
             NetworkRouteMode.CF_ONLY -> {
                 if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
+                if (cfDomainHealth.mobileRescueRecommended(parsed.dcId)) {
+                    logger.log("DC${parsed.dcId} CF exhausted but CF_ONLY forbids direct rescue")
+                }
                 logger.log("DC${parsed.dcId} no route available after CF-only attempts")
             }
             NetworkRouteMode.CF_FIRST -> {
@@ -861,8 +887,12 @@ class ProxyServer(
                     logger.log("DC${parsed.dcId} trying short direct fallback after CF-first failure")
                     if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = false, timeoutMs = config.directFallbackTimeoutMs)) return
                 } else {
-                    directAttemptsSkippedBecauseRoute.incrementAndGet()
-                    logger.log("DC${parsed.dcId} direct fallback skipped because effective route mode ${effectiveRouteMode().configValue}")
+                    val rescue = tryMobileDirectRescueIfAllowed(client, parsed, targetHost, relayInit, cryptoContext, splitter)
+                    if (rescue.routed) return
+                    if (!rescue.attempted) {
+                        directAttemptsSkippedBecauseRoute.incrementAndGet()
+                        logger.log("DC${parsed.dcId} direct fallback skipped because effective route mode ${effectiveRouteMode().configValue}")
+                    }
                 }
                 logger.log("DC${parsed.dcId} no route available after CF-first attempts")
             }
@@ -951,6 +981,100 @@ class ProxyServer(
             }
         }
         return false
+    }
+
+    private fun tryMobileDirectRescueIfAllowed(
+        client: TcpClientTransport,
+        parsed: MtprotoHandshake.Result,
+        targetHost: String,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+    ): MobileDirectRescueRouteResult {
+        val decision = mobileDirectRescueDecision(parsed.dcId)
+        if (!decision.allowed) {
+            if (decision.logMessage != null) logger.log(decision.logMessage)
+            return MobileDirectRescueRouteResult(attempted = false, routed = false)
+        }
+        logger.log("DC${parsed.dcId} mobile direct rescue allowed because CF exhausted (${decision.reason})")
+        val route = connectMobileDirectRescue(parsed, targetHost)?.let { WebSocketRoute(it, "direct-mobile-rescue") }
+        if (route == null) return MobileDirectRescueRouteResult(attempted = true, routed = false)
+        val result = runWebSocketRoute(client, parsed, route, relayInit, cryptoContext, splitter)
+        if (!result.failed) return MobileDirectRescueRouteResult(attempted = true, routed = true)
+        if (!result.failedBeforeBridge) return MobileDirectRescueRouteResult(attempted = true, routed = true)
+        return MobileDirectRescueRouteResult(attempted = true, routed = false)
+    }
+
+    private fun mobileDirectRescueDecision(dcId: Int): MobileDirectRescueDecision {
+        val routeSnapshot = routeState.snapshot()
+        val cfExhausted = cfDomainHealth.mobileRescueRecommended(dcId)
+        if (!cfExhausted) return MobileDirectRescueDecision(false, "CF not exhausted")
+        if (routeSnapshot.configuredRouteMode == NetworkRouteMode.CF_ONLY) {
+            return MobileDirectRescueDecision(false, "CF_ONLY", "DC$dcId CF exhausted but CF_ONLY forbids direct rescue")
+        }
+        if (routeSnapshot.configuredRouteMode != NetworkRouteMode.AUTO || routeSnapshot.effectiveRouteMode != NetworkRouteMode.CF_FIRST || !isMobile(currentNetworkStatus)) {
+            return MobileDirectRescueDecision(false, "route", "DC$dcId CF exhausted on mobile and direct rescue not allowed by route mode")
+        }
+        val now = System.currentTimeMillis()
+        val state = mobileDirectRescueByDc.getOrPut(dcId) { MobileDirectRescueState() }
+        synchronized(state) {
+            if (state.inFlight) {
+                mobileDirectRescueSuppressed.incrementAndGet()
+                return MobileDirectRescueDecision(false, "in_flight", "DC$dcId mobile direct rescue suppressed because another rescue is in flight")
+            }
+            if (state.cooldownUntilMs > now) {
+                mobileDirectRescueSuppressed.incrementAndGet()
+                return MobileDirectRescueDecision(false, "cooldown", "DC$dcId mobile direct rescue suppressed because cooldown until=${state.cooldownUntilMs}")
+            }
+            state.inFlight = true
+        }
+        mobileDirectRescueAttempts.incrementAndGet()
+        return MobileDirectRescueDecision(true, cfDomainHealth.snapshot().pressure.reasonByDc[dcId] ?: "cf_exhausted")
+    }
+
+    private fun connectMobileDirectRescue(parsed: MtprotoHandshake.Result, targetHost: String): WebSocketBinaryStream? {
+        val state = mobileDirectRescueByDc.getOrPut(parsed.dcId) { MobileDirectRescueState() }
+        val domain = wsDomains(parsed.dcId, parsed.isMedia).firstOrNull()
+        if (domain == null) {
+            finishMobileDirectRescueFailure(parsed.dcId, "no direct domain")
+            return null
+        }
+        if (!isMobile(currentNetworkStatus) || routeState.configuredRouteMode != NetworkRouteMode.AUTO || effectiveRouteMode() != NetworkRouteMode.CF_FIRST) {
+            finishMobileDirectRescueFailure(parsed.dcId, "route/network changed")
+            logger.log("DC${parsed.dcId} mobile direct rescue failed: route/network changed")
+            return null
+        }
+        return try {
+            directAttempts.incrementAndGet()
+            logger.log("DC${parsed.dcId} mobile direct rescue trying wss://$domain$DEFAULT_WS_PATH via $targetHost")
+            val webSocket = webSocketConnector.connect(targetHost, domain, DEFAULT_WS_PATH, config.directFallbackTimeoutMs)
+            synchronized(state) {
+                state.inFlight = false
+                state.cooldownUntilMs = System.currentTimeMillis() + MOBILE_DIRECT_RESCUE_SUCCESS_REUSE_MS
+                state.lastError = null
+                state.lastSuccessTimeMs = System.currentTimeMillis()
+            }
+            mobileDirectRescueSuccesses.incrementAndGet()
+            logger.log("DC${parsed.dcId} mobile direct rescue success; direct route allowed for this client")
+            webSocket
+        } catch (error: Throwable) {
+            wsConnectErrors.incrementAndGet()
+            if (isTimeout(error)) directTimeouts.incrementAndGet()
+            val detail = websocketFailureDetail(error)
+            finishMobileDirectRescueFailure(parsed.dcId, detail)
+            logger.log("DC${parsed.dcId} mobile direct rescue failed: $detail")
+            null
+        }
+    }
+
+    private fun finishMobileDirectRescueFailure(dcId: Int, detail: String) {
+        val state = mobileDirectRescueByDc.getOrPut(dcId) { MobileDirectRescueState() }
+        synchronized(state) {
+            state.inFlight = false
+            state.cooldownUntilMs = System.currentTimeMillis() + MOBILE_DIRECT_RESCUE_FAILURE_COOLDOWN_MS
+            state.lastError = detail
+        }
+        mobileDirectRescueFailures.incrementAndGet()
     }
 
     private fun getPooledOrConnectWebSocket(
@@ -1435,6 +1559,9 @@ class ProxyServer(
 
     private fun effectiveRouteMode(): NetworkRouteMode = routeState.effectiveRouteMode
 
+    private fun isMobile(networkStatus: String): Boolean = networkStatus.equals("mobile", ignoreCase = true) ||
+        networkStatus.equals("cellular", ignoreCase = true)
+
     private fun isDirectPoolEnabled(): Boolean = isDirectPoolEnabledFor(effectiveRouteMode())
 
     private fun isDirectAttemptAllowedForCurrentRoute(allowColdDuringSettling: Boolean = false): Boolean =
@@ -1446,9 +1573,7 @@ class ProxyServer(
             return if (snapshot.effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST) null
                 else "effective route mode ${snapshot.effectiveRouteMode.configValue}"
         }
-        if (currentNetworkStatus.equals("none", ignoreCase = true) || currentNetworkStatus.equals("mobile", ignoreCase = true) ||
-            currentNetworkStatus.equals("cellular", ignoreCase = true)
-        ) {
+        if (currentNetworkStatus.equals("none", ignoreCase = true) || isMobile(currentNetworkStatus)) {
             return "network=$currentNetworkStatus"
         }
         if (directRouteHealth.isSettling() && !allowColdDuringSettling) return "route settling"
@@ -1602,6 +1727,8 @@ class ProxyServer(
 
     companion object {
         const val DEFAULT_WS_PATH = "/apiws"
+        const val MOBILE_DIRECT_RESCUE_FAILURE_COOLDOWN_MS: Long = 45_000L
+        const val MOBILE_DIRECT_RESCUE_SUCCESS_REUSE_MS: Long = 30_000L
         private const val INVALID_MTPROTO_HANDSHAKE_PREFIX = "Invalid MTProto handshake"
         const val DEFAULT_MOBILE_DIRECT_FALLBACK_TIMEOUT_MS = 2_000
         private const val STOP_JOIN_TIMEOUT_MS = 1_000L
@@ -1717,4 +1844,23 @@ private fun String.hexToBytes(): ByteArray {
         require(high >= 0 && low >= 0) { "hex string contains a non-hex character" }
         ((high shl 4) or low).toByte()
     }
+}
+
+
+private data class MobileDirectRescueDecision(
+    val allowed: Boolean,
+    val reason: String,
+    val logMessage: String? = null,
+)
+
+private data class MobileDirectRescueRouteResult(
+    val attempted: Boolean,
+    val routed: Boolean,
+)
+
+private class MobileDirectRescueState {
+    var inFlight: Boolean = false
+    var cooldownUntilMs: Long = 0L
+    var lastError: String? = null
+    var lastSuccessTimeMs: Long = 0L
 }

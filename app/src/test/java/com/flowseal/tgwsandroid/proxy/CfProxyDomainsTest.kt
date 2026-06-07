@@ -583,6 +583,27 @@ class CfProxyDomainsTest {
         assertEquals(3L, snapshot.recentTimeoutByDc[2])
     }
 
+
+
+    @Test
+    fun allCooldownHighSuppressionClassifiesExhaustedDespiteRecentSuccess() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example"), nowMs = { now }, jitterRatio = { 0.0 })
+        health.recordSuccess(2, false, "one.example", latencyMs = 80)
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+
+        health.selectDomains(2)
+        repeat(3) { health.selectDomains(2) }
+
+        val decision = health.beginPressureManagedCycle(2, "mobile")
+        val snapshot = health.snapshot().pressure
+        assertEquals(CfPressureLevel.EXHAUSTED, decision.level)
+        assertEquals("exhausted", snapshot.levelByDc[2])
+        assertEquals("all_domains_cooldown/all_cooldown_suppressed", snapshot.reasonByDc[2])
+        assertTrue((snapshot.allDomainsCooldownByDc[2] ?: 0L) >= 1L)
+        assertTrue((snapshot.recentAllCooldownSuppressedByDc[2] ?: 0L) >= 3L)
+    }
+
     @Test
     fun pressureNormalKeepsCfSelectionBehavior() {
         val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { 1_000L })

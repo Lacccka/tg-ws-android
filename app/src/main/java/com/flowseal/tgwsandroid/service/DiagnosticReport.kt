@@ -128,6 +128,13 @@ object DiagnosticReportFormatter {
             "directPromotions=${stats.directPromotions}, directCooldownUntil=${stats.directCooldownUntil}, " +
             "routeSettlingUntil=${stats.routeSettlingUntil}, directProbeLastError=${stats.directProbeLastError ?: "none"}, " +
             "directProbeLastSuccessTime=${stats.directProbeLastSuccessTime ?: "none"}, " +
+            "mobileDirectRescueAttempts=${stats.mobileDirectRescueAttempts}, " +
+            "mobileDirectRescueSuccesses=${stats.mobileDirectRescueSuccesses}, " +
+            "mobileDirectRescueFailures=${stats.mobileDirectRescueFailures}, " +
+            "mobileDirectRescueSuppressed=${stats.mobileDirectRescueSuppressed}, " +
+            "mobileDirectRescueCooldownUntil=${formatLongByDc(stats.mobileDirectRescueCooldownUntil)}, " +
+            "mobileDirectRescueLastError=${formatStringByDc(stats.mobileDirectRescueLastError)}, " +
+            "mobileDirectRescueLastSuccessTime=${formatLongByDc(stats.mobileDirectRescueLastSuccessTime)}, " +
             "cfHealthEnabled=${stats.cfHealthEnabled}, cfDomainsTotal=${stats.cfDomainsTotal}, " +
             "cfDomainsInCooldown=${stats.cfDomainsInCooldown}, cfLastSelectedDomain=${stats.cfLastSelectedDomain ?: "none"}, " +
             "cfLastSelectedReason=${stats.cfLastSelectedReason ?: "none"}, " +
@@ -162,6 +169,8 @@ object DiagnosticReportFormatter {
             "cfPressureRecentAllCooldownSuppressedByDc=${formatLongByDc(stats.cfPressureRecentAllCooldownSuppressedByDc)}, " +
             "cfPressureRecentMaxInflightByDc=${formatLongByDc(stats.cfPressureRecentMaxInflightByDc)}, " +
             "cfPressureRecentRouteFailureAfterCfByDc=${formatLongByDc(stats.cfPressureRecentRouteFailureAfterCfByDc)}, " +
+            "cfPressureAllDomainsCooldownByDc=${formatLongByDc(stats.cfPressureAllDomainsCooldownByDc)}, " +
+            "cfPressureReasonByDc=${formatStringByDc(stats.cfPressureReasonByDc)}, " +
             "cfPressureProbeAllowed=${stats.cfPressureProbeAllowed}, " +
             "cfPressureProbeSuppressed=${stats.cfPressureProbeSuppressed}, " +
             "cfPressureControlledFailures=${stats.cfPressureControlledFailures}, " +
@@ -203,6 +212,8 @@ object DiagnosticReportFormatter {
                         "recentTimeout=${stats.cfPressureRecentTimeoutByDc[dcId] ?: 0L} " +
                         "recentQueueFailure=${stats.cfPressureRecentQueueFailureByDc[dcId] ?: 0L} " +
                         "recentAllCooldownSuppressed=${stats.cfPressureRecentAllCooldownSuppressedByDc[dcId] ?: 0L} " +
+                        "allDomainsCooldown=${stats.cfPressureAllDomainsCooldownByDc[dcId] ?: 0L} " +
+                        "reason=${stats.cfPressureReasonByDc[dcId] ?: "none"} " +
                         "nextProbeAt=${stats.cfPressureNextProbeAtByDc[dcId] ?: 0L}",
                 )
                 appendLine(

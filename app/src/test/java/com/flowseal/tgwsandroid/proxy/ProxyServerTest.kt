@@ -1296,6 +1296,116 @@ class ProxyServerTest {
         assertTrue(logs.any { it.contains("CF all-cooldown controlled failure for DC2 instead of starting another connect") })
     }
 
+
+
+    @Test
+    fun autoMobileCfFirstCfExhaustedAllowsBoundedDirectRescueWithoutPool() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val domains = CopyOnWriteArrayList<String>()
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
+            domains.add(domain)
+            if (domain.endsWith(".cf.example")) throw IOException("HTTP 429 planned for $domain")
+            FakeWebSocketBinaryStream()
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                poolSize = 1,
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { domains.any { it == "kws2.web.telegram.org" } }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, stats.effectiveRouteMode)
+        assertEquals(1L, stats.mobileDirectRescueAttempts)
+        assertEquals(1L, stats.mobileDirectRescueSuccesses)
+        assertEquals(0L, stats.poolHits)
+        assertEquals(0L, stats.poolMisses)
+        assertTrue(domains.contains("kws2.cf.example"))
+        assertTrue(domains.contains("kws2.web.telegram.org"))
+        assertTrue(logs.any { it.contains("mobile direct rescue allowed because CF exhausted") })
+        assertTrue(logs.any { it.contains("mobile direct rescue success") })
+    }
+
+    @Test
+    fun autoMobileDirectRescueFailureSetsCooldownAndSuppressesRepeat() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val domains = CopyOnWriteArrayList<String>()
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
+            domains.add(domain)
+            if (domain.endsWith(".cf.example")) throw IOException("HTTP 429 planned for $domain")
+            throw IOException("planned direct rescue failure for $domain")
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { logs.any { it.contains("mobile direct rescue failed") } }
+        assertEquals("first exhausted mobile request should make one direct rescue attempt", 1, domains.count { it == "kws2.web.telegram.org" })
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { proxy.stats().mobileDirectRescueSuppressed >= 1L }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals("only the first request may start mobile direct rescue", 1L, stats.mobileDirectRescueAttempts)
+        assertEquals("failed direct rescue must be counted", 1L, stats.mobileDirectRescueFailures)
+        assertTrue("failed direct rescue must set a per-DC cooldown", stats.mobileDirectRescueCooldownUntil[2] ?: 0L > 0L)
+        assertTrue("last rescue error should be the direct failure", stats.mobileDirectRescueLastError[2]?.contains("planned direct rescue failure") == true)
+        assertEquals("rescue cooldown must prevent a second mobile direct attempt", 1, domains.count { it == "kws2.web.telegram.org" })
+        assertEquals("mobile rescue must not use the direct pool", 0L, stats.poolHits + stats.poolMisses)
+        assertTrue("second request should suppress rescue inside cooldown", logs.any { it.contains("mobile direct rescue suppressed because cooldown") })
+    }
+
+    @Test
+    fun cfOnlyMobileNeverAllowsDirectRescueWhenCfExhausted() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val domains = CopyOnWriteArrayList<String>()
+        val connector = RawWebSocketConnector { _, domain, _, _ ->
+            domains.add(domain)
+            throw IOException("HTTP 429 planned for $domain")
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_ONLY,
+                networkStatus = "mobile",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { logs.any { it.contains("no route available after CF-only attempts") } }
+        proxy.stop()
+
+        assertEquals(0L, proxy.stats().mobileDirectRescueAttempts)
+        assertEquals(0, domains.count { it.endsWith(".web.telegram.org") })
+        assertTrue(logs.any { it.contains("CF exhausted but CF_ONLY forbids direct rescue") })
+    }
+
     @Test
     fun networkChangeMobileToWifiKeepsCfFirstUntilDirectHealthSucceeds() {
         val server = FakeTcpServerTransport()
