@@ -22,6 +22,8 @@ class ProxyRunMarkerTest {
         assertTrue(previous.wasUnexpected)
         assertEquals("run-1", previous.runId)
         assertEquals("2026-06-04T02:45:30Z", previous.startedAt)
+        assertEquals("2026-06-04T02:45:30Z", previous.lastHeartbeatAt)
+        assertEquals("proxy_started", previous.lastServiceEvent)
     }
 
     @Test
@@ -35,6 +37,21 @@ class ProxyRunMarkerTest {
         assertFalse(previous.wasRunning)
         assertFalse(previous.wasUnexpected)
         assertEquals("ui", previous.lastStopReason)
+        assertEquals("2026-06-04T02:45:30Z", previous.stoppedAt)
+    }
+
+    @Test
+    fun markerRecordsForegroundAndHeartbeat() {
+        val marker = ProxyRunMarker(createTempFile(), fixedClock) { "run-1" }
+
+        marker.markStarted()
+        marker.markForegroundStarted()
+        marker.markHeartbeat()
+        val previous = marker.inspectPreviousRun()
+
+        assertEquals("2026-06-04T02:45:30Z", previous.lastForegroundStartedAt)
+        assertEquals("2026-06-04T02:45:30Z", previous.lastHeartbeatAt)
+        assertEquals("watchdog_heartbeat", previous.lastServiceEvent)
     }
 
     @Test

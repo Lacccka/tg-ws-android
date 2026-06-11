@@ -20,6 +20,7 @@ import com.flowseal.tgwsandroid.proxy.ProxyServer
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import java.io.File
+import java.time.Instant
 import java.time.LocalDateTime
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -42,12 +43,16 @@ class ProxyForegroundService : Service() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var watchdogFuture: ScheduledFuture<*>? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile
+    private var lastDuplicateNetworkCallbackLogAtMs: Long = 0L
 
     override fun onCreate() {
         super.onCreate()
         ProxyRuntimeConfig.initialize(applicationContext)
         State.initialize(applicationContext, "service")
+        State.markServiceStarted()
         State.addLog("service created", LogSeverity.INFO, "service")
+        State.markServiceEvent("service_created")
         ensureNotificationChannel()
         State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
         State.addLog("battery optimization status at start: ${State.batteryOptimizationStatus}", LogSeverity.INFO, "battery")
@@ -94,8 +99,16 @@ class ProxyForegroundService : Service() {
         super.onLowMemory()
     }
 
+    override fun onTimeout(type: Int, reason: Int) {
+        val message = "foreground service timeout: type=$type reason=$reason running=${State.running} status=${State.lastStatus}"
+        State.addLog(message, LogSeverity.ERROR, "service")
+        State.markServiceEvent("foreground_service_timeout")
+        stopProxyAsync("foreground_service_timeout")
+    }
+
     override fun onDestroy() {
         State.addLog("service destroyed", LogSeverity.INFO, "service")
+        State.markServiceEvent("service_destroyed")
         stopProxyBlocking("service_destroyed")
         unregisterNetworkCallback()
         routeDebouncer.cancel()
@@ -110,6 +123,7 @@ class ProxyForegroundService : Service() {
         try {
             startForegroundCompat(buildNotification())
             State.addLog("foreground notification started", LogSeverity.INFO, "service")
+            State.markForegroundStarted()
         } catch (error: Throwable) {
             State.setRunning(false, "service failed to start foreground: ${error.message ?: error::class.java.simpleName}")
             stopSelf()
@@ -268,6 +282,7 @@ class ProxyForegroundService : Service() {
                 setReferenceCounted(false)
                 acquire()
             }
+            State.setWakeLockHeld(true)
             State.addLog("WakeLock acquired", LogSeverity.INFO, "battery")
         } catch (error: Throwable) {
             State.addLog("WakeLock acquire failed: ${error.message ?: error::class.java.simpleName}", LogSeverity.WARN, "battery")
@@ -279,12 +294,14 @@ class ProxyForegroundService : Service() {
         try {
             if (lock.isHeld) {
                 lock.release()
+                State.setWakeLockHeld(false)
                 State.addLog("WakeLock released", LogSeverity.INFO, "battery")
             }
         } catch (error: Throwable) {
             State.addLog("WakeLock release failed: ${error.message ?: error::class.java.simpleName}", LogSeverity.WARN, "battery")
         } finally {
             wakeLock = null
+            State.setWakeLockHeld(false)
         }
     }
 
@@ -338,16 +355,28 @@ class ProxyForegroundService : Service() {
     ) {
         val normalized = status.ifBlank { "unknown" }
         val previous = State.networkStatus
+        val isNetworkLost = event == "network lost" || normalized.equals("none", ignoreCase = true)
+        if (!isNetworkLost && previous == normalized) {
+            logDuplicateNetworkCallback(event, normalized)
+            return
+        }
         State.setNetworkStatus(normalized)
         State.addLog("$event: $normalized", severity, "network")
         State.addLog("network changed: $previous -> $normalized", severity, "network")
-        if (event == "network lost" || normalized.equals("none", ignoreCase = true)) {
+        if (isNetworkLost) {
             State.addLog("network lost: applying safe route immediately", LogSeverity.WARN, "network")
             routeDebouncer.cancel()
             executor.execute { applyRouteForNetwork(normalized, immediate = true) }
         } else {
             routeDebouncer.submit(normalized)
         }
+    }
+
+    private fun logDuplicateNetworkCallback(event: String, normalized: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastDuplicateNetworkCallbackLogAtMs < DUPLICATE_NETWORK_LOG_THROTTLE_MS) return
+        lastDuplicateNetworkCallbackLogAtMs = now
+        State.addLog("$event: $normalized (unchanged; throttled)", LogSeverity.DEBUG, "network")
     }
 
     private fun applyRouteForNetwork(networkStatus: String, immediate: Boolean = false) {
@@ -395,6 +424,7 @@ class ProxyForegroundService : Service() {
             }
             State.updateStats(stats)
             State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
+            State.markWatchdogHeartbeat()
             val line = "watchdog: running=${server?.isRunning == true} ${compactStats(stats)} " +
                 "network=${State.networkStatus} route=${stats?.effectiveRouteMode ?: "unknown"} battery=${State.batteryOptimizationStatus}"
             State.addLog(line, LogSeverity.INFO, "service")
@@ -426,6 +456,8 @@ class ProxyForegroundService : Service() {
         private const val CHANNEL_ID = "proxy_foreground"
         private const val NOTIFICATION_ID = 1001
         private const val WATCHDOG_INTERVAL_SECONDS = 45L
+        private const val DUPLICATE_NETWORK_LOG_THROTTLE_MS = 60_000L
+        const val FOREGROUND_SERVICE_TYPE_NAME = "dataSync"
 
         fun startIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_START)
 
@@ -468,6 +500,16 @@ class ProxyForegroundService : Service() {
         private var statsSnapshot: ProxyServerStats? = null
         @Volatile
         private var liveStatsProvider: (() -> ProxyServerStats?)? = null
+        @Volatile
+        private var previousRun: PreviousRunCheck? = null
+        @Volatile
+        private var serviceStartedAt: String? = null
+        @Volatile
+        private var foregroundStartedAt: String? = null
+        @Volatile
+        private var lastWatchdogHeartbeatAt: String? = null
+        @Volatile
+        private var wakeLockHeld: Boolean = false
 
         fun initialize(context: Context, openedBy: String) {
             appContext = context.applicationContext
@@ -508,7 +550,16 @@ class ProxyForegroundService : Service() {
 
         private fun inspectPreviousRunLocked() {
             val previous = runMarker?.inspectPreviousRun() ?: return
-            addLog("previous run marker loaded: running=${previous.wasRunning} run_id=${previous.runId ?: "unknown"}", LogSeverity.INFO, "service")
+            previousRun = previous
+            addLog(
+                "previous run marker loaded: running=${previous.wasRunning} wasUnexpected=${previous.wasUnexpected} " +
+                    "run_id=${previous.runId ?: "unknown"} started_at=${previous.startedAt ?: "unknown"} " +
+                    "lastHeartbeatAt=${previous.lastHeartbeatAt ?: "unknown"} lastServiceEvent=${previous.lastServiceEvent ?: "unknown"} " +
+                    "foregroundStartedAt=${previous.lastForegroundStartedAt ?: "unknown"} stoppedAt=${previous.stoppedAt ?: "unknown"} " +
+                    "lastStopReason=${previous.lastStopReason ?: "unknown"}",
+                LogSeverity.INFO,
+                "service",
+            )
             if (previous.wasUnexpected) {
                 running = false
                 lastStatus = "Previous proxy run ended unexpectedly; proxy is stopped"
@@ -524,7 +575,26 @@ class ProxyForegroundService : Service() {
 
         fun markProxyStarted() {
             val runId = runMarker?.markStarted() ?: return
+            if (foregroundStartedAt != null) runMarker?.markForegroundStarted()
             addLog("proxy run marker started: run_id=$runId", LogSeverity.INFO, "service")
+        }
+
+        fun markServiceStarted() {
+            serviceStartedAt = Instant.now().toString()
+        }
+
+        fun markForegroundStarted() {
+            foregroundStartedAt = Instant.now().toString()
+            runMarker?.markForegroundStarted()
+        }
+
+        fun markWatchdogHeartbeat() {
+            lastWatchdogHeartbeatAt = Instant.now().toString()
+            runMarker?.markHeartbeat()
+        }
+
+        fun markServiceEvent(event: String) {
+            runMarker?.markServiceEvent(event)
         }
 
         fun markProxyStopped(reason: String) {
@@ -545,6 +615,10 @@ class ProxyForegroundService : Service() {
 
         fun setNetworkStatus(status: String) {
             networkStatus = status.ifBlank { "unknown" }
+        }
+
+        fun setWakeLockHeld(isHeld: Boolean) {
+            wakeLockHeld = isHeld
         }
 
         fun updateStats(stats: ProxyServerStats?) {
@@ -593,6 +667,7 @@ class ProxyForegroundService : Service() {
             val proxyLinkCurrent = context?.let { ProxyRuntimeConfig.proxyLinkCurrent(it) } ?: false
             val dcSummary = context?.let { ProxyRuntimeConfig.dcSummary(it) } ?: "unknown"
             val routeMode = context?.let { ProxyRuntimeConfig.appConfig(it).routeMode.name } ?: "unknown"
+            val targetSdk = context?.applicationInfo?.targetSdkVersion ?: 0
             val fallbackEffectiveRouteMode = context?.let { ProxyRuntimeConfig.proxyServerConfig(it, networkStatus).effectiveRouteMode.name } ?: "unknown"
             val logs = logStore.snapshot()
             val runtimeLogTailUntilMs = System.currentTimeMillis()
@@ -610,6 +685,13 @@ class ProxyForegroundService : Service() {
                     network = networkStatus,
                     routeMode = routeMode,
                     effectiveRouteMode = effectiveRouteMode,
+                    foregroundServiceType = FOREGROUND_SERVICE_TYPE_NAME,
+                    targetSdk = targetSdk,
+                    serviceStartTime = serviceStartedAt,
+                    foregroundStartTime = foregroundStartedAt,
+                    lastWatchdogHeartbeat = lastWatchdogHeartbeatAt,
+                    wakeLockHeld = wakeLockHeld,
+                    previousRun = previousRun,
                     previousEffectiveRouteMode = stats?.previousEffectiveRouteMode,
                     lastRouteChangeReason = stats?.lastRouteChangeReason ?: "unknown",
                     lastRouteChangeTimeMs = stats?.lastRouteChangeTimeMs,

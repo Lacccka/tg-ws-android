@@ -269,6 +269,52 @@ class RuntimeLogStoreTest {
     }
 
     @Test
+    fun diagnosticReportShowsForegroundServiceLifecycleFieldsAndWarning() {
+        val previous = PreviousRunCheck(
+            hadMarker = true,
+            wasRunning = true,
+            wasUnexpected = true,
+            runId = "run-1",
+            startedAt = "2026-06-04T01:00:00Z",
+            lastHeartbeatAt = "2026-06-04T06:59:00Z",
+            lastServiceEvent = "watchdog_heartbeat",
+            lastForegroundStartedAt = "2026-06-04T01:00:01Z",
+            lastStopReason = "foreground_service_timeout",
+            stoppedAt = "2026-06-04T07:00:00Z",
+        )
+
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy stopped",
+                endpoint = "127.0.0.1:1443",
+                secret = "dd40...3da8",
+                dcSummary = "2,4 via direct",
+                foregroundServiceType = "dataSync",
+                targetSdk = 35,
+                serviceStartTime = "2026-06-04T01:00:00Z",
+                foregroundStartTime = "2026-06-04T01:00:01Z",
+                lastWatchdogHeartbeat = "2026-06-04T06:59:00Z",
+                wakeLockHeld = true,
+                previousRun = previous,
+                logs = emptyList(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("Foreground service type: dataSync"))
+        assertTrue(report.contains("Target SDK: 35"))
+        assertTrue(report.contains("Service start time: 2026-06-04T01:00:00Z"))
+        assertTrue(report.contains("Foreground start time: 2026-06-04T01:00:01Z"))
+        assertTrue(report.contains("Last watchdog heartbeat: 2026-06-04T06:59:00Z"))
+        assertTrue(report.contains("WakeLock held: true"))
+        assertTrue(report.contains("Previous run was unexpected: true"))
+        assertTrue(report.contains("Previous run last heartbeat: 2026-06-04T06:59:00Z"))
+        assertTrue(report.contains("Previous run last stop reason: foreground_service_timeout"))
+        assertTrue(report.contains("lastServiceEvent=watchdog_heartbeat"))
+        assertTrue(report.contains("dataSync foreground service on Android 15+ targetSdk 35 is limited to 6 hours per 24 hours"))
+    }
+
+    @Test
     fun classifySeverityUsesDeterministicRules() {
         assertEquals(LogSeverity.WARN, RuntimeLogStore.classifySeverity("WebSocket connect failed"))
         assertEquals(LogSeverity.WARN, RuntimeLogStore.classifySeverity("SocketTimeoutException: timeout"))

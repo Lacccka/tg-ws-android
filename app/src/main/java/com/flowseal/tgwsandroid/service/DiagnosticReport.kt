@@ -18,6 +18,13 @@ data class DiagnosticSnapshot(
     val network: String,
     val routeMode: String = "unknown",
     val effectiveRouteMode: String = "unknown",
+    val foregroundServiceType: String = "unknown",
+    val targetSdk: Int = 0,
+    val serviceStartTime: String? = null,
+    val foregroundStartTime: String? = null,
+    val lastWatchdogHeartbeat: String? = null,
+    val wakeLockHeld: Boolean = false,
+    val previousRun: PreviousRunCheck? = null,
     val previousEffectiveRouteMode: String? = null,
     val lastRouteChangeReason: String = "unknown",
     val lastRouteChangeTimeMs: Long? = null,
@@ -44,6 +51,13 @@ object DiagnosticReportFormatter {
         network: String = "unknown",
         routeMode: String = "unknown",
         effectiveRouteMode: String = "unknown",
+        foregroundServiceType: String = "unknown",
+        targetSdk: Int = 0,
+        serviceStartTime: String? = null,
+        foregroundStartTime: String? = null,
+        lastWatchdogHeartbeat: String? = null,
+        wakeLockHeld: Boolean = false,
+        previousRun: PreviousRunCheck? = null,
         previousEffectiveRouteMode: String? = null,
         lastRouteChangeReason: String = "unknown",
         lastRouteChangeTimeMs: Long? = null,
@@ -67,6 +81,13 @@ object DiagnosticReportFormatter {
         network = network.ifBlank { "unknown" },
         routeMode = routeMode.ifBlank { "unknown" },
         effectiveRouteMode = effectiveRouteMode.ifBlank { "unknown" },
+        foregroundServiceType = foregroundServiceType.ifBlank { "unknown" },
+        targetSdk = targetSdk,
+        serviceStartTime = serviceStartTime,
+        foregroundStartTime = foregroundStartTime,
+        lastWatchdogHeartbeat = lastWatchdogHeartbeat,
+        wakeLockHeld = wakeLockHeld,
+        previousRun = previousRun,
         previousEffectiveRouteMode = previousEffectiveRouteMode,
         lastRouteChangeReason = lastRouteChangeReason.ifBlank { "unknown" },
         lastRouteChangeTimeMs = lastRouteChangeTimeMs,
@@ -92,6 +113,19 @@ object DiagnosticReportFormatter {
         appendLine("Network: ${snapshot.network}")
         appendLine("Configured route mode: ${snapshot.routeMode}")
         appendLine("Effective route mode: ${snapshot.effectiveRouteMode}")
+        appendLine("Foreground service type: ${snapshot.foregroundServiceType}")
+        appendLine("Target SDK: ${snapshot.targetSdk.takeIf { it > 0 }?.toString() ?: "unknown"}")
+        appendLine("Service start time: ${snapshot.serviceStartTime ?: "unknown"}")
+        appendLine("Foreground start time: ${snapshot.foregroundStartTime ?: "unknown"}")
+        appendLine("Last watchdog heartbeat: ${snapshot.lastWatchdogHeartbeat ?: "unknown"}")
+        appendLine("WakeLock held: ${snapshot.wakeLockHeld}")
+        appendLine("Previous run was unexpected: ${snapshot.previousRun?.wasUnexpected?.toString() ?: "unknown"}")
+        appendLine("Previous run last heartbeat: ${snapshot.previousRun?.lastHeartbeatAt ?: "unknown"}")
+        appendLine("Previous run last stop reason: ${snapshot.previousRun?.lastStopReason ?: "unknown"}")
+        appendLine("Previous run marker: ${formatPreviousRun(snapshot.previousRun)}")
+        if (snapshot.foregroundServiceType == "dataSync" && snapshot.targetSdk >= 35) {
+            appendLine("Diagnostics warning: dataSync foreground service on Android 15+ targetSdk 35 is limited to 6 hours per 24 hours; specialUse may be evaluated for debug/sideload builds with android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE.")
+        }
         appendLine("Previous effective route mode: ${snapshot.previousEffectiveRouteMode ?: "none"}")
         appendLine("Last route change reason: ${snapshot.lastRouteChangeReason}")
         appendLine("Last route change source: ${snapshot.stats?.lastRouteChangeSource ?: "unknown"}")
@@ -106,6 +140,16 @@ object DiagnosticReportFormatter {
         appendLine("---")
         snapshot.logs.forEach { appendLine(it.formatLine()) }
     }.trimEnd()
+
+    private fun formatPreviousRun(previous: PreviousRunCheck?): String = if (previous == null) {
+        "unknown"
+    } else {
+        "hadMarker=${previous.hadMarker}, wasRunning=${previous.wasRunning}, wasUnexpected=${previous.wasUnexpected}, " +
+            "runId=${previous.runId ?: "unknown"}, startedAt=${previous.startedAt ?: "unknown"}, " +
+            "lastHeartbeatAt=${previous.lastHeartbeatAt ?: "unknown"}, lastServiceEvent=${previous.lastServiceEvent ?: "unknown"}, " +
+            "lastForegroundStartedAt=${previous.lastForegroundStartedAt ?: "unknown"}, " +
+            "lastStopReason=${previous.lastStopReason ?: "unknown"}, stoppedAt=${previous.stoppedAt ?: "unknown"}"
+    }
 
     fun formatStats(stats: ProxyServerStats?): String = if (stats == null) {
         "unknown"
