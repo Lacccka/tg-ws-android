@@ -126,6 +126,7 @@ class ProxyForegroundService : Service() {
                 val logger = ProxyLogger { message -> State.addProxyLog(message) }
                 val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus), logger = logger)
                 proxyServer = server
+                State.setLiveStatsProvider { synchronized(lock) { proxyServer }?.stats() }
                 try {
                     server.start()
                     val stats = server.stats()
@@ -142,6 +143,7 @@ class ProxyForegroundService : Service() {
                         // Best-effort cleanup after a partial start failure.
                     }
                     proxyServer = null
+                    State.setLiveStatsProvider(null)
                     State.updateStats(null)
                     State.setRunning(false, "proxy start failed with exception: ${error.message ?: error::class.java.simpleName}")
                     State.markProxyStopped("start_failed")
@@ -169,6 +171,7 @@ class ProxyForegroundService : Service() {
         val server = synchronized(lock) {
             proxyServer.also { proxyServer = null }
         }
+        State.setLiveStatsProvider(null)
         if (server != null) {
             try {
                 server.stop()
@@ -463,6 +466,8 @@ class ProxyForegroundService : Service() {
             private set
         @Volatile
         private var statsSnapshot: ProxyServerStats? = null
+        @Volatile
+        private var liveStatsProvider: (() -> ProxyServerStats?)? = null
 
         fun initialize(context: Context, openedBy: String) {
             appContext = context.applicationContext
@@ -546,9 +551,22 @@ class ProxyForegroundService : Service() {
             statsSnapshot = stats
         }
 
-        fun stats(): ProxyServerStats? = statsSnapshot
+        fun setLiveStatsProvider(provider: (() -> ProxyServerStats?)?) {
+            liveStatsProvider = provider
+        }
 
-        fun statsLine(): String = DiagnosticReportFormatter.formatStats(statsSnapshot)
+        private fun currentStatsSnapshot(): ProxyServerStats? {
+            val liveStats = runCatching { liveStatsProvider?.invoke() }.getOrNull()
+            if (liveStats != null) {
+                statsSnapshot = liveStats
+                return liveStats
+            }
+            return statsSnapshot
+        }
+
+        fun stats(): ProxyServerStats? = currentStatsSnapshot()
+
+        fun statsLine(): String = DiagnosticReportFormatter.formatStats(currentStatsSnapshot())
 
         fun addLog(message: String, severity: LogSeverity = RuntimeLogStore.classifySeverity(message), source: String = "service") {
             logStore.append(message, severity, source)
@@ -576,7 +594,9 @@ class ProxyForegroundService : Service() {
             val dcSummary = context?.let { ProxyRuntimeConfig.dcSummary(it) } ?: "unknown"
             val routeMode = context?.let { ProxyRuntimeConfig.appConfig(it).routeMode.name } ?: "unknown"
             val fallbackEffectiveRouteMode = context?.let { ProxyRuntimeConfig.proxyServerConfig(it, networkStatus).effectiveRouteMode.name } ?: "unknown"
-            val stats = statsSnapshot
+            val logs = logStore.snapshot()
+            val runtimeLogTailUntilMs = System.currentTimeMillis()
+            val stats = currentStatsSnapshot()
             val effectiveRouteMode = stats?.effectiveRouteMode ?: fallbackEffectiveRouteMode
             return DiagnosticReportFormatter.format(
                 DiagnosticReportFormatter.snapshot(
@@ -594,8 +614,12 @@ class ProxyForegroundService : Service() {
                     lastRouteChangeReason = stats?.lastRouteChangeReason ?: "unknown",
                     lastRouteChangeTimeMs = stats?.lastRouteChangeTimeMs,
                     networkAtLastRouteChange = stats?.networkAtLastRouteChange ?: "unknown",
-                    stats = statsSnapshot,
-                    logs = logStore.snapshot(),
+                    stats = stats,
+                    statsSnapshotTimeMs = stats?.statsSnapshotTimeMs?.takeIf { it > 0L },
+                    runtimeLogTailUntilMs = runtimeLogTailUntilMs,
+                    lastEffectiveRouteModeUpdateTimeMs = stats?.lastEffectiveRouteModeUpdateTimeMs,
+                    lastRouteUsedUpdateTimeMs = stats?.lastRouteUsedUpdateTimeMs,
+                    logs = logs,
                 ),
             )
         }

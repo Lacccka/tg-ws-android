@@ -111,6 +111,9 @@ data class ProxyServerStats(
     val lastRouteChangeTimeMs: Long? = null,
     val networkAtLastRouteChange: String = "unknown",
     val lastRouteUsed: String? = null,
+    val statsSnapshotTimeMs: Long = 0,
+    val lastEffectiveRouteModeUpdateTimeMs: Long? = null,
+    val lastRouteUsedUpdateTimeMs: Long? = null,
     val directTimeouts: Long = 0,
     val lastCfDomain: String? = null,
     val directAttempts: Long = 0,
@@ -526,6 +529,7 @@ class ProxyServer(
     @Volatile private var directPoolStaleInWindow: Long = 0
     @Volatile private var lastDirectPoolStaleWindowStartMs: Long = 0
     @Volatile private var lastRouteUsed: String? = null
+    private val lastRouteUsedUpdateTimeMs = AtomicLong(0)
     @Volatile private var lastCfDomain: String? = null
     private val invalidHandshakeLogLimiter = InvalidHandshakeLogLimiter()
     private val webSocketPool = WebSocketPool(
@@ -581,7 +585,8 @@ class ProxyServer(
     }
 
     fun stats(): ProxyServerStats {
-        pruneRecentHandshakeWindows(System.currentTimeMillis())
+        val snapshotTimeMs = System.currentTimeMillis()
+        pruneRecentHandshakeWindows(snapshotTimeMs)
         val routeSnapshot = routeState.snapshot()
         val directHealthSnapshot = directRouteHealth.snapshot()
         val cfHealthSnapshot = cfDomainHealth.snapshot()
@@ -611,6 +616,9 @@ class ProxyServer(
             lastRouteChangeTimeMs = routeSnapshot.lastRouteChangeTimeMs,
             networkAtLastRouteChange = routeSnapshot.networkAtLastRouteChange,
             lastRouteUsed = lastRouteUsed,
+            statsSnapshotTimeMs = snapshotTimeMs,
+            lastEffectiveRouteModeUpdateTimeMs = routeSnapshot.lastRouteChangeTimeMs,
+            lastRouteUsedUpdateTimeMs = lastRouteUsedUpdateTimeMs.get().takeIf { it > 0L },
             directTimeouts = directTimeouts.get(),
             lastCfDomain = lastCfDomain,
             directAttempts = directAttempts.get(),
@@ -1539,6 +1547,7 @@ class ProxyServer(
         var reason = "completed"
         try {
             lastRouteUsed = route.type
+            lastRouteUsedUpdateTimeMs.set(System.currentTimeMillis())
             route.stream.send(relayInit)
             lastSuccessfulRouteTimeMs.set(System.currentTimeMillis())
             bridgeStarted = true

@@ -22,6 +22,10 @@ data class DiagnosticSnapshot(
     val lastRouteChangeReason: String = "unknown",
     val lastRouteChangeTimeMs: Long? = null,
     val networkAtLastRouteChange: String = "unknown",
+    val statsSnapshotTimeMs: Long? = null,
+    val runtimeLogTailUntilMs: Long? = null,
+    val lastEffectiveRouteModeUpdateTimeMs: Long? = null,
+    val lastRouteUsedUpdateTimeMs: Long? = null,
     val stats: ProxyServerStats?,
     val logs: List<RuntimeLogEntry>,
 )
@@ -45,6 +49,10 @@ object DiagnosticReportFormatter {
         lastRouteChangeTimeMs: Long? = null,
         networkAtLastRouteChange: String = "unknown",
         stats: ProxyServerStats? = null,
+        statsSnapshotTimeMs: Long? = stats?.statsSnapshotTimeMs?.takeIf { it > 0L },
+        runtimeLogTailUntilMs: Long? = null,
+        lastEffectiveRouteModeUpdateTimeMs: Long? = stats?.lastEffectiveRouteModeUpdateTimeMs,
+        lastRouteUsedUpdateTimeMs: Long? = stats?.lastRouteUsedUpdateTimeMs,
         logs: List<RuntimeLogEntry>,
         clock: Clock = Clock.systemDefaultZone(),
     ): DiagnosticSnapshot = DiagnosticSnapshot(
@@ -63,6 +71,10 @@ object DiagnosticReportFormatter {
         lastRouteChangeReason = lastRouteChangeReason.ifBlank { "unknown" },
         lastRouteChangeTimeMs = lastRouteChangeTimeMs,
         networkAtLastRouteChange = networkAtLastRouteChange.ifBlank { "unknown" },
+        statsSnapshotTimeMs = statsSnapshotTimeMs,
+        runtimeLogTailUntilMs = runtimeLogTailUntilMs,
+        lastEffectiveRouteModeUpdateTimeMs = lastEffectiveRouteModeUpdateTimeMs,
+        lastRouteUsedUpdateTimeMs = lastRouteUsedUpdateTimeMs,
         stats = stats,
         logs = logs,
     )
@@ -85,6 +97,10 @@ object DiagnosticReportFormatter {
         appendLine("Last route change source: ${snapshot.stats?.lastRouteChangeSource ?: "unknown"}")
         appendLine("Last route change time: ${snapshot.lastRouteChangeTimeMs?.toString() ?: "unknown"}")
         appendLine("Network at last route change: ${snapshot.networkAtLastRouteChange}")
+        appendLine("Stats snapshot time ms: ${snapshot.statsSnapshotTimeMs?.toString() ?: "unknown"}")
+        appendLine("Runtime log tail until ms: ${snapshot.runtimeLogTailUntilMs?.toString() ?: "unknown"}")
+        appendLine("Last effective route mode update time ms: ${snapshot.lastEffectiveRouteModeUpdateTimeMs?.toString() ?: "unknown"}")
+        appendLine("Last route used update time ms: ${snapshot.lastRouteUsedUpdateTimeMs?.toString() ?: "unknown"}")
         appendLine("Stats: ${formatStats(snapshot.stats)}")
         appendCfHealth(snapshot.stats)
         appendLine("---")
@@ -101,6 +117,9 @@ object DiagnosticReportFormatter {
             "recentInvalidHandshakeCount=${stats.recentInvalidHandshakeCount}, recentAcceptedHandshakeCount=${stats.recentAcceptedHandshakeCount}, " +
             "lastInvalidHandshakeTimeMs=${stats.lastInvalidHandshakeTimeMs}, lastAcceptedHandshakeTimeMs=${stats.lastAcceptedHandshakeTimeMs}, " +
             "lastSuccessfulRouteTimeMs=${stats.lastSuccessfulRouteTimeMs}, " +
+            "statsSnapshotTimeMs=${stats.statsSnapshotTimeMs}, " +
+            "lastEffectiveRouteModeUpdateTimeMs=${stats.lastEffectiveRouteModeUpdateTimeMs ?: "unknown"}, " +
+            "lastRouteUsedUpdateTimeMs=${stats.lastRouteUsedUpdateTimeMs ?: "unknown"}, " +
             "secondsSinceLastAcceptedHandshake=${stats.secondsSinceLastAcceptedHandshake?.toString() ?: "unknown"}, " +
             "secondsSinceLastSuccessfulRoute=${stats.secondsSinceLastSuccessfulRoute?.toString() ?: "unknown"}, " +
             "handshakeDiagnosticState=${stats.handshakeDiagnosticState}, " +

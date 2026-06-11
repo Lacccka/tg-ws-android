@@ -2118,6 +2118,72 @@ class ProxyServerTest {
         assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
     }
 
+
+    @Test
+    fun wifiDirectRecoveryCountersAndLastRouteUpdateAfterSuccessfulDirectConnect() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val attempts = AtomicInteger(0)
+        val connector = RawWebSocketConnector { _, _, _, _ ->
+            when (attempts.incrementAndGet()) {
+                2 -> throw SocketException("probe failed after first success")
+                else -> FakeWebSocketBinaryStream()
+            }
+        }
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                poolSize = 0,
+                cfproxyEnabled = false,
+            ),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyNetworkRoute("Wi-Fi")
+        waitUntil { proxy.stats().directHealthSuccesses == 1L && proxy.stats().directHealthFailures == 1L }
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(1L, stats.wifiDirectRecoveryAttempts)
+        assertEquals(1L, stats.wifiDirectRecoverySuccesses)
+        assertEquals(0L, stats.wifiDirectRecoveryFailures)
+        assertEquals("direct-cold", stats.lastRouteUsed)
+        assertTrue(stats.lastRouteUsedUpdateTimeMs != null && stats.lastRouteUsedUpdateTimeMs > 0L)
+        assertTrue(logs.any { it.contains("Wi-Fi direct recovery allowed") })
+        assertTrue(logs.any { it.contains("WebSocket connected via kws2.web.telegram.org") })
+    }
+
+    @Test
+    fun statsExposeDirectFirstAfterEffectiveRoutePromotionLogEvent() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "mobile", poolSize = 0),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "direct health probe success", "Wi-Fi", source = "direct-health")
+        waitUntil { logs.any { it.contains("effective route changed: cf_first -> direct_first because direct health probe success") } }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, stats.effectiveRouteMode)
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, stats.previousEffectiveRouteMode)
+        assertTrue(stats.lastEffectiveRouteModeUpdateTimeMs != null && stats.lastEffectiveRouteModeUpdateTimeMs > 0L)
+    }
+
     @Test
     fun protoTagsMapToExpectedSplitterProtoInts() {
         assertEquals(MsgSplitter.PROTO_ABRIDGED_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_ABRIDGED))

@@ -322,4 +322,62 @@ class RuntimeLogStoreTest {
         }
     }
 
+
+    @Test
+    fun diagnosticReportShowsSnapshotTimingAndStatsAfterIncludedLogTail() {
+        val store = RuntimeLogStore(clock = fixedClock)
+        store.append("effective route changed: cf_first -> direct_first because direct health probe success", LogSeverity.INFO, "proxy")
+        val stats = ProxyServerStats(
+            connectionsTotal = 1,
+            connectionsActive = 0,
+            connectionsBad = 0,
+            wsConnectErrors = 0,
+            cfProxyConnections = 0,
+            cfProxyErrors = 0,
+            bytesUp = 0,
+            bytesDown = 0,
+            poolHits = 0,
+            poolMisses = 0,
+            poolRefillErrors = 0,
+            effectiveRouteMode = "direct_first",
+            previousEffectiveRouteMode = "cf_first",
+            lastRouteUsed = "direct-cold",
+            statsSnapshotTimeMs = 1_800L,
+            lastEffectiveRouteModeUpdateTimeMs = 1_700L,
+            lastRouteUsedUpdateTimeMs = 1_750L,
+            wifiDirectRecoveryAttempts = 1,
+            wifiDirectRecoverySuccesses = 1,
+        )
+
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy running",
+                endpoint = "127.0.0.1:1443",
+                secret = "dd40...3da8",
+                dcSummary = "2,4 via direct",
+                batteryOptimization = "optimized",
+                network = "Wi-Fi",
+                effectiveRouteMode = stats.effectiveRouteMode,
+                previousEffectiveRouteMode = stats.previousEffectiveRouteMode,
+                lastRouteChangeReason = stats.lastRouteChangeReason,
+                lastRouteChangeTimeMs = stats.lastRouteChangeTimeMs,
+                networkAtLastRouteChange = stats.networkAtLastRouteChange,
+                stats = stats,
+                runtimeLogTailUntilMs = 1_600L,
+                logs = store.snapshot(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("Effective route mode: direct_first"))
+        assertTrue(report.contains("Stats snapshot time ms: 1800"))
+        assertTrue(report.contains("Runtime log tail until ms: 1600"))
+        assertTrue(report.contains("Last effective route mode update time ms: 1700"))
+        assertTrue(report.contains("Last route used update time ms: 1750"))
+        assertTrue(report.contains("effectiveRouteMode=direct_first"))
+        assertTrue(report.contains("lastRouteUsed=direct-cold"))
+        assertTrue(report.contains("wifiDirectRecoveryAttempts=1"))
+        assertTrue(report.contains("wifiDirectRecoverySuccesses=1"))
+    }
+
 }
