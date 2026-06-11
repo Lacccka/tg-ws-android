@@ -2127,7 +2127,11 @@ class ProxyServerTest {
         val attempts = AtomicInteger(0)
         val connector = RawWebSocketConnector { _, _, _, _ ->
             when (attempts.incrementAndGet()) {
-                2 -> throw SocketException("probe failed after first success")
+                // First direct-health probe succeeds and keeps a recent Wi-Fi direct success.
+                // The second probe must fail across all direct domains so AUTO stays on CF_FIRST
+                // and the client route exercises the Wi-Fi direct recovery path instead of a
+                // regular direct_first route.
+                in 2..5 -> throw SocketException("probe failed after first success")
                 else -> FakeWebSocketBinaryStream()
             }
         }
@@ -2145,21 +2149,38 @@ class ProxyServerTest {
 
         proxy.start()
         proxy.applyNetworkRoute("Wi-Fi")
-        waitUntil { proxy.stats().directHealthSuccesses == 1L && proxy.stats().directHealthFailures == 1L }
-        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        waitUntil("expected one successful direct-health probe followed by one failed probe") {
+            val stats = proxy.stats()
+            stats.directHealthSuccesses == 1L && stats.directHealthFailures == 1L
+        }
+        assertEquals(
+            "expected AUTO to remain cf_first so the client route uses Wi-Fi direct recovery",
+            NetworkRouteMode.CF_FIRST.configValue,
+            proxy.stats().effectiveRouteMode,
+        )
 
         server.enqueue(client)
-        waitUntil { client.closed }
+        waitUntil("expected Wi-Fi direct recovery session to close the fake client") { client.closed }
         proxy.stop()
 
         val stats = proxy.stats()
-        assertEquals(1L, stats.wifiDirectRecoveryAttempts)
-        assertEquals(1L, stats.wifiDirectRecoverySuccesses)
-        assertEquals(0L, stats.wifiDirectRecoveryFailures)
-        assertEquals("direct-cold", stats.lastRouteUsed)
-        assertTrue(stats.lastRouteUsedUpdateTimeMs != null && stats.lastRouteUsedUpdateTimeMs > 0L)
-        assertTrue(logs.any { it.contains("Wi-Fi direct recovery allowed") })
-        assertTrue(logs.any { it.contains("WebSocket connected via kws2.web.telegram.org") })
+        assertEquals("expected wifiDirectRecoveryAttempts", 1L, stats.wifiDirectRecoveryAttempts)
+        assertEquals("expected wifiDirectRecoverySuccesses", 1L, stats.wifiDirectRecoverySuccesses)
+        assertEquals("expected wifiDirectRecoveryFailures", 0L, stats.wifiDirectRecoveryFailures)
+        assertEquals("expected lastRouteUsed", "direct-cold", stats.lastRouteUsed)
+        assertTrue(
+            "expected lastRouteUsedUpdateTimeMs > 0",
+            stats.lastRouteUsedUpdateTimeMs != null && stats.lastRouteUsedUpdateTimeMs > 0L,
+        )
+        assertEquals("expected direct connector calls", 6, attempts.get())
+        assertTrue(
+            "expected Wi-Fi direct recovery allowed log",
+            logs.any { it.contains("Wi-Fi direct recovery allowed") },
+        )
+        assertTrue(
+            "expected successful direct WebSocket connect log",
+            logs.any { it.contains("WebSocket connected via kws2.web.telegram.org") },
+        )
     }
 
     @Test
@@ -2273,13 +2294,13 @@ class ProxyServerTest {
         return cipher.doFinal(input)
     }
 
-    private fun waitUntil(predicate: () -> Boolean) {
+    private fun waitUntil(message: String = "condition", predicate: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
         while (System.nanoTime() < deadline) {
             if (predicate()) return
             Thread.sleep(10)
         }
-        throw AssertionError("Timed out waiting for condition")
+        throw AssertionError("Timed out waiting for $message")
     }
 
     private object DeterministicRandomBytes : RelayInit.RandomBytes {
