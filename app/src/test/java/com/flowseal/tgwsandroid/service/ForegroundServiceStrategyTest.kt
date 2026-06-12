@@ -6,11 +6,7 @@ import org.junit.Test
 
 class ForegroundServiceStrategyTest {
     @Test
-    fun dataSyncUsesRuntimeTypeOnAndroidQAndNewerOnly() {
-        assertEquals(
-            "dataSync",
-            ProxyForegroundService.runtimeForegroundServiceTypeNameForStrategy("dataSync", Build.VERSION_CODES.Q),
-        )
+    fun dataSyncOnApiBeforeQUsesNoRuntimeType() {
         assertEquals(
             "none",
             ProxyForegroundService.runtimeForegroundServiceTypeNameForStrategy("dataSync", Build.VERSION_CODES.P),
@@ -18,14 +14,26 @@ class ForegroundServiceStrategyTest {
     }
 
     @Test
-    fun specialUseUsesRuntimeTypeOnAndroid14AndNewerOnly() {
+    fun dataSyncOnApiQAndNewerUsesDataSyncRuntimeType() {
         assertEquals(
-            "specialUse",
-            ProxyForegroundService.runtimeForegroundServiceTypeNameForStrategy("specialUse", Build.VERSION_CODES.UPSIDE_DOWN_CAKE),
+            "dataSync",
+            ProxyForegroundService.runtimeForegroundServiceTypeNameForStrategy("dataSync", Build.VERSION_CODES.Q),
         )
+    }
+
+    @Test
+    fun specialUseOnApiBeforeAndroid14UsesNoRuntimeType() {
         assertEquals(
             "none",
             ProxyForegroundService.runtimeForegroundServiceTypeNameForStrategy("specialUse", Build.VERSION_CODES.TIRAMISU),
+        )
+    }
+
+    @Test
+    fun specialUseOnAndroid14AndNewerUsesSpecialUseRuntimeType() {
+        assertEquals(
+            "specialUse",
+            ProxyForegroundService.runtimeForegroundServiceTypeNameForStrategy("specialUse", Build.VERSION_CODES.UPSIDE_DOWN_CAKE),
         )
     }
 }

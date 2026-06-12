@@ -41,7 +41,7 @@ class ForegroundServiceManifestTest {
 
         assertTrue(manifest.contains("android.permission.FOREGROUND_SERVICE_SPECIAL_USE"))
         assertTrue(manifest.contains("android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"))
-        assertTrue(manifest.contains("local_mtproto_websocket_proxy"))
+        assertTrue(manifest.contains(SPECIAL_USE_SUBTYPE_DESCRIPTION))
     }
 
     @Test
@@ -76,4 +76,10 @@ class ForegroundServiceManifestTest {
 
     private fun repoRoot(): File = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
         .first { File(it, "app/build.gradle.kts").isFile }
+
+    companion object {
+        private const val SPECIAL_USE_SUBTYPE_DESCRIPTION =
+            "Local user-started Telegram proxy that maintains a visible foreground notification and " +
+                "relays Telegram traffic through a local loopback proxy while the user keeps the proxy enabled"
+    }
 }

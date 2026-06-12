@@ -18,18 +18,54 @@ python tools/generate_handshake_vectors.py
 ```
 
 `gradlew.bat` uses the checked-in wrapper configuration under `gradle/wrapper/`.
-The wrapper currently downloads Gradle 8.9, which is compatible with the Android
+The wrapper currently downloads Gradle 8.13, which is compatible with the Android
 Gradle Plugin declared in `build.gradle.kts`.
+
+
+## Build variants and foreground-service declarations
+
+The project has three Android build types:
+
+- `debug` and `release` keep the Play-safe foreground service declaration. Their
+  manifest placeholder sets `ProxyForegroundService` to `dataSync`, the runtime
+  `BuildConfig.DECLARED_FOREGROUND_SERVICE_STRATEGY` is `dataSync`, and the main
+  manifest declares `android.permission.FOREGROUND_SERVICE_DATA_SYNC`.
+- `sideload` is for non-Play distribution on Android 14/15 devices where this
+  local, user-started proxy is better represented as `specialUse`. It overrides
+  the same manifest placeholder to `specialUse`, sets
+  `BuildConfig.DECLARED_FOREGROUND_SERVICE_STRATEGY` to `specialUse`, and adds a
+  variant manifest overlay with
+  `android.permission.FOREGROUND_SERVICE_SPECIAL_USE` plus
+  `android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE` on
+  `ProxyForegroundService`. The subtype text describes the visible local
+  Telegram loopback proxy that relays traffic only while the user keeps it
+  enabled.
+
+Build sideload APKs explicitly with:
+
+```bat
+.\gradlew.bat assembleSideload
+```
+
+## Runtime settings and persistent secret
+
+Runtime settings are persisted in private app `SharedPreferences` (`app_config`).
+On first launch the app generates a random 16-byte core secret, saves it in the
+JSON config, and reuses it for subsequent launches so existing Telegram proxy
+links remain stable. The Telegram-facing MTProto secret is the persisted core
+secret with the `dd` prefix added. Use the UI reset-secret action when you need a
+new secret; it updates the persisted config and Telegram link, and restarts the
+proxy if it is already running.
 
 ## First Android smoke test
 
 This milestone runs the already-ported `ProxyServer` from a minimal Android
-`ForegroundService` and native `MainActivity` UI. It uses a fixed debug runtime
-configuration for the first device smoke test:
+`ForegroundService` and native `MainActivity` UI. It uses persisted runtime
+configuration initialized from Android private app storage:
 
 - Local endpoint: `127.0.0.1:1443`
-- Core secret: `4014e15dd34e4b05c42413eab68c3da8`
-- Telegram MTProto secret: `dd4014e15dd34e4b05c42413eab68c3da8`
+- Core secret: generated on first launch and persisted in private app settings
+- Telegram MTProto secret: `dd` plus the persisted core secret
 - Android 15 edge-to-edge safe areas: the native UI applies system bar and
   display cutout insets so the title, buttons, and logs are not hidden behind
   the status or navigation bars.
@@ -59,7 +95,7 @@ Smoke-test steps:
    device with:
    - Server: `127.0.0.1`
    - Port: `1443`
-   - Secret: `dd4014e15dd34e4b05c42413eab68c3da8`
+   - Secret: the value shown in the app as the current Telegram MTProto secret
 7. Tap **Stop proxy** in the app or the foreground notification when finished.
 
 Current runtime limitations:
