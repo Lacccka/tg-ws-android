@@ -3,6 +3,15 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+fun gitCommitSha(): String = runCatching {
+    val process = ProcessBuilder("git", "rev-parse", "--short=12", "HEAD")
+        .directory(rootDir)
+        .redirectErrorStream(true)
+        .start()
+    val output = process.inputStream.bufferedReader().readText().trim()
+    if (process.waitFor() == 0 && output.isNotBlank()) output else "unknown"
+}.getOrElse { "unknown" }
+
 android {
     namespace = "com.flowseal.tgwsandroid"
     compileSdk = 35
@@ -18,6 +27,7 @@ android {
 
         manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
         buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
+        buildConfigField("String", "GIT_COMMIT_SHA", "\"${gitCommitSha()}\"")
     }
 
     buildTypes {

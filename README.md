@@ -124,8 +124,15 @@ Current runtime limitations:
   clipboard and shows a fallback toast. Alternatively, use **Clear logs** ->
   reproduce issue -> **Copy logs** for short logs and quick clipboard sharing.
   Screenshots are no longer required for normal log sharing. The diagnostics
-  report includes status, endpoint, partial secret, DC summary, battery
-  optimization status, network status, stats, and recent log lines.
+  report includes a tester diagnostics bundle with build identity
+  (`applicationId`, version, build type/flavor, debuggable flag, git commit SHA),
+  foreground-service strategy/type metadata, device SDK/release/manufacturer/model,
+  battery and notification-permission status, normalized network type/metered and
+  capability summary, diagnostics timing/uptime fields, route/session/CF stats,
+  and recent log lines. Send diagnostics immediately after the problem so the
+  timing, network, and log tail still describe the failing run. Proxy secrets must
+  remain masked/partial in shared diagnostics; do not paste a full secret into bug
+  reports.
 - Android and MIUI/Xiaomi battery or background-network restrictions may stop or
   throttle long-running local proxy services after several minutes. Keep the
   foreground notification visible while the proxy runs and allow unrestricted

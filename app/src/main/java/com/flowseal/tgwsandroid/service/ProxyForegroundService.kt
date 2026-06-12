@@ -5,8 +5,10 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.Network
@@ -23,6 +25,7 @@ import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import java.io.File
 import java.time.Instant
 import java.time.LocalDateTime
+import java.util.Locale
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -102,6 +105,7 @@ class ProxyForegroundService : Service() {
 
     override fun onTimeout(type: Int, reason: Int) {
         val message = "foreground service timeout: type=$type reason=$reason running=${State.running} status=${State.lastStatus}"
+        State.markForegroundTimeout(System.currentTimeMillis(), "type=$type reason=$reason")
         State.addLog(message, LogSeverity.ERROR, "service")
         State.markServiceEvent("foreground_service_timeout")
         stopProxyAsync("foreground_service_timeout")
@@ -554,6 +558,16 @@ class ProxyForegroundService : Service() {
         @Volatile
         private var foregroundStartedAt: String? = null
         @Volatile
+        private var serviceStartedAtMs: Long? = null
+        @Volatile
+        private var proxyStartedAtMs: Long? = null
+        @Volatile
+        private var lastStopReason: String? = null
+        @Volatile
+        private var lastForegroundTimeoutTimeMs: Long? = null
+        @Volatile
+        private var lastForegroundTimeoutReason: String? = null
+        @Volatile
         private var lastWatchdogHeartbeatAt: String? = null
         @Volatile
         private var wakeLockHeld: Boolean = false
@@ -622,6 +636,8 @@ class ProxyForegroundService : Service() {
 
         fun markProxyStarted() {
             lastWatchdogHeartbeatAt = null
+            proxyStartedAtMs = System.currentTimeMillis()
+            lastStopReason = null
             val runId = runMarker?.markStarted() ?: return
             if (foregroundStartedAt != null) runMarker?.markForegroundStarted()
             addLog("proxy run marker started: run_id=$runId", LogSeverity.INFO, "service")
@@ -629,6 +645,7 @@ class ProxyForegroundService : Service() {
 
         fun markServiceStarted() {
             serviceStartedAt = Instant.now().toString()
+            serviceStartedAtMs = System.currentTimeMillis()
         }
 
         fun markForegroundStarted() {
@@ -645,7 +662,14 @@ class ProxyForegroundService : Service() {
             runMarker?.markServiceEvent(event)
         }
 
+        fun markForegroundTimeout(timeMs: Long, reason: String) {
+            lastForegroundTimeoutTimeMs = timeMs
+            lastForegroundTimeoutReason = reason.ifBlank { "unknown" }
+        }
+
         fun markProxyStopped(reason: String) {
+            lastStopReason = reason.ifBlank { "unknown" }
+            proxyStartedAtMs = null
             runMarker?.markStopped(reason)
             previousRun = runMarker?.inspectPreviousRun() ?: previousRun
             addLog("proxy run marker stopped: reason=$reason", LogSeverity.INFO, "service")
@@ -721,6 +745,7 @@ class ProxyForegroundService : Service() {
             val logs = logStore.snapshot()
             val runtimeLogTailUntilMs = System.currentTimeMillis()
             val stats = currentStatsSnapshot()
+            val networkDiagnostics = context?.let { collectNetworkDiagnostics(it, stats) } ?: NetworkDiagnostics()
             val effectiveRouteMode = stats?.effectiveRouteMode ?: fallbackEffectiveRouteMode
             return DiagnosticReportFormatter.format(
                 DiagnosticReportFormatter.snapshot(
@@ -752,9 +777,85 @@ class ProxyForegroundService : Service() {
                     runtimeLogTailUntilMs = runtimeLogTailUntilMs,
                     lastEffectiveRouteModeUpdateTimeMs = stats?.lastEffectiveRouteModeUpdateTimeMs,
                     lastRouteUsedUpdateTimeMs = stats?.lastRouteUsedUpdateTimeMs,
+                    applicationId = BuildConfig.APPLICATION_ID,
+                    versionName = BuildConfig.VERSION_NAME,
+                    versionCode = BuildConfig.VERSION_CODE.toLong(),
+                    buildType = BuildConfig.BUILD_TYPE,
+                    flavor = BuildConfig.FLAVOR.ifBlank { BuildConfig.BUILD_TYPE },
+                    debuggable = BuildConfig.DEBUG,
+                    gitCommitSha = BuildConfig.GIT_COMMIT_SHA,
+                    lastStopReason = lastStopReason,
+                    lastForegroundTimeoutTimeMs = lastForegroundTimeoutTimeMs,
+                    lastForegroundTimeoutReason = lastForegroundTimeoutReason,
+                    androidSdkInt = Build.VERSION.SDK_INT,
+                    androidRelease = Build.VERSION.RELEASE ?: "unknown",
+                    manufacturer = Build.MANUFACTURER ?: "unknown",
+                    model = Build.MODEL ?: "unknown",
+                    notificationPermissionStatus = context?.let { notificationPermissionStatus(it) } ?: "unknown",
+                    normalizedNetworkType = networkDiagnostics.normalizedType,
+                    activeNetworkMetered = networkDiagnostics.metered,
+                    networkCapabilitySummary = networkDiagnostics.capabilitySummary,
+                    networkGeneration = stats?.networkGeneration,
+                    lastNetworkAvailableAtMs = stats?.lastNetworkAvailableAtMs?.takeIf { it > 0L },
+                    lastNetworkLostAtMs = stats?.lastNetworkLostAtMs?.takeIf { it > 0L },
+                    serviceUptimeMs = serviceStartedAtMs?.let { (runtimeLogTailUntilMs - it).coerceAtLeast(0L) },
+                    proxyUptimeMs = proxyStartedAtMs?.let { (runtimeLogTailUntilMs - it).coerceAtLeast(0L) },
                     logs = logs,
                 ),
             )
+        }
+
+        private data class NetworkDiagnostics(
+            val normalizedType: String = "unknown",
+            val metered: String = "unknown",
+            val capabilitySummary: String = "unknown",
+        )
+
+        private fun collectNetworkDiagnostics(context: Context, stats: ProxyServerStats?): NetworkDiagnostics = try {
+            val connectivityManager = context.getSystemService(ConnectivityManager::class.java)
+            val activeNetwork = connectivityManager.activeNetwork
+            val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
+            NetworkDiagnostics(
+                normalizedType = normalizedNetworkType(capabilities ?: stats?.lastNetworkTypeAtRouteAttempt),
+                metered = if (activeNetwork == null) "unknown" else if (connectivityManager.isActiveNetworkMetered) "metered" else "unmetered",
+                capabilitySummary = networkCapabilitySummary(capabilities),
+            )
+        } catch (_: Throwable) {
+            NetworkDiagnostics(normalizedType = normalizedNetworkType(networkStatus))
+        }
+
+        private fun normalizedNetworkType(capabilities: NetworkCapabilities?): String = when {
+            capabilities == null -> "None"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "Mobile"
+            else -> "Unknown"
+        }
+
+        private fun normalizedNetworkType(status: String?): String = when (status?.lowercase(Locale.US)) {
+            "wi-fi", "wifi" -> "Wi-Fi"
+            "mobile", "cellular" -> "Mobile"
+            "none" -> "None"
+            else -> "Unknown"
+        }
+
+        private fun networkCapabilitySummary(capabilities: NetworkCapabilities?): String {
+            if (capabilities == null) return "available=false validated=false captive=false"
+            val validated = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+            val captive = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)
+            val available = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            return "available=$available validated=$validated captive=$captive"
+        }
+
+        private fun notificationPermissionStatus(context: Context): String = try {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+                "not_required"
+            } else if (context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED) {
+                "granted"
+            } else {
+                "denied"
+            }
+        } catch (_: Throwable) {
+            "unknown"
         }
     }
 }

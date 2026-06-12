@@ -270,6 +270,99 @@ class RuntimeLogStoreTest {
     }
 
     @Test
+    fun diagnosticReportIncludesTesterBundleAndKeepsSecretMasked() {
+        val rawSecret = "0123456789abcdeffedcba9876543210"
+        val stats = ProxyServerStats(
+            connectionsTotal = 2,
+            connectionsActive = 1,
+            connectionsBad = 0,
+            wsConnectErrors = 0,
+            cfProxyConnections = 1,
+            cfProxyErrors = 0,
+            bytesUp = 10,
+            bytesDown = 20,
+            poolHits = 1,
+            poolMisses = 1,
+            poolRefillErrors = 0,
+            sessionRemoteEof = 1,
+            effectiveRouteMode = "direct_first",
+            lastRouteUsed = "cf-proxy",
+            cfHealthEnabled = true,
+            cfDomainsTotal = 1,
+            networkGeneration = 3,
+            lastNetworkAvailableAtMs = 1_000L,
+            lastNetworkLostAtMs = 2_000L,
+        )
+
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy running",
+                endpoint = "127.0.0.1:1443",
+                secret = rawSecret,
+                dcSummary = "2,4 via direct",
+                batteryOptimization = "optimized",
+                network = "Wi-Fi",
+                declaredForegroundServiceStrategy = "specialUse",
+                runtimeForegroundServiceType = "specialUse",
+                foregroundServiceType = "specialUse",
+                applicationId = "com.flowseal.tgwsandroid",
+                versionName = "0.1.0",
+                versionCode = 1,
+                buildType = "sideload",
+                flavor = "sideload",
+                debuggable = true,
+                gitCommitSha = "abcdef123456",
+                androidSdkInt = 35,
+                androidRelease = "15",
+                manufacturer = "Google",
+                model = "Pixel",
+                notificationPermissionStatus = "granted",
+                normalizedNetworkType = "Wi-Fi",
+                activeNetworkMetered = "unmetered",
+                networkCapabilitySummary = "available=true validated=true captive=false",
+                reportGeneratedTimeMs = 1_717_469_130_000L,
+                serviceUptimeMs = 10_000L,
+                proxyUptimeMs = 9_000L,
+                stats = stats,
+                logs = emptyList(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("Build:"))
+        assertTrue(report.contains("applicationId: com.flowseal.tgwsandroid"))
+        assertTrue(report.contains("versionName: 0.1.0"))
+        assertTrue(report.contains("versionCode: 1"))
+        assertTrue(report.contains("buildType: sideload"))
+        assertTrue(report.contains("flavor/variant: sideload"))
+        assertTrue(report.contains("debuggable: true"))
+        assertTrue(report.contains("gitCommitSha: abcdef123456"))
+        assertTrue(report.contains("Foreground service:"))
+        assertTrue(report.contains("declaredForegroundServiceStrategy: specialUse"))
+        assertTrue(report.contains("runtimeForegroundServiceStrategy: specialUse"))
+        assertTrue(report.contains("foregroundServiceTypeLabel: specialUse"))
+        assertTrue(report.contains("Device:"))
+        assertTrue(report.contains("manufacturer: Google"))
+        assertTrue(report.contains("model: Pixel"))
+        assertTrue(report.contains("notificationPermissionStatus: granted"))
+        assertTrue(report.contains("Network:"))
+        assertTrue(report.contains("normalizedNetworkType: Wi-Fi"))
+        assertTrue(report.contains("activeNetworkMetered: unmetered"))
+        assertTrue(report.contains("networkCapabilitySummary: available=true validated=true captive=false"))
+        assertTrue(report.contains("networkGeneration: 3"))
+        assertTrue(report.contains("Timing:"))
+        assertTrue(report.contains("reportGeneratedTimeMs: 1717469130000"))
+        assertTrue(report.contains("serviceUptimeMs: 10000"))
+        assertTrue(report.contains("proxyUptimeMs: 9000"))
+        assertTrue(report.contains("Secret: 0123...3210"))
+        assertFalse(report.contains(rawSecret))
+        assertTrue(report.contains("effectiveRouteMode=direct_first"))
+        assertTrue(report.contains("lastRouteUsed=cf-proxy"))
+        assertTrue(report.contains("sessionRemoteEof=1"))
+        assertTrue(report.contains("cfHealthEnabled=true"))
+    }
+
+    @Test
     fun diagnosticReportShowsForegroundServiceLifecycleFieldsAndWarning() {
         val previous = PreviousRunCheck(
             hadMarker = true,

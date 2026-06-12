@@ -8,6 +8,14 @@ import java.util.Locale
 
 data class DiagnosticSnapshot(
     val generated: LocalDateTime,
+    val reportGeneratedTimeMs: Long,
+    val applicationId: String = "unknown",
+    val versionName: String = "unknown",
+    val versionCode: Long = 0,
+    val buildType: String = "unknown",
+    val flavor: String = "unknown",
+    val debuggable: Boolean = false,
+    val gitCommitSha: String = "unknown",
     val status: String,
     val endpoint: String,
     val secret: String,
@@ -24,6 +32,25 @@ data class DiagnosticSnapshot(
     val targetSdk: Int = 0,
     val serviceStartTime: String? = null,
     val foregroundStartTime: String? = null,
+    val lastStopReason: String? = null,
+    val lastForegroundTimeoutTimeMs: Long? = null,
+    val lastForegroundTimeoutReason: String? = null,
+    val androidSdkInt: Int = 0,
+    val androidRelease: String = "unknown",
+    val manufacturer: String = "unknown",
+    val model: String = "unknown",
+    val notificationPermissionStatus: String = "unknown",
+    val normalizedNetworkType: String = "unknown",
+    val activeNetworkMetered: String = "unknown",
+    val networkCapabilitySummary: String = "unknown",
+    val networkGeneration: Long? = null,
+    val lastNetworkAvailableAtMs: Long? = null,
+    val lastNetworkLostAtMs: Long? = null,
+    val serviceUptimeMs: Long? = null,
+    val proxyUptimeMs: Long? = null,
+    val oldestLogTimeMs: Long? = null,
+    val newestLogTimeMs: Long? = null,
+    val logCoverageDurationMs: Long? = null,
     val lastWatchdogHeartbeat: String? = null,
     val wakeLockHeld: Boolean = false,
     val previousRun: PreviousRunCheck? = null,
@@ -79,11 +106,52 @@ object DiagnosticReportFormatter {
         lastRouteUsedUpdateTimeMs: Long? = stats?.lastRouteUsedUpdateTimeMs,
         logs: List<RuntimeLogEntry>,
         clock: Clock = Clock.systemDefaultZone(),
+        reportGeneratedTimeMs: Long = clock.millis(),
+        applicationId: String = "unknown",
+        versionName: String = "unknown",
+        versionCode: Long = 0,
+        buildType: String = "unknown",
+        flavor: String = "unknown",
+        debuggable: Boolean = false,
+        gitCommitSha: String = "unknown",
+        lastStopReason: String? = null,
+        lastForegroundTimeoutTimeMs: Long? = null,
+        lastForegroundTimeoutReason: String? = null,
+        androidSdkInt: Int = 0,
+        androidRelease: String = "unknown",
+        manufacturer: String = "unknown",
+        model: String = "unknown",
+        notificationPermissionStatus: String = "unknown",
+        normalizedNetworkType: String = network,
+        activeNetworkMetered: String = "unknown",
+        networkCapabilitySummary: String = "unknown",
+        networkGeneration: Long? = stats?.networkGeneration,
+        lastNetworkAvailableAtMs: Long? = stats?.lastNetworkAvailableAtMs?.takeIf { it > 0L },
+        lastNetworkLostAtMs: Long? = stats?.lastNetworkLostAtMs?.takeIf { it > 0L },
+        serviceUptimeMs: Long? = null,
+        proxyUptimeMs: Long? = null,
+        oldestLogTimeMs: Long? = logs.firstOrNull()?.timestamp?.atZone(clock.zone)?.toInstant()?.toEpochMilli(),
+        newestLogTimeMs: Long? = logs.lastOrNull()?.timestamp?.atZone(clock.zone)?.toInstant()?.toEpochMilli(),
+        logCoverageDurationMs: Long? = if (logs.size >= 2) {
+            val oldest = logs.first().timestamp.atZone(clock.zone).toInstant().toEpochMilli()
+            val newest = logs.last().timestamp.atZone(clock.zone).toInstant().toEpochMilli()
+            (newest - oldest).coerceAtLeast(0L)
+        } else {
+            null
+        },
     ): DiagnosticSnapshot = DiagnosticSnapshot(
         generated = LocalDateTime.now(clock),
+        reportGeneratedTimeMs = reportGeneratedTimeMs,
+        applicationId = applicationId.ifBlank { "unknown" },
+        versionName = versionName.ifBlank { "unknown" },
+        versionCode = versionCode,
+        buildType = buildType.ifBlank { "unknown" },
+        flavor = flavor.ifBlank { "unknown" },
+        debuggable = debuggable,
+        gitCommitSha = gitCommitSha.ifBlank { "unknown" },
         status = status.ifBlank { "unknown" },
         endpoint = endpoint.ifBlank { "unknown" },
-        secret = secret.ifBlank { "unknown" },
+        secret = maskSecret(secret.ifBlank { "unknown" }),
         secretSource = secretSource.ifBlank { "unknown" },
         proxyLinkCurrent = proxyLinkCurrent,
         dcSummary = dcSummary.ifBlank { "unknown" },
@@ -97,6 +165,25 @@ object DiagnosticReportFormatter {
         targetSdk = targetSdk,
         serviceStartTime = serviceStartTime,
         foregroundStartTime = foregroundStartTime,
+        lastStopReason = lastStopReason,
+        lastForegroundTimeoutTimeMs = lastForegroundTimeoutTimeMs,
+        lastForegroundTimeoutReason = lastForegroundTimeoutReason,
+        androidSdkInt = androidSdkInt,
+        androidRelease = androidRelease.ifBlank { "unknown" },
+        manufacturer = manufacturer.ifBlank { "unknown" },
+        model = model.ifBlank { "unknown" },
+        notificationPermissionStatus = notificationPermissionStatus.ifBlank { "unknown" },
+        normalizedNetworkType = normalizedNetworkType.ifBlank { "unknown" },
+        activeNetworkMetered = activeNetworkMetered.ifBlank { "unknown" },
+        networkCapabilitySummary = networkCapabilitySummary.ifBlank { "unknown" },
+        networkGeneration = networkGeneration,
+        lastNetworkAvailableAtMs = lastNetworkAvailableAtMs,
+        lastNetworkLostAtMs = lastNetworkLostAtMs,
+        serviceUptimeMs = serviceUptimeMs,
+        proxyUptimeMs = proxyUptimeMs,
+        oldestLogTimeMs = oldestLogTimeMs,
+        newestLogTimeMs = newestLogTimeMs,
+        logCoverageDurationMs = logCoverageDurationMs,
         lastWatchdogHeartbeat = lastWatchdogHeartbeat,
         wakeLockHeld = wakeLockHeld,
         previousRun = previousRun,
@@ -118,6 +205,42 @@ object DiagnosticReportFormatter {
     fun format(snapshot: DiagnosticSnapshot): String = buildString {
         appendLine("TG WS Android diagnostics")
         appendLine("Generated: ${snapshot.generated.format(GENERATED_FORMATTER)}")
+        appendLine("Build:")
+        appendLine("  applicationId: ${snapshot.applicationId}")
+        appendLine("  versionName: ${snapshot.versionName}")
+        appendLine("  versionCode: ${snapshot.versionCode.takeIf { it > 0 }?.toString() ?: "unknown"}")
+        appendLine("  buildType: ${snapshot.buildType}")
+        appendLine("  flavor/variant: ${snapshot.flavor}")
+        appendLine("  debuggable: ${snapshot.debuggable}")
+        appendLine("  gitCommitSha: ${snapshot.gitCommitSha}")
+        appendLine("Foreground service:")
+        appendLine("  declaredForegroundServiceStrategy: ${snapshot.declaredForegroundServiceStrategy}")
+        appendLine("  runtimeForegroundServiceStrategy: ${snapshot.runtimeForegroundServiceType}")
+        appendLine("  foregroundServiceTypeLabel: ${snapshot.foregroundServiceType}")
+        appendLine("  lastStopReason: ${snapshot.lastStopReason ?: snapshot.previousRun?.lastStopReason ?: "unknown"}")
+        appendLine("  lastForegroundTimeoutTimeMs: ${snapshot.lastForegroundTimeoutTimeMs?.toString() ?: "unknown"}")
+        appendLine("  lastForegroundTimeoutReason: ${snapshot.lastForegroundTimeoutReason ?: "unknown"}")
+        appendLine("Device:")
+        appendLine("  androidSdkInt: ${snapshot.androidSdkInt.takeIf { it > 0 }?.toString() ?: "unknown"}")
+        appendLine("  androidRelease: ${snapshot.androidRelease}")
+        appendLine("  manufacturer: ${snapshot.manufacturer}")
+        appendLine("  model: ${snapshot.model}")
+        appendLine("  batteryOptimizationStatus: ${snapshot.batteryOptimization}")
+        appendLine("  notificationPermissionStatus: ${snapshot.notificationPermissionStatus}")
+        appendLine("Network:")
+        appendLine("  normalizedNetworkType: ${snapshot.normalizedNetworkType}")
+        appendLine("  activeNetworkMetered: ${snapshot.activeNetworkMetered}")
+        appendLine("  networkCapabilitySummary: ${snapshot.networkCapabilitySummary}")
+        appendLine("  networkGeneration: ${snapshot.networkGeneration?.toString() ?: "unknown"}")
+        appendLine("  lastNetworkAvailableAtMs: ${snapshot.lastNetworkAvailableAtMs?.toString() ?: "unknown"}")
+        appendLine("  lastNetworkLostAtMs: ${snapshot.lastNetworkLostAtMs?.toString() ?: "unknown"}")
+        appendLine("Timing:")
+        appendLine("  reportGeneratedTimeMs: ${snapshot.reportGeneratedTimeMs}")
+        appendLine("  serviceUptimeMs: ${snapshot.serviceUptimeMs?.toString() ?: "unknown"}")
+        appendLine("  proxyUptimeMs: ${snapshot.proxyUptimeMs?.toString() ?: "unknown"}")
+        appendLine("  oldestLogTimeMs: ${snapshot.oldestLogTimeMs?.toString() ?: "unknown"}")
+        appendLine("  newestLogTimeMs: ${snapshot.newestLogTimeMs?.toString() ?: "unknown"}")
+        appendLine("  logCoverageDurationMs: ${snapshot.logCoverageDurationMs?.toString() ?: "unknown"}")
         appendLine("Status: ${snapshot.status}")
         appendLine("Endpoint: ${snapshot.endpoint}")
         appendLine("Secret: ${snapshot.secret}")
@@ -175,6 +298,12 @@ object DiagnosticReportFormatter {
             "lastHeartbeatAt=${previous.lastHeartbeatAt ?: "unknown"}, lastServiceEvent=${previous.lastServiceEvent ?: "unknown"}, " +
             "lastForegroundStartedAt=${previous.lastForegroundStartedAt ?: "unknown"}, " +
             "lastStopReason=${previous.lastStopReason ?: "unknown"}, stoppedAt=${previous.stoppedAt ?: "unknown"}"
+    }
+
+    private fun maskSecret(secret: String): String {
+        if (secret == "unknown" || secret.contains("...")) return secret
+        if (secret.length <= 8) return "***"
+        return "${secret.take(4)}...${secret.takeLast(4)}"
     }
 
     fun formatStats(stats: ProxyServerStats?): String = if (stats == null) {
