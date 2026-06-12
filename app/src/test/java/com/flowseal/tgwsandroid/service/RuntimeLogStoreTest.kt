@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.Clock
 import java.time.Instant
+import java.time.ZoneId
 import java.time.ZoneOffset
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -16,6 +17,88 @@ import java.util.concurrent.TimeUnit
 
 class RuntimeLogStoreTest {
     private val fixedClock: Clock = Clock.fixed(Instant.parse("2026-06-04T02:45:30Z"), ZoneOffset.UTC)
+
+
+    @Test
+    fun metadataOnEmptyStoreReturnsEmptyCoverage() {
+        val store = RuntimeLogStore(maxLines = 3, maxChars = 123, clock = fixedClock)
+
+        val metadata = store.metadataSnapshot()
+
+        assertEquals(null, metadata.oldestLogTimeMs)
+        assertEquals(null, metadata.newestLogTimeMs)
+        assertEquals(null, metadata.logCoverageDurationMs)
+        assertEquals(0, metadata.currentLogEntryCount)
+        assertEquals(0, metadata.currentLogApproxChars)
+        assertEquals(3, metadata.maxLogLines)
+        assertEquals(123, metadata.maxLogChars)
+        assertEquals(0L, metadata.totalLogEntriesAccepted)
+        assertEquals(0L, metadata.totalLogEntriesDroppedDueToLimit)
+        assertEquals(0L, metadata.restoredLogEntries)
+    }
+
+    @Test
+    fun metadataAfterAppendsReturnsCurrentCoverageAndLimits() {
+        val clock = MutableClock(Instant.parse("2026-06-04T02:45:30Z"), ZoneOffset.UTC)
+        val store = RuntimeLogStore(maxLines = 10, maxChars = 1_000, clock = clock)
+
+        store.append("first", LogSeverity.INFO, "service")
+        clock.advanceMillis(2_500L)
+        store.append("second", LogSeverity.WARN, "proxy")
+
+        val metadata = store.metadataSnapshot()
+
+        assertEquals(2, metadata.currentLogEntryCount)
+        assertEquals(store.lines().sumOf { it.length }, metadata.currentLogApproxChars)
+        assertEquals(10, metadata.maxLogLines)
+        assertEquals(1_000, metadata.maxLogChars)
+        assertEquals(Instant.parse("2026-06-04T02:45:30Z").toEpochMilli(), metadata.oldestLogTimeMs)
+        assertEquals(Instant.parse("2026-06-04T02:45:32.500Z").toEpochMilli(), metadata.newestLogTimeMs)
+        assertEquals(2_500L, metadata.logCoverageDurationMs)
+        assertEquals(2L, metadata.totalLogEntriesAccepted)
+        assertEquals(0L, metadata.totalLogEntriesDroppedDueToLimit)
+    }
+
+    @Test
+    fun metadataMaxLinesTrimIncrementsDroppedCounter() {
+        val store = RuntimeLogStore(maxLines = 3, clock = fixedClock)
+
+        repeat(5) { store.append("line-$it", LogSeverity.DEBUG, "proxy") }
+
+        val metadata = store.metadataSnapshot()
+        assertEquals(3, metadata.currentLogEntryCount)
+        assertEquals(5L, metadata.totalLogEntriesAccepted)
+        assertEquals(2L, metadata.totalLogEntriesDroppedDueToLimit)
+    }
+
+    @Test
+    fun metadataMaxCharsTrimIncrementsDroppedCounter() {
+        val store = RuntimeLogStore(maxLines = 10, maxChars = 80, clock = fixedClock)
+
+        repeat(10) { store.append("long-message-$it", LogSeverity.DEBUG, "proxy") }
+
+        val metadata = store.metadataSnapshot()
+        assertEquals(store.lines().size, metadata.currentLogEntryCount)
+        assertEquals(store.lines().sumOf { it.length }, metadata.currentLogApproxChars)
+        assertTrue(metadata.currentLogApproxChars <= 80)
+        assertEquals(10L, metadata.totalLogEntriesAccepted)
+        assertEquals(10L - metadata.currentLogEntryCount.toLong(), metadata.totalLogEntriesDroppedDueToLimit)
+    }
+
+    @Test
+    fun clearKeepsLifetimeCountersAndNextLogContinuesAcceptedCounter() {
+        val store = RuntimeLogStore(clock = fixedClock)
+        store.append("before", LogSeverity.INFO, "service")
+
+        store.clear()
+        store.append("Logs cleared", LogSeverity.INFO, "ui")
+
+        val metadata = store.metadataSnapshot()
+        assertEquals(1, metadata.currentLogEntryCount)
+        assertEquals(2L, metadata.totalLogEntriesAccepted)
+        assertEquals(0L, metadata.totalLogEntriesDroppedDueToLimit)
+        assertEquals(listOf("02:45:30 INFO ui Logs cleared"), store.lines())
+    }
 
     @Test
     fun appendLogLineIncludesTimestampSeveritySourceAndMessage() {
@@ -94,6 +177,7 @@ class RuntimeLogStoreTest {
 
         assertEquals(1, restored)
         assertEquals(listOf("02:45:30 INFO service before reset"), store.lines())
+        assertEquals(1L, store.metadataSnapshot().restoredLogEntries)
     }
 
     @Test
@@ -510,6 +594,38 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("Previous run last heartbeat: 2026-06-04T06:59:00Z"))
     }
 
+
+    @Test
+    fun diagnosticReportPrintsLogCoverageMetadata() {
+        val store = RuntimeLogStore(maxLines = 2, maxChars = 200, clock = fixedClock)
+        repeat(3) { store.append("line-$it", LogSeverity.INFO, "service") }
+
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy running",
+                endpoint = "127.0.0.1:1443",
+                secret = "0123456789abcdeffedcba9876543210",
+                dcSummary = "2,4 via direct",
+                batteryOptimization = "optimized",
+                network = "Wi-Fi",
+                logMetadata = store.metadataSnapshot(),
+                logs = store.snapshot(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("Log coverage:"))
+        assertTrue(report.contains("currentLogEntryCount: 2"))
+        assertTrue(report.contains("currentLogApproxChars: ${store.lines().sumOf { it.length }}"))
+        assertTrue(report.contains("maxLogLines: 2"))
+        assertTrue(report.contains("maxLogChars: 200"))
+        assertTrue(report.contains("totalLogEntriesAccepted: 3"))
+        assertTrue(report.contains("totalLogEntriesDroppedDueToLimit: 1"))
+        assertTrue(report.contains("restoredLogEntries: 0"))
+        assertTrue(report.contains("Secret: 0123...3210"))
+        assertFalse(report.contains("Secret: 0123456789abcdeffedcba9876543210"))
+    }
+
     @Test
     fun classifySeverityUsesDeterministicRules() {
         assertEquals(LogSeverity.WARN, RuntimeLogStore.classifySeverity("WebSocket connect failed"))
@@ -541,6 +657,10 @@ class RuntimeLogStoreTest {
         executor.shutdown()
         assertTrue(executor.awaitTermination(5, TimeUnit.SECONDS))
         assertTrue(store.lines().size <= 100)
+        val metadata = store.metadataSnapshot()
+        assertTrue(metadata.currentLogEntryCount <= 100)
+        assertEquals(threads * perThread.toLong(), metadata.totalLogEntriesAccepted)
+        assertEquals(metadata.totalLogEntriesAccepted - metadata.currentLogEntryCount.toLong(), metadata.totalLogEntriesDroppedDueToLimit)
     }
     private class InMemoryRuntimeLogPersistence(
         val lines: MutableList<String> = mutableListOf(),
@@ -561,6 +681,18 @@ class RuntimeLogStoreTest {
         }
         override fun clear() {
             throw RuntimeException("disk full")
+        }
+    }
+
+    private class MutableClock(
+        private var currentInstant: Instant,
+        private val currentZone: ZoneId,
+    ) : Clock() {
+        override fun getZone(): ZoneId = currentZone
+        override fun withZone(zone: ZoneId): Clock = MutableClock(currentInstant, zone)
+        override fun instant(): Instant = currentInstant
+        fun advanceMillis(millis: Long) {
+            currentInstant = currentInstant.plusMillis(millis)
         }
     }
 

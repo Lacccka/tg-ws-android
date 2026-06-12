@@ -51,6 +51,13 @@ data class DiagnosticSnapshot(
     val oldestLogTimeMs: Long? = null,
     val newestLogTimeMs: Long? = null,
     val logCoverageDurationMs: Long? = null,
+    val currentLogEntryCount: Int = 0,
+    val currentLogApproxChars: Int = 0,
+    val maxLogLines: Int = RuntimeLogStore.DEFAULT_MAX_LINES,
+    val maxLogChars: Int = RuntimeLogStore.DEFAULT_MAX_CHARS,
+    val totalLogEntriesAccepted: Long = 0,
+    val totalLogEntriesDroppedDueToLimit: Long = 0,
+    val restoredLogEntries: Long = 0,
     val lastWatchdogHeartbeat: String? = null,
     val wakeLockHeld: Boolean = false,
     val previousRun: PreviousRunCheck? = null,
@@ -130,15 +137,23 @@ object DiagnosticReportFormatter {
         lastNetworkLostAtMs: Long? = stats?.lastNetworkLostAtMs?.takeIf { it > 0L },
         serviceUptimeMs: Long? = null,
         proxyUptimeMs: Long? = null,
-        oldestLogTimeMs: Long? = logs.firstOrNull()?.timestamp?.atZone(clock.zone)?.toInstant()?.toEpochMilli(),
-        newestLogTimeMs: Long? = logs.lastOrNull()?.timestamp?.atZone(clock.zone)?.toInstant()?.toEpochMilli(),
-        logCoverageDurationMs: Long? = if (logs.size >= 2) {
+        logMetadata: RuntimeLogMetadata? = null,
+        oldestLogTimeMs: Long? = logMetadata?.oldestLogTimeMs ?: logs.firstOrNull()?.timestamp?.atZone(clock.zone)?.toInstant()?.toEpochMilli(),
+        newestLogTimeMs: Long? = logMetadata?.newestLogTimeMs ?: logs.lastOrNull()?.timestamp?.atZone(clock.zone)?.toInstant()?.toEpochMilli(),
+        logCoverageDurationMs: Long? = logMetadata?.logCoverageDurationMs ?: if (logs.size >= 2) {
             val oldest = logs.first().timestamp.atZone(clock.zone).toInstant().toEpochMilli()
             val newest = logs.last().timestamp.atZone(clock.zone).toInstant().toEpochMilli()
             (newest - oldest).coerceAtLeast(0L)
         } else {
             null
         },
+        currentLogEntryCount: Int = logMetadata?.currentLogEntryCount ?: logs.size,
+        currentLogApproxChars: Int = logMetadata?.currentLogApproxChars ?: logs.sumOf { it.formatLine().length },
+        maxLogLines: Int = logMetadata?.maxLogLines ?: RuntimeLogStore.DEFAULT_MAX_LINES,
+        maxLogChars: Int = logMetadata?.maxLogChars ?: RuntimeLogStore.DEFAULT_MAX_CHARS,
+        totalLogEntriesAccepted: Long = logMetadata?.totalLogEntriesAccepted ?: logs.size.toLong(),
+        totalLogEntriesDroppedDueToLimit: Long = logMetadata?.totalLogEntriesDroppedDueToLimit ?: 0L,
+        restoredLogEntries: Long = logMetadata?.restoredLogEntries ?: 0L,
     ): DiagnosticSnapshot = DiagnosticSnapshot(
         generated = LocalDateTime.now(clock),
         reportGeneratedTimeMs = reportGeneratedTimeMs,
@@ -184,6 +199,13 @@ object DiagnosticReportFormatter {
         oldestLogTimeMs = oldestLogTimeMs,
         newestLogTimeMs = newestLogTimeMs,
         logCoverageDurationMs = logCoverageDurationMs,
+        currentLogEntryCount = currentLogEntryCount,
+        currentLogApproxChars = currentLogApproxChars,
+        maxLogLines = maxLogLines,
+        maxLogChars = maxLogChars,
+        totalLogEntriesAccepted = totalLogEntriesAccepted,
+        totalLogEntriesDroppedDueToLimit = totalLogEntriesDroppedDueToLimit,
+        restoredLogEntries = restoredLogEntries,
         lastWatchdogHeartbeat = lastWatchdogHeartbeat,
         wakeLockHeld = wakeLockHeld,
         previousRun = previousRun,
@@ -241,6 +263,17 @@ object DiagnosticReportFormatter {
         appendLine("  oldestLogTimeMs: ${snapshot.oldestLogTimeMs?.toString() ?: "unknown"}")
         appendLine("  newestLogTimeMs: ${snapshot.newestLogTimeMs?.toString() ?: "unknown"}")
         appendLine("  logCoverageDurationMs: ${snapshot.logCoverageDurationMs?.toString() ?: "unknown"}")
+        appendLine("Log coverage:")
+        appendLine("  oldestLogTimeMs: ${snapshot.oldestLogTimeMs?.toString() ?: "unknown"}")
+        appendLine("  newestLogTimeMs: ${snapshot.newestLogTimeMs?.toString() ?: "unknown"}")
+        appendLine("  logCoverageDurationMs: ${snapshot.logCoverageDurationMs?.toString() ?: "unknown"}")
+        appendLine("  currentLogEntryCount: ${snapshot.currentLogEntryCount}")
+        appendLine("  currentLogApproxChars: ${snapshot.currentLogApproxChars}")
+        appendLine("  maxLogLines: ${snapshot.maxLogLines}")
+        appendLine("  maxLogChars: ${snapshot.maxLogChars}")
+        appendLine("  totalLogEntriesAccepted: ${snapshot.totalLogEntriesAccepted}")
+        appendLine("  totalLogEntriesDroppedDueToLimit: ${snapshot.totalLogEntriesDroppedDueToLimit}")
+        appendLine("  restoredLogEntries: ${snapshot.restoredLogEntries}")
         appendLine("Status: ${snapshot.status}")
         appendLine("Endpoint: ${snapshot.endpoint}")
         appendLine("Secret: ${snapshot.secret}")

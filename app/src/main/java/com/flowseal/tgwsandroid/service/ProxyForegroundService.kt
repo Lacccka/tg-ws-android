@@ -742,7 +742,7 @@ class ProxyForegroundService : Service() {
             val routeMode = context?.let { ProxyRuntimeConfig.appConfig(it).routeMode.name } ?: "unknown"
             val targetSdk = context?.applicationInfo?.targetSdkVersion ?: 0
             val fallbackEffectiveRouteMode = context?.let { ProxyRuntimeConfig.proxyServerConfig(it, networkStatus).effectiveRouteMode.name } ?: "unknown"
-            val logs = logStore.snapshot()
+            val (logs, logMetadata) = logStore.snapshotWithMetadata()
             val runtimeLogTailUntilMs = System.currentTimeMillis()
             val stats = currentStatsSnapshot()
             val networkDiagnostics = context?.let { collectNetworkDiagnostics(it, stats) } ?: NetworkDiagnostics()
@@ -800,6 +800,7 @@ class ProxyForegroundService : Service() {
                     lastNetworkLostAtMs = stats?.lastNetworkLostAtMs?.takeIf { it > 0L },
                     serviceUptimeMs = serviceStartedAtMs?.let { (runtimeLogTailUntilMs - it).coerceAtLeast(0L) },
                     proxyUptimeMs = proxyStartedAtMs?.let { (runtimeLogTailUntilMs - it).coerceAtLeast(0L) },
+                    logMetadata = logMetadata,
                     logs = logs,
                 ),
             )

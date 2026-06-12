@@ -24,6 +24,19 @@ data class RuntimeLogEntry(
         "${timestamp.format(timeFormatter)} ${severity.name} $source $message"
 }
 
+data class RuntimeLogMetadata(
+    val oldestLogTimeMs: Long?,
+    val newestLogTimeMs: Long?,
+    val logCoverageDurationMs: Long?,
+    val currentLogEntryCount: Int,
+    val currentLogApproxChars: Int,
+    val maxLogLines: Int,
+    val maxLogChars: Int,
+    val totalLogEntriesAccepted: Long,
+    val totalLogEntriesDroppedDueToLimit: Long,
+    val restoredLogEntries: Long,
+)
+
 /** Thread-safe bounded in-memory runtime log store for Android service diagnostics. */
 class RuntimeLogStore(
     private val maxLines: Int = DEFAULT_MAX_LINES,
@@ -39,6 +52,9 @@ class RuntimeLogStore(
     private val lock = Any()
     private val entries: ArrayDeque<RuntimeLogEntry> = ArrayDeque()
     private var currentChars: Int = 0
+    private var totalLogEntriesAccepted: Long = 0
+    private var totalLogEntriesDroppedDueToLimit: Long = 0
+    private var restoredLogEntries: Long = 0
 
     fun append(
         message: String,
@@ -53,6 +69,7 @@ class RuntimeLogStore(
         )
         val line = entry.formatLine()
         synchronized(lock) {
+            totalLogEntriesAccepted += 1
             entries.addLast(entry)
             currentChars += line.length
             trimLocked()
@@ -83,6 +100,7 @@ class RuntimeLogStore(
                 entries.addLast(parsePersistedLine(line))
                 currentChars += line.length
             }
+            restoredLogEntries += restoredLines.size.toLong()
             trimLocked()
         }
         return restoredLines.size
@@ -98,6 +116,33 @@ class RuntimeLogStore(
 
     fun snapshot(): List<RuntimeLogEntry> = synchronized(lock) { entries.toList() }
 
+    fun metadataSnapshot(): RuntimeLogMetadata = synchronized(lock) { metadataLocked() }
+
+    fun snapshotWithMetadata(): Pair<List<RuntimeLogEntry>, RuntimeLogMetadata> = synchronized(lock) {
+        entries.toList() to metadataLocked()
+    }
+
+    private fun metadataLocked(): RuntimeLogMetadata {
+        val oldestLogTimeMs = entries.firstOrNull()?.timestamp?.atZone(clock.zone)?.toInstant()?.toEpochMilli()
+        val newestLogTimeMs = entries.lastOrNull()?.timestamp?.atZone(clock.zone)?.toInstant()?.toEpochMilli()
+        return RuntimeLogMetadata(
+            oldestLogTimeMs = oldestLogTimeMs,
+            newestLogTimeMs = newestLogTimeMs,
+            logCoverageDurationMs = if (oldestLogTimeMs != null && newestLogTimeMs != null && entries.size >= 2) {
+                (newestLogTimeMs - oldestLogTimeMs).coerceAtLeast(0L)
+            } else {
+                null
+            },
+            currentLogEntryCount = entries.size,
+            currentLogApproxChars = currentChars,
+            maxLogLines = maxLines,
+            maxLogChars = maxChars,
+            totalLogEntriesAccepted = totalLogEntriesAccepted,
+            totalLogEntriesDroppedDueToLimit = totalLogEntriesDroppedDueToLimit,
+            restoredLogEntries = restoredLogEntries,
+        )
+    }
+
     fun lines(): List<String> = snapshot().map { it.formatLine() }
 
     fun isEmpty(): Boolean = synchronized(lock) { entries.isEmpty() }
@@ -106,6 +151,7 @@ class RuntimeLogStore(
         while (entries.size > maxLines || currentChars > maxChars) {
             val removed = entries.removeFirstOrNull() ?: break
             currentChars -= removed.formatLine().length
+            totalLogEntriesDroppedDueToLimit += 1
         }
         if (currentChars < 0) currentChars = entries.sumOf { it.formatLine().length }
     }
