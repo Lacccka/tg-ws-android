@@ -51,7 +51,6 @@ class ProxyRunMarker(
                 KEY_STARTED_AT to Instant.now(clock).toString(),
                 KEY_LAST_KNOWN_STATUS to "running",
                 KEY_LAST_SERVICE_EVENT to "proxy_started",
-                KEY_LAST_HEARTBEAT_AT to Instant.now(clock).toString(),
             ),
         )
         return runId

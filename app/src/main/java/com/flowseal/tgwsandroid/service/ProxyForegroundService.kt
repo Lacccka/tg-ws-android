@@ -476,7 +476,12 @@ class ProxyForegroundService : Service() {
             else -> FOREGROUND_SERVICE_TYPE_DATA_SYNC_NAME
         }
 
-        fun runtimeForegroundServiceTypeName(sdkInt: Int = Build.VERSION.SDK_INT): String = when (declaredForegroundServiceStrategy()) {
+        fun foregroundServiceTypeFromManifestBuildStrategy(): String = declaredForegroundServiceStrategy()
+
+        fun runtimeForegroundServiceTypeName(sdkInt: Int = Build.VERSION.SDK_INT): String =
+            runtimeForegroundServiceTypeNameForStrategy(declaredForegroundServiceStrategy(), sdkInt)
+
+        fun runtimeForegroundServiceTypeNameForStrategy(strategy: String, sdkInt: Int): String = when (strategy) {
             FOREGROUND_SERVICE_TYPE_SPECIAL_USE_NAME -> {
                 if (sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     FOREGROUND_SERVICE_TYPE_SPECIAL_USE_NAME
@@ -484,7 +489,13 @@ class ProxyForegroundService : Service() {
                     FOREGROUND_SERVICE_TYPE_NONE_NAME
                 }
             }
-            else -> FOREGROUND_SERVICE_TYPE_DATA_SYNC_NAME
+            else -> {
+                if (sdkInt >= Build.VERSION_CODES.Q) {
+                    FOREGROUND_SERVICE_TYPE_DATA_SYNC_NAME
+                } else {
+                    FOREGROUND_SERVICE_TYPE_NONE_NAME
+                }
+            }
         }
 
         fun runtimeForegroundServiceType(sdkInt: Int = Build.VERSION.SDK_INT): Int? = when (runtimeForegroundServiceTypeName(sdkInt)) {
@@ -608,6 +619,7 @@ class ProxyForegroundService : Service() {
         }
 
         fun markProxyStarted() {
+            lastWatchdogHeartbeatAt = null
             val runId = runMarker?.markStarted() ?: return
             if (foregroundStartedAt != null) runMarker?.markForegroundStarted()
             addLog("proxy run marker started: run_id=$runId", LogSeverity.INFO, "service")
@@ -633,6 +645,7 @@ class ProxyForegroundService : Service() {
 
         fun markProxyStopped(reason: String) {
             runMarker?.markStopped(reason)
+            previousRun = runMarker?.inspectPreviousRun() ?: previousRun
             addLog("proxy run marker stopped: reason=$reason", LogSeverity.INFO, "service")
         }
 
@@ -721,7 +734,7 @@ class ProxyForegroundService : Service() {
                     effectiveRouteMode = effectiveRouteMode,
                     declaredForegroundServiceStrategy = declaredForegroundServiceStrategy(),
                     runtimeForegroundServiceType = runtimeForegroundServiceTypeName(),
-                    foregroundServiceType = runtimeForegroundServiceTypeName(),
+                    foregroundServiceType = foregroundServiceTypeFromManifestBuildStrategy(),
                     targetSdk = targetSdk,
                     serviceStartTime = serviceStartedAt,
                     foregroundStartTime = foregroundStartedAt,

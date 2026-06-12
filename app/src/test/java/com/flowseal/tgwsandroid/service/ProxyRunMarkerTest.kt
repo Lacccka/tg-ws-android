@@ -22,7 +22,7 @@ class ProxyRunMarkerTest {
         assertTrue(previous.wasUnexpected)
         assertEquals("run-1", previous.runId)
         assertEquals("2026-06-04T02:45:30Z", previous.startedAt)
-        assertEquals("2026-06-04T02:45:30Z", previous.lastHeartbeatAt)
+        assertEquals(null, previous.lastHeartbeatAt)
         assertEquals("proxy_started", previous.lastServiceEvent)
     }
 
@@ -64,4 +64,35 @@ class ProxyRunMarkerTest {
         assertTrue(previous.wasUnexpected)
         assertEquals("run-1", previous.runId)
     }
+
+    @Test
+    fun newRunDoesNotReusePreviousRunHeartbeat() {
+        val file = createTempFile()
+        val marker = ProxyRunMarker(file, fixedClock) { "run-1" }
+
+        marker.markStarted()
+        marker.markHeartbeat()
+        marker.markStopped("foreground_service_timeout")
+        ProxyRunMarker(file, fixedClock) { "run-2" }.markStarted()
+        val current = ProxyRunMarker(file, fixedClock) { "unused" }.inspectPreviousRun()
+
+        assertEquals("run-2", current.runId)
+        assertEquals(null, current.lastHeartbeatAt)
+        assertEquals("proxy_started", current.lastServiceEvent)
+    }
+
+    @Test
+    fun completedTimeoutRunKeepsStopReasonAndIsNotUnexpected() {
+        val marker = ProxyRunMarker(createTempFile(), fixedClock) { "run-1" }
+
+        marker.markStarted()
+        marker.markStopped("foreground_service_timeout")
+        val previous = marker.inspectPreviousRun()
+
+        assertFalse(previous.wasRunning)
+        assertFalse(previous.wasUnexpected)
+        assertEquals("foreground_service_timeout", previous.lastStopReason)
+        assertEquals("2026-06-04T02:45:30Z", previous.stoppedAt)
+    }
+
 }

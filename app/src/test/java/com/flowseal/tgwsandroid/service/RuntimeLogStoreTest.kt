@@ -304,7 +304,7 @@ class RuntimeLogStoreTest {
 
         assertTrue(report.contains("Declared foreground service strategy: dataSync"))
         assertTrue(report.contains("Runtime foreground service type: dataSync"))
-        assertTrue(report.contains("Foreground service type: dataSync"))
+        assertTrue(report.contains("Foreground service type from manifest/build strategy: dataSync"))
         assertTrue(report.contains("Target SDK: 35"))
         assertTrue(report.contains("Service start time: 2026-06-04T01:00:00Z"))
         assertTrue(report.contains("Foreground start time: 2026-06-04T01:00:01Z"))
@@ -313,6 +313,7 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("Previous run was unexpected: true"))
         assertTrue(report.contains("Previous run last heartbeat: 2026-06-04T06:59:00Z"))
         assertTrue(report.contains("Previous run last stop reason: foreground_service_timeout"))
+        assertTrue(report.contains("Previous run stopped at: 2026-06-04T07:00:00Z"))
         assertTrue(report.contains("lastServiceEvent=watchdog_heartbeat"))
         assertTrue(report.contains("Android 15 dataSync warning applies: true"))
         assertTrue(report.contains("dataSync foreground service on Android 15+ targetSdk 35 is limited to 6 hours per 24 hours"))
@@ -338,6 +339,82 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("Runtime foreground service type: specialUse"))
         assertTrue(report.contains("Android 15 dataSync warning applies: false"))
         assertFalse(report.contains("dataSync foreground service on Android 15+ targetSdk 35 is limited to 6 hours per 24 hours"))
+    }
+
+    @Test
+    fun diagnosticReportShowsDebugDataSyncWarning() {
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy running",
+                endpoint = "127.0.0.1:1443",
+                secret = "dd40...3da8",
+                dcSummary = "2,4 via direct",
+                declaredForegroundServiceStrategy = "dataSync",
+                runtimeForegroundServiceType = "dataSync",
+                foregroundServiceType = "dataSync",
+                targetSdk = 35,
+                logs = emptyList(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("Declared foreground service strategy: dataSync"))
+        assertTrue(report.contains("Android 15 dataSync warning applies: true"))
+    }
+
+    @Test
+    fun diagnosticReportShowsReleaseDataSyncWarning() {
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy running",
+                endpoint = "127.0.0.1:1443",
+                secret = "dd40...3da8",
+                dcSummary = "2,4 via direct",
+                declaredForegroundServiceStrategy = "dataSync",
+                runtimeForegroundServiceType = "dataSync",
+                foregroundServiceType = "dataSync",
+                targetSdk = 35,
+                logs = emptyList(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("Declared foreground service strategy: dataSync"))
+        assertTrue(report.contains("Android 15 dataSync warning applies: true"))
+    }
+
+    @Test
+    fun diagnosticReportShowsCurrentHeartbeatAsUnknownWhenNotYetRecorded() {
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy running",
+                endpoint = "127.0.0.1:1443",
+                secret = "dd40...3da8",
+                dcSummary = "2,4 via direct",
+                declaredForegroundServiceStrategy = "dataSync",
+                runtimeForegroundServiceType = "dataSync",
+                foregroundServiceType = "dataSync",
+                targetSdk = 35,
+                lastWatchdogHeartbeat = null,
+                previousRun = PreviousRunCheck(
+                    hadMarker = true,
+                    wasRunning = false,
+                    wasUnexpected = false,
+                    runId = "run-previous",
+                    startedAt = "2026-06-04T01:00:00Z",
+                    lastHeartbeatAt = "2026-06-04T06:59:00Z",
+                    lastServiceEvent = "stopped",
+                    lastForegroundStartedAt = "2026-06-04T01:00:01Z",
+                    lastStopReason = "foreground_service_timeout",
+                    stoppedAt = "2026-06-04T07:00:00Z",
+                ),
+                logs = emptyList(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("Last watchdog heartbeat: unknown"))
+        assertTrue(report.contains("Previous run last heartbeat: 2026-06-04T06:59:00Z"))
     }
 
     @Test

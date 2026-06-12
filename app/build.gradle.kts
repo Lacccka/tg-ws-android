@@ -22,8 +22,8 @@ android {
 
     buildTypes {
         getByName("debug") {
-            manifestPlaceholders["proxyForegroundServiceType"] = "specialUse"
-            buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"specialUse\"")
+            manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
+            buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
         }
 
         getByName("release") {

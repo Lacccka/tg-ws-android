@@ -121,7 +121,7 @@ object DiagnosticReportFormatter {
         appendLine("Effective route mode: ${snapshot.effectiveRouteMode}")
         appendLine("Declared foreground service strategy: ${snapshot.declaredForegroundServiceStrategy}")
         appendLine("Runtime foreground service type: ${snapshot.runtimeForegroundServiceType}")
-        appendLine("Foreground service type: ${snapshot.foregroundServiceType}")
+        appendLine("Foreground service type from manifest/build strategy: ${snapshot.foregroundServiceType}")
         appendLine("Target SDK: ${snapshot.targetSdk.takeIf { it > 0 }?.toString() ?: "unknown"}")
         appendLine("Service start time: ${snapshot.serviceStartTime ?: "unknown"}")
         appendLine("Foreground start time: ${snapshot.foregroundStartTime ?: "unknown"}")
@@ -130,8 +130,9 @@ object DiagnosticReportFormatter {
         appendLine("Previous run was unexpected: ${snapshot.previousRun?.wasUnexpected?.toString() ?: "unknown"}")
         appendLine("Previous run last heartbeat: ${snapshot.previousRun?.lastHeartbeatAt ?: "unknown"}")
         appendLine("Previous run last stop reason: ${snapshot.previousRun?.lastStopReason ?: "unknown"}")
+        appendLine("Previous run stopped at: ${snapshot.previousRun?.stoppedAt ?: "unknown"}")
         appendLine("Previous run marker: ${formatPreviousRun(snapshot.previousRun)}")
-        val dataSyncWarningApplies = snapshot.runtimeForegroundServiceType == "dataSync" && snapshot.targetSdk >= 35
+        val dataSyncWarningApplies = snapshot.declaredForegroundServiceStrategy == "dataSync" && snapshot.targetSdk >= 35
         appendLine("Android 15 dataSync warning applies: $dataSyncWarningApplies")
         if (dataSyncWarningApplies) {
             appendLine("Diagnostics warning: dataSync foreground service on Android 15+ targetSdk 35 is limited to 6 hours per 24 hours; specialUse may be evaluated for debug/sideload builds with android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE.")
