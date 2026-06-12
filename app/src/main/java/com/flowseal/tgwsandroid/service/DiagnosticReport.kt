@@ -18,6 +18,8 @@ data class DiagnosticSnapshot(
     val network: String,
     val routeMode: String = "unknown",
     val effectiveRouteMode: String = "unknown",
+    val declaredForegroundServiceStrategy: String = "unknown",
+    val runtimeForegroundServiceType: String = "unknown",
     val foregroundServiceType: String = "unknown",
     val targetSdk: Int = 0,
     val serviceStartTime: String? = null,
@@ -52,6 +54,8 @@ object DiagnosticReportFormatter {
         routeMode: String = "unknown",
         effectiveRouteMode: String = "unknown",
         foregroundServiceType: String = "unknown",
+        declaredForegroundServiceStrategy: String = foregroundServiceType,
+        runtimeForegroundServiceType: String = declaredForegroundServiceStrategy,
         targetSdk: Int = 0,
         serviceStartTime: String? = null,
         foregroundStartTime: String? = null,
@@ -81,7 +85,9 @@ object DiagnosticReportFormatter {
         network = network.ifBlank { "unknown" },
         routeMode = routeMode.ifBlank { "unknown" },
         effectiveRouteMode = effectiveRouteMode.ifBlank { "unknown" },
-        foregroundServiceType = foregroundServiceType.ifBlank { "unknown" },
+        declaredForegroundServiceStrategy = declaredForegroundServiceStrategy.ifBlank { "unknown" },
+        runtimeForegroundServiceType = runtimeForegroundServiceType.ifBlank { "unknown" },
+        foregroundServiceType = foregroundServiceType.ifBlank { runtimeForegroundServiceType.ifBlank { "unknown" } },
         targetSdk = targetSdk,
         serviceStartTime = serviceStartTime,
         foregroundStartTime = foregroundStartTime,
@@ -113,6 +119,8 @@ object DiagnosticReportFormatter {
         appendLine("Network: ${snapshot.network}")
         appendLine("Configured route mode: ${snapshot.routeMode}")
         appendLine("Effective route mode: ${snapshot.effectiveRouteMode}")
+        appendLine("Declared foreground service strategy: ${snapshot.declaredForegroundServiceStrategy}")
+        appendLine("Runtime foreground service type: ${snapshot.runtimeForegroundServiceType}")
         appendLine("Foreground service type: ${snapshot.foregroundServiceType}")
         appendLine("Target SDK: ${snapshot.targetSdk.takeIf { it > 0 }?.toString() ?: "unknown"}")
         appendLine("Service start time: ${snapshot.serviceStartTime ?: "unknown"}")
@@ -123,7 +131,9 @@ object DiagnosticReportFormatter {
         appendLine("Previous run last heartbeat: ${snapshot.previousRun?.lastHeartbeatAt ?: "unknown"}")
         appendLine("Previous run last stop reason: ${snapshot.previousRun?.lastStopReason ?: "unknown"}")
         appendLine("Previous run marker: ${formatPreviousRun(snapshot.previousRun)}")
-        if (snapshot.foregroundServiceType == "dataSync" && snapshot.targetSdk >= 35) {
+        val dataSyncWarningApplies = snapshot.runtimeForegroundServiceType == "dataSync" && snapshot.targetSdk >= 35
+        appendLine("Android 15 dataSync warning applies: $dataSyncWarningApplies")
+        if (dataSyncWarningApplies) {
             appendLine("Diagnostics warning: dataSync foreground service on Android 15+ targetSdk 35 is limited to 6 hours per 24 hours; specialUse may be evaluated for debug/sideload builds with android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE.")
         }
         appendLine("Previous effective route mode: ${snapshot.previousEffectiveRouteMode ?: "none"}")

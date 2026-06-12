@@ -15,6 +15,32 @@ android {
         versionName = "0.1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
+        buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
+    }
+
+    buildTypes {
+        getByName("debug") {
+            manifestPlaceholders["proxyForegroundServiceType"] = "specialUse"
+            buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"specialUse\"")
+        }
+
+        getByName("release") {
+            manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
+            buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
+        }
+
+        create("sideload") {
+            initWith(getByName("debug"))
+            matchingFallbacks += listOf("debug")
+            manifestPlaceholders["proxyForegroundServiceType"] = "specialUse"
+            buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"specialUse\"")
+        }
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {

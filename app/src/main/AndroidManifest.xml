@@ -33,12 +33,10 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
-        <!-- TODO: Evaluate specialUse plus android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE for debug/sideload builds;
-             production keeps dataSync to avoid Play policy risk. Diagnostics warns about Android 15 limits. -->
         <service
             android:name=".service.ProxyForegroundService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="${proxyForegroundServiceType}" />
 
         <service
             android:name=".service.ProxyQuickSettingsTileService"

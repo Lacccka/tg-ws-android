@@ -14,6 +14,7 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
+import com.flowseal.tgwsandroid.BuildConfig
 import com.flowseal.tgwsandroid.MainActivity
 import com.flowseal.tgwsandroid.proxy.ProxyLogger
 import com.flowseal.tgwsandroid.proxy.ProxyServer
@@ -122,7 +123,11 @@ class ProxyForegroundService : Service() {
     private fun startProxyAsync() {
         try {
             startForegroundCompat(buildNotification())
-            State.addLog("foreground notification started", LogSeverity.INFO, "service")
+            State.addLog(
+                "foreground notification started: declared=${declaredForegroundServiceStrategy()} runtime=${runtimeForegroundServiceTypeName(Build.VERSION.SDK_INT)}",
+                LogSeverity.INFO,
+                "service",
+            )
             State.markForegroundStarted()
         } catch (error: Throwable) {
             State.setRunning(false, "service failed to start foreground: ${error.message ?: error::class.java.simpleName}")
@@ -247,7 +252,12 @@ class ProxyForegroundService : Service() {
 
     private fun startForegroundCompat(notification: Notification) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+            val runtimeType = runtimeForegroundServiceType(Build.VERSION.SDK_INT)
+            if (runtimeType != null) {
+                startForeground(NOTIFICATION_ID, notification, runtimeType)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -457,7 +467,31 @@ class ProxyForegroundService : Service() {
         private const val NOTIFICATION_ID = 1001
         private const val WATCHDOG_INTERVAL_SECONDS = 45L
         private const val DUPLICATE_NETWORK_LOG_THROTTLE_MS = 60_000L
-        const val FOREGROUND_SERVICE_TYPE_NAME = "dataSync"
+        private const val FOREGROUND_SERVICE_TYPE_DATA_SYNC_NAME = "dataSync"
+        private const val FOREGROUND_SERVICE_TYPE_SPECIAL_USE_NAME = "specialUse"
+        private const val FOREGROUND_SERVICE_TYPE_NONE_NAME = "none"
+
+        fun declaredForegroundServiceStrategy(): String = when (BuildConfig.DECLARED_FOREGROUND_SERVICE_STRATEGY) {
+            FOREGROUND_SERVICE_TYPE_SPECIAL_USE_NAME -> FOREGROUND_SERVICE_TYPE_SPECIAL_USE_NAME
+            else -> FOREGROUND_SERVICE_TYPE_DATA_SYNC_NAME
+        }
+
+        fun runtimeForegroundServiceTypeName(sdkInt: Int = Build.VERSION.SDK_INT): String = when (declaredForegroundServiceStrategy()) {
+            FOREGROUND_SERVICE_TYPE_SPECIAL_USE_NAME -> {
+                if (sdkInt >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    FOREGROUND_SERVICE_TYPE_SPECIAL_USE_NAME
+                } else {
+                    FOREGROUND_SERVICE_TYPE_NONE_NAME
+                }
+            }
+            else -> FOREGROUND_SERVICE_TYPE_DATA_SYNC_NAME
+        }
+
+        fun runtimeForegroundServiceType(sdkInt: Int = Build.VERSION.SDK_INT): Int? = when (runtimeForegroundServiceTypeName(sdkInt)) {
+            FOREGROUND_SERVICE_TYPE_SPECIAL_USE_NAME -> ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            FOREGROUND_SERVICE_TYPE_DATA_SYNC_NAME -> ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+            else -> null
+        }
 
         fun startIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_START)
 
@@ -685,7 +719,9 @@ class ProxyForegroundService : Service() {
                     network = networkStatus,
                     routeMode = routeMode,
                     effectiveRouteMode = effectiveRouteMode,
-                    foregroundServiceType = FOREGROUND_SERVICE_TYPE_NAME,
+                    declaredForegroundServiceStrategy = declaredForegroundServiceStrategy(),
+                    runtimeForegroundServiceType = runtimeForegroundServiceTypeName(),
+                    foregroundServiceType = runtimeForegroundServiceTypeName(),
                     targetSdk = targetSdk,
                     serviceStartTime = serviceStartedAt,
                     foregroundStartTime = foregroundStartedAt,
