@@ -28,6 +28,7 @@ android {
         manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
         buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
         buildConfigField("String", "GIT_COMMIT_SHA", "\"${gitCommitSha()}\"")
+        buildConfigField("String", "BUILD_FLAVOR_NAME", "\"none\"")
     }
 
     buildTypes {

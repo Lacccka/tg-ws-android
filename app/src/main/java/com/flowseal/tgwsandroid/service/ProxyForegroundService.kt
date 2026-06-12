@@ -781,7 +781,7 @@ class ProxyForegroundService : Service() {
                     versionName = BuildConfig.VERSION_NAME,
                     versionCode = BuildConfig.VERSION_CODE.toLong(),
                     buildType = BuildConfig.BUILD_TYPE,
-                    flavor = BuildConfig.FLAVOR.ifBlank { BuildConfig.BUILD_TYPE },
+                    flavor = BuildConfig.BUILD_FLAVOR_NAME,
                     debuggable = BuildConfig.DEBUG,
                     gitCommitSha = BuildConfig.GIT_COMMIT_SHA,
                     lastStopReason = lastStopReason,
@@ -816,7 +816,7 @@ class ProxyForegroundService : Service() {
             val activeNetwork = connectivityManager.activeNetwork
             val capabilities = connectivityManager.getNetworkCapabilities(activeNetwork)
             NetworkDiagnostics(
-                normalizedType = normalizedNetworkType(capabilities ?: stats?.lastNetworkTypeAtRouteAttempt),
+                normalizedType = capabilities?.let { normalizedNetworkType(it) } ?: normalizedNetworkType(stats?.lastNetworkTypeAtRouteAttempt),
                 metered = if (activeNetwork == null) "unknown" else if (connectivityManager.isActiveNetworkMetered) "metered" else "unmetered",
                 capabilitySummary = networkCapabilitySummary(capabilities),
             )

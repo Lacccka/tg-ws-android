@@ -61,6 +61,17 @@ class ForegroundServiceManifestTest {
         assertTrue(sideload.contains("buildConfigField(\"String\", \"DECLARED_FOREGROUND_SERVICE_STRATEGY\", \"\\\"specialUse\\\"\")"))
     }
 
+    @Test
+    fun diagnosticsReportUsesBuildTypeSafeFlavorFieldForSideloadBuildType() {
+        val gradle = readRepoFile("app/build.gradle.kts")
+        val service = readRepoFile("app/src/main/java/com/flowseal/tgwsandroid/service/ProxyForegroundService.kt")
+
+        assertTrue(gradle.contains("buildConfigField(\"String\", \"BUILD_FLAVOR_NAME\", \"\\\"none\\\"\")"))
+        assertTrue(service.contains("buildType = BuildConfig.BUILD_TYPE"))
+        assertTrue(service.contains("flavor = BuildConfig.BUILD_FLAVOR_NAME"))
+        assertFalse(service.contains("BuildConfig.FLAVOR"))
+    }
+
     private fun readRepoFile(relativePath: String): String = File(repoRoot(), relativePath).readText()
 
     private fun String.blockFrom(anchor: String): String {
