@@ -110,6 +110,12 @@ data class ProxyServerStats(
     val lastRouteChangeSource: String = "initial",
     val lastRouteChangeTimeMs: Long? = null,
     val networkAtLastRouteChange: String = "unknown",
+    val lastRouteEvaluationReason: String = "initial",
+    val lastRouteEvaluationSource: String = "initial",
+    val lastRouteEvaluationTimeMs: Long? = null,
+    val networkAtLastRouteEvaluation: String = "unknown",
+    val routeEvaluations: Long = 0,
+    val routeNoopEvaluations: Long = 0,
     val lastRouteUsed: String? = null,
     val statsSnapshotTimeMs: Long = 0,
     val lastEffectiveRouteModeUpdateTimeMs: Long? = null,
@@ -615,6 +621,12 @@ class ProxyServer(
             lastRouteChangeSource = routeSnapshot.lastRouteChangeSource,
             lastRouteChangeTimeMs = routeSnapshot.lastRouteChangeTimeMs,
             networkAtLastRouteChange = routeSnapshot.networkAtLastRouteChange,
+            lastRouteEvaluationReason = routeSnapshot.lastRouteEvaluationReason,
+            lastRouteEvaluationSource = routeSnapshot.lastRouteEvaluationSource,
+            lastRouteEvaluationTimeMs = routeSnapshot.lastRouteEvaluationTimeMs,
+            networkAtLastRouteEvaluation = routeSnapshot.networkAtLastRouteEvaluation,
+            routeEvaluations = routeSnapshot.routeEvaluations,
+            routeNoopEvaluations = routeSnapshot.routeNoopEvaluations,
             lastRouteUsed = lastRouteUsed,
             statsSnapshotTimeMs = snapshotTimeMs,
             lastEffectiveRouteModeUpdateTimeMs = routeSnapshot.lastRouteChangeTimeMs,
@@ -746,7 +758,7 @@ class ProxyServer(
                 networkSettlingUntilMs.set(0L)
                 synchronized(networkStateMonitor) { networkStateMonitor.notifyAll() }
             }
-            logger.log("effective route unchanged: ${NetworkRouteMode.DIRECT_FIRST.configValue} because Wi-Fi capabilities changed; direct route already healthy")
+            logger.log("route evaluation noop: ${NetworkRouteMode.DIRECT_FIRST.configValue} unchanged because Wi-Fi capabilities changed; direct route already healthy")
             return routeState.applyEffectiveRouteMode(
                 NetworkRouteMode.DIRECT_FIRST,
                 "Wi-Fi capabilities changed; direct route already healthy",
@@ -814,7 +826,7 @@ class ProxyServer(
             routeGeneration.incrementAndGet()
             handlePoolForRouteChange(result.previous, result.current)
         } else {
-            logger.log("effective route unchanged: ${result.current.configValue} because $reason")
+            logger.log("route evaluation noop: ${result.current.configValue} unchanged because $reason")
         }
         return result
     }

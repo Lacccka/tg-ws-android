@@ -28,6 +28,12 @@ data class RouteSnapshot(
     val lastRouteChangeSource: String = "initial",
     val lastRouteChangeTimeMs: Long? = null,
     val networkAtLastRouteChange: String = "unknown",
+    val lastRouteEvaluationReason: String = "initial",
+    val lastRouteEvaluationSource: String = "initial",
+    val lastRouteEvaluationTimeMs: Long? = null,
+    val networkAtLastRouteEvaluation: String = "unknown",
+    val routeEvaluations: Long = 0,
+    val routeNoopEvaluations: Long = 0,
 )
 
 class RouteState(
@@ -44,6 +50,10 @@ class RouteState(
             lastRouteChangeSource = "initial",
             lastRouteChangeTimeMs = clock.millis(),
             networkAtLastRouteChange = initialNetworkStatus.ifBlank { "unknown" },
+            lastRouteEvaluationReason = "initial network=$initialNetworkStatus",
+            lastRouteEvaluationSource = "initial",
+            lastRouteEvaluationTimeMs = clock.millis(),
+            networkAtLastRouteEvaluation = initialNetworkStatus.ifBlank { "unknown" },
         ),
     )
 
@@ -71,12 +81,16 @@ class RouteState(
     ): RouteChangeResult {
         while (true) {
             val current = state.get()
+            val now = clock.millis()
+            val normalizedNetwork = networkStatus.ifBlank { "unknown" }
             if (current.effectiveRouteMode == desiredEffectiveRouteMode) {
                 val updated = current.copy(
-                    lastRouteChangeReason = reason,
-                    lastRouteChangeSource = source,
-                    lastRouteChangeTimeMs = clock.millis(),
-                    networkAtLastRouteChange = networkStatus.ifBlank { "unknown" },
+                    lastRouteEvaluationReason = reason,
+                    lastRouteEvaluationSource = source,
+                    lastRouteEvaluationTimeMs = now,
+                    networkAtLastRouteEvaluation = normalizedNetwork,
+                    routeEvaluations = current.routeEvaluations + 1,
+                    routeNoopEvaluations = current.routeNoopEvaluations + 1,
                 )
                 if (state.compareAndSet(current, updated)) {
                     return RouteChangeResult(
@@ -96,8 +110,13 @@ class RouteState(
                 previousEffectiveRouteMode = current.effectiveRouteMode,
                 lastRouteChangeReason = reason,
                 lastRouteChangeSource = source,
-                lastRouteChangeTimeMs = clock.millis(),
-                networkAtLastRouteChange = networkStatus.ifBlank { "unknown" },
+                lastRouteChangeTimeMs = now,
+                networkAtLastRouteChange = normalizedNetwork,
+                lastRouteEvaluationReason = reason,
+                lastRouteEvaluationSource = source,
+                lastRouteEvaluationTimeMs = now,
+                networkAtLastRouteEvaluation = normalizedNetwork,
+                routeEvaluations = current.routeEvaluations + 1,
             )
             if (state.compareAndSet(current, updated)) {
                 return RouteChangeResult(

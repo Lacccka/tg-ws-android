@@ -31,6 +31,9 @@ data class DiagnosticSnapshot(
     val lastRouteChangeReason: String = "unknown",
     val lastRouteChangeTimeMs: Long? = null,
     val networkAtLastRouteChange: String = "unknown",
+    val lastRouteEvaluationReason: String = "unknown",
+    val lastRouteEvaluationTimeMs: Long? = null,
+    val networkAtLastRouteEvaluation: String = "unknown",
     val statsSnapshotTimeMs: Long? = null,
     val runtimeLogTailUntilMs: Long? = null,
     val lastEffectiveRouteModeUpdateTimeMs: Long? = null,
@@ -66,6 +69,9 @@ object DiagnosticReportFormatter {
         lastRouteChangeReason: String = "unknown",
         lastRouteChangeTimeMs: Long? = null,
         networkAtLastRouteChange: String = "unknown",
+        lastRouteEvaluationReason: String = "",
+        lastRouteEvaluationTimeMs: Long? = null,
+        networkAtLastRouteEvaluation: String = "",
         stats: ProxyServerStats? = null,
         statsSnapshotTimeMs: Long? = stats?.statsSnapshotTimeMs?.takeIf { it > 0L },
         runtimeLogTailUntilMs: Long? = null,
@@ -98,6 +104,9 @@ object DiagnosticReportFormatter {
         lastRouteChangeReason = lastRouteChangeReason.ifBlank { "unknown" },
         lastRouteChangeTimeMs = lastRouteChangeTimeMs,
         networkAtLastRouteChange = networkAtLastRouteChange.ifBlank { "unknown" },
+        lastRouteEvaluationReason = lastRouteEvaluationReason.ifBlank { stats?.lastRouteEvaluationReason ?: "unknown" },
+        lastRouteEvaluationTimeMs = lastRouteEvaluationTimeMs ?: stats?.lastRouteEvaluationTimeMs,
+        networkAtLastRouteEvaluation = networkAtLastRouteEvaluation.ifBlank { stats?.networkAtLastRouteEvaluation ?: "unknown" },
         statsSnapshotTimeMs = statsSnapshotTimeMs,
         runtimeLogTailUntilMs = runtimeLogTailUntilMs,
         lastEffectiveRouteModeUpdateTimeMs = lastEffectiveRouteModeUpdateTimeMs,
@@ -142,6 +151,12 @@ object DiagnosticReportFormatter {
         appendLine("Last route change source: ${snapshot.stats?.lastRouteChangeSource ?: "unknown"}")
         appendLine("Last route change time: ${snapshot.lastRouteChangeTimeMs?.toString() ?: "unknown"}")
         appendLine("Network at last route change: ${snapshot.networkAtLastRouteChange}")
+        appendLine("Last route evaluation reason: ${snapshot.lastRouteEvaluationReason}")
+        appendLine("Last route evaluation source: ${snapshot.stats?.lastRouteEvaluationSource ?: "unknown"}")
+        appendLine("Last route evaluation time: ${snapshot.lastRouteEvaluationTimeMs?.toString() ?: "unknown"}")
+        appendLine("Network at last route evaluation: ${snapshot.networkAtLastRouteEvaluation}")
+        appendLine("Route evaluations: ${snapshot.stats?.routeEvaluations?.toString() ?: "unknown"}")
+        appendLine("Route noop evaluations: ${snapshot.stats?.routeNoopEvaluations?.toString() ?: "unknown"}")
         appendLine("Stats snapshot time ms: ${snapshot.statsSnapshotTimeMs?.toString() ?: "unknown"}")
         appendLine("Runtime log tail until ms: ${snapshot.runtimeLogTailUntilMs?.toString() ?: "unknown"}")
         appendLine("Last effective route mode update time ms: ${snapshot.lastEffectiveRouteModeUpdateTimeMs?.toString() ?: "unknown"}")
@@ -189,7 +204,12 @@ object DiagnosticReportFormatter {
             "effectiveRouteMode=${stats.effectiveRouteMode}, previousEffectiveRouteMode=${stats.previousEffectiveRouteMode ?: "none"}, " +
             "lastRouteChangeReason=${stats.lastRouteChangeReason}, lastRouteChangeSource=${stats.lastRouteChangeSource}, " +
             "lastRouteChangeTimeMs=${stats.lastRouteChangeTimeMs ?: "unknown"}, " +
-            "networkAtLastRouteChange=${stats.networkAtLastRouteChange}, lastRouteUsed=${stats.lastRouteUsed ?: "none"}, " +
+            "networkAtLastRouteChange=${stats.networkAtLastRouteChange}, " +
+            "lastRouteEvaluationReason=${stats.lastRouteEvaluationReason}, lastRouteEvaluationSource=${stats.lastRouteEvaluationSource}, " +
+            "lastRouteEvaluationTimeMs=${stats.lastRouteEvaluationTimeMs ?: "unknown"}, " +
+            "networkAtLastRouteEvaluation=${stats.networkAtLastRouteEvaluation}, " +
+            "routeEvaluations=${stats.routeEvaluations}, routeNoopEvaluations=${stats.routeNoopEvaluations}, " +
+            "lastRouteUsed=${stats.lastRouteUsed ?: "none"}, " +
             "directAttempts=${stats.directAttempts}, directAttemptsSkippedBecauseRoute=${stats.directAttemptsSkippedBecauseRoute}, " +
             "directTimeouts=${stats.directTimeouts}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, poolHits=${stats.poolHits}, " +

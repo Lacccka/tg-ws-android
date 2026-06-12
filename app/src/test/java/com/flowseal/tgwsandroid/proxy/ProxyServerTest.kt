@@ -2014,11 +2014,17 @@ class ProxyServerTest {
 
         assertFalse(result.changed)
         assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, proxy.stats().effectiveRouteMode)
-        assertEquals(promotionsBefore, proxy.stats().directPromotions)
-        assertEquals(successesBefore, proxy.stats().directHealthSuccesses)
-        assertEquals(1L, proxy.stats().wifiCapabilityEventsIgnored)
-        assertEquals(1L, proxy.stats().routeChurnAvoided)
+        val stats = proxy.stats()
+        assertEquals(promotionsBefore, stats.directPromotions)
+        assertEquals(successesBefore, stats.directHealthSuccesses)
+        assertEquals("direct health probe success", stats.lastRouteChangeReason)
+        assertEquals("Wi-Fi capabilities changed; direct route already healthy", stats.lastRouteEvaluationReason)
+        assertEquals(1L, stats.wifiCapabilityEventsIgnored)
+        assertEquals(1L, stats.routeChurnAvoided)
+        assertTrue(stats.routeEvaluations >= 2L)
+        assertTrue(stats.routeNoopEvaluations >= 1L)
         assertTrue(logs.any { it.contains("direct route already healthy") })
+        assertTrue(logs.any { it.contains("route evaluation noop") && it.contains("direct route already healthy") })
         assertFalse(logs.any { it.contains("effective route changed: direct_first -> cf_first because network=Wi-Fi") })
     }
 
