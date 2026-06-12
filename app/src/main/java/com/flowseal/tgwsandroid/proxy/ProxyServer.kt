@@ -13,6 +13,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Minimal Android-independent runtime configuration for the local proxy core.
@@ -103,6 +104,14 @@ data class ProxyServerStats(
     val sessionClientClosed: Long = 0,
     val sessionSocketClosed: Long = 0,
     val sessionUnexpectedErrors: Long = 0,
+    val sessionRemoteEof: Long = 0,
+    val sessionRemoteIdleEof: Long = 0,
+    val sessionRemoteEofShort: Long = 0,
+    val lastRemoteEofTimeMs: Long = 0,
+    val lastRemoteEofDurationMs: Long = 0,
+    val lastRemoteEofRoute: String? = null,
+    val lastRemoteEofDc: Int? = null,
+    val lastRemoteEofMedia: Boolean? = null,
     val routeMode: String = NetworkRouteMode.AUTO.configValue,
     val effectiveRouteMode: String = NetworkRouteMode.DIRECT_FIRST.configValue,
     val previousEffectiveRouteMode: String? = null,
@@ -356,6 +365,43 @@ data class ProxyServerStats(
     }
 }
 
+
+internal const val SESSION_REMOTE_IDLE_EOF_MIN_DURATION_MS: Long = 85_000L
+
+internal data class SessionEndClassification(
+    val reason: String,
+    val debugDetail: String? = null,
+    val remoteEof: Boolean = false,
+    val remoteIdleEof: Boolean = false,
+)
+
+internal fun classifySessionEnd(
+    rawReason: String,
+    error: Throwable?,
+    durationMs: Long,
+): SessionEndClassification {
+    val lower = rawReason.lowercase()
+    return when {
+        lower.contains("client closed") -> SessionEndClassification("client_closed", rawReason.takeUnless { it == "client closed" })
+        lower.contains("sockettimeoutexception") || lower.contains("read timed out") || lower == "timeout" ->
+            SessionEndClassification("timeout", rawReason)
+        lower.contains("websocket closed") || lower.contains("socket closed") ->
+            SessionEndClassification("socket_closed", rawReason.takeUnless { it == "websocket closed" || it == "socket closed" })
+        error is EOFException || lower.contains("eofexception") || lower.contains("eof") -> {
+            val idle = durationMs >= SESSION_REMOTE_IDLE_EOF_MIN_DURATION_MS
+            SessionEndClassification(
+                reason = if (idle) "remote_idle_eof" else "remote_eof",
+                debugDetail = rawReason,
+                remoteEof = true,
+                remoteIdleEof = idle,
+            )
+        }
+        lower.contains("exception:") -> SessionEndClassification("unexpected_error", rawReason)
+        rawReason == "completed" -> SessionEndClassification("completed")
+        else -> SessionEndClassification(rawReason)
+    }
+}
+
 fun interface ProxyLogger {
     fun log(message: String)
 }
@@ -494,6 +540,14 @@ class ProxyServer(
     private val sessionClientClosed = AtomicLong(0)
     private val sessionSocketClosed = AtomicLong(0)
     private val sessionUnexpectedErrors = AtomicLong(0)
+    private val sessionRemoteEof = AtomicLong(0)
+    private val sessionRemoteIdleEof = AtomicLong(0)
+    private val sessionRemoteEofShort = AtomicLong(0)
+    private val lastRemoteEofTimeMs = AtomicLong(0)
+    private val lastRemoteEofDurationMs = AtomicLong(0)
+    private val lastRemoteEofRoute = AtomicReference<String?>(null)
+    private val lastRemoteEofDc = AtomicReference<Int?>(null)
+    private val lastRemoteEofMedia = AtomicReference<Boolean?>(null)
     private val poolHits = AtomicLong(0)
     private val poolMisses = AtomicLong(0)
     private val poolRefillErrors = AtomicLong(0)
@@ -610,6 +664,14 @@ class ProxyServer(
             sessionClientClosed = sessionClientClosed.get(),
             sessionSocketClosed = sessionSocketClosed.get(),
             sessionUnexpectedErrors = sessionUnexpectedErrors.get(),
+            sessionRemoteEof = sessionRemoteEof.get(),
+            sessionRemoteIdleEof = sessionRemoteIdleEof.get(),
+            sessionRemoteEofShort = sessionRemoteEofShort.get(),
+            lastRemoteEofTimeMs = lastRemoteEofTimeMs.get(),
+            lastRemoteEofDurationMs = lastRemoteEofDurationMs.get(),
+            lastRemoteEofRoute = lastRemoteEofRoute.get(),
+            lastRemoteEofDc = lastRemoteEofDc.get(),
+            lastRemoteEofMedia = lastRemoteEofMedia.get(),
             poolHits = poolHits.get(),
             poolMisses = poolMisses.get(),
             poolRefillErrors = poolRefillErrors.get(),
@@ -1579,14 +1641,17 @@ class ProxyServer(
             bytesUp.addAndGet(counters.bytesUp)
             bytesDown.addAndGet(counters.bytesDown)
             durationMs = (System.nanoTime() - startedAtNs) / 1_000_000
-            reason = counters.closeReason
+            val rawReason = counters.closeReason
                 ?: routeFailure?.let { bridgeExceptionReason(it) }
                 ?: "completed"
-            recordSessionEnd(reason)
+            val classification = classifySessionEnd(rawReason, routeFailure, durationMs)
+            reason = classification.reason
+            recordSessionEnd(classification, durationMs, route.type, parsed.dcId, parsed.isMedia)
+            val debugDetail = classification.debugDetail?.let { " detail=$it" }.orEmpty()
             logger.log(
                 "${client.remoteLabel} session ended: DC${parsed.dcId} media=${parsed.isMedia} " +
                     "route=${route.type} durationMs=$durationMs bytesUp=${counters.bytesUp} " +
-                    "bytesDown=${counters.bytesDown} reason=$reason",
+                    "bytesDown=${counters.bytesDown} reason=$reason$debugDetail",
             )
             try {
                 route.stream.close()
@@ -1650,20 +1715,48 @@ class ProxyServer(
         }
         val lowerReason = reason.lowercase()
         return lowerReason.contains("eofexception") ||
+            lowerReason.contains("remote_eof") ||
+            lowerReason.contains("remote_idle_eof") ||
             lowerReason.contains("broken pipe") ||
             lowerReason.contains("websocket closed") ||
             lowerReason.contains("socketexception")
     }
 
-    private fun recordSessionEnd(reason: String) {
-        val lower = reason.lowercase()
-        when {
-            lower.contains("sockettimeoutexception") || lower.contains("read timed out") -> sessionTimeouts.incrementAndGet()
-            lower.contains("eofexception") || lower.contains("eof") -> sessionEof.incrementAndGet()
-            lower.contains("client closed") -> sessionClientClosed.incrementAndGet()
-            lower.contains("websocket closed") || lower.contains("socket closed") -> sessionSocketClosed.incrementAndGet()
-            lower.contains("exception:") -> sessionUnexpectedErrors.incrementAndGet()
+    private fun recordSessionEnd(
+        classification: SessionEndClassification,
+        durationMs: Long,
+        route: String,
+        dc: Int,
+        media: Boolean,
+    ) {
+        when (classification.reason) {
+            "timeout" -> sessionTimeouts.incrementAndGet()
+            "remote_eof", "remote_idle_eof" -> recordRemoteEof(classification, durationMs, route, dc, media)
+            "client_closed" -> sessionClientClosed.incrementAndGet()
+            "socket_closed" -> sessionSocketClosed.incrementAndGet()
+            "unexpected_error" -> sessionUnexpectedErrors.incrementAndGet()
         }
+    }
+
+    private fun recordRemoteEof(
+        classification: SessionEndClassification,
+        durationMs: Long,
+        route: String,
+        dc: Int,
+        media: Boolean,
+    ) {
+        sessionEof.incrementAndGet()
+        sessionRemoteEof.incrementAndGet()
+        if (classification.remoteIdleEof) {
+            sessionRemoteIdleEof.incrementAndGet()
+        } else {
+            sessionRemoteEofShort.incrementAndGet()
+        }
+        lastRemoteEofTimeMs.set(System.currentTimeMillis())
+        lastRemoteEofDurationMs.set(durationMs)
+        lastRemoteEofRoute.set(route)
+        lastRemoteEofDc.set(dc)
+        lastRemoteEofMedia.set(media)
     }
 
     private fun markBad(message: String) {

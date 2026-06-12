@@ -199,6 +199,10 @@ object DiagnosticReportFormatter {
             "wsErrors=${stats.wsConnectErrors}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
             "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +
+            "sessionRemoteEof=${stats.sessionRemoteEof}, sessionRemoteIdleEof=${stats.sessionRemoteIdleEof}, " +
+            "sessionRemoteEofShort=${stats.sessionRemoteEofShort}, lastRemoteEofTimeMs=${stats.lastRemoteEofTimeMs}, " +
+            "lastRemoteEofDurationMs=${stats.lastRemoteEofDurationMs}, lastRemoteEofRoute=${stats.lastRemoteEofRoute ?: "none"}, " +
+            "lastRemoteEofDc=${stats.lastRemoteEofDc?.toString() ?: "none"}, lastRemoteEofMedia=${stats.lastRemoteEofMedia?.toString() ?: "none"}, " +
             "sessionClientClosed=${stats.sessionClientClosed}, sessionSocketClosed=${stats.sessionSocketClosed}, " +
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, configuredRouteMode=${stats.routeMode}, " +
             "effectiveRouteMode=${stats.effectiveRouteMode}, previousEffectiveRouteMode=${stats.previousEffectiveRouteMode ?: "none"}, " +

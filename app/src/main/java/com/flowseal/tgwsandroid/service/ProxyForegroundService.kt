@@ -451,6 +451,8 @@ class ProxyForegroundService : Service() {
     } else {
         "active=${stats.connectionsActive} total=${stats.connectionsTotal} wsErr=${stats.wsConnectErrors} " +
             "sessionTimeouts=${stats.sessionTimeouts} sessionEof=${stats.sessionEof} " +
+            "sessionRemoteEof=${stats.sessionRemoteEof} sessionRemoteIdleEof=${stats.sessionRemoteIdleEof} " +
+            "sessionRemoteEofShort=${stats.sessionRemoteEofShort} " +
             "sessionClientClosed=${stats.sessionClientClosed} sessionSocketClosed=${stats.sessionSocketClosed} " +
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors} cf=${stats.cfProxyConnections}/${stats.cfProxyErrors} " +
             "pool=${stats.poolHits}/${stats.poolMisses}/${stats.poolRefillErrors} poolStale=${stats.poolStale} " +

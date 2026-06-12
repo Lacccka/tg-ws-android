@@ -7,6 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Test
+import java.io.EOFException
 import java.io.IOException
 import java.net.SocketException
 import java.security.MessageDigest
@@ -87,6 +88,105 @@ class ProxyServerTest {
         assertTrue(endLog.contains("bytesUp=13"))
         assertTrue(endLog.contains("bytesDown=17"))
         assertTrue(endLog.contains("reason=completed"))
+    }
+
+
+    @Test
+    fun eofExceptionSessionEndIncrementsRemoteEofButNotUnexpectedErrors() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> throw EOFException("unexpected end of WebSocket frame") },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(1L, stats.sessionEof)
+        assertEquals(1L, stats.sessionRemoteEof)
+        assertEquals(1L, stats.sessionRemoteEofShort)
+        assertEquals(0L, stats.sessionRemoteIdleEof)
+        assertEquals(0L, stats.sessionUnexpectedErrors)
+        assertEquals("direct-cold", stats.lastRemoteEofRoute)
+        assertEquals(2, stats.lastRemoteEofDc)
+        assertFalse(stats.lastRemoteEofMedia ?: true)
+        assertTrue(stats.lastRemoteEofTimeMs > 0L)
+        assertTrue(logs.any { it.contains("session ended") && it.contains("reason=remote_eof") })
+        assertFalse(logs.any { it.contains("session ended") && it.contains("reason=exception: EOFException") })
+    }
+
+    @Test
+    fun eofExceptionAtIdleThresholdIsClassifiedAsRemoteIdleEof() {
+        val classification = classifySessionEnd(
+            rawReason = "exception: EOFException: unexpected end of WebSocket frame",
+            error = EOFException("unexpected end of WebSocket frame"),
+            durationMs = SESSION_REMOTE_IDLE_EOF_MIN_DURATION_MS,
+        )
+
+        assertEquals("remote_idle_eof", classification.reason)
+        assertTrue(classification.remoteEof)
+        assertTrue(classification.remoteIdleEof)
+    }
+
+    @Test
+    fun shortEofExceptionIsClassifiedAsRemoteEof() {
+        val classification = classifySessionEnd(
+            rawReason = "exception: EOFException: unexpected end of WebSocket frame",
+            error = EOFException("unexpected end of WebSocket frame"),
+            durationMs = SESSION_REMOTE_IDLE_EOF_MIN_DURATION_MS - 1,
+        )
+
+        assertEquals("remote_eof", classification.reason)
+        assertTrue(classification.remoteEof)
+        assertFalse(classification.remoteIdleEof)
+    }
+
+    @Test
+    fun clientClosedSessionEndIsNotRemoteEof() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            runner = ProxyBridgeRunner { _, _, _, _, counters -> counters.finish("client closed") },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(1L, stats.sessionClientClosed)
+        assertEquals(0L, stats.sessionEof)
+        assertEquals(0L, stats.sessionRemoteEof)
+        assertEquals(0L, stats.sessionUnexpectedErrors)
+    }
+
+    @Test
+    fun timeoutSessionEndIsNotRemoteEof() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            runner = ProxyBridgeRunner { _, _, _, _, counters -> counters.finish("exception: SocketTimeoutException: read timed out") },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(1L, stats.sessionTimeouts)
+        assertEquals(0L, stats.sessionEof)
+        assertEquals(0L, stats.sessionRemoteEof)
+        assertEquals(0L, stats.sessionUnexpectedErrors)
     }
 
     @Test
@@ -643,7 +743,7 @@ class ProxyServerTest {
             assertEquals(0, proxy.stats().connectionsActive)
             assertEquals(1L, proxy.stats().sessionUnexpectedErrors)
             assertTrue(logs.any { it.contains("DC2 direct-cold route failed before bridge: SocketException: Broken pipe") })
-            assertTrue(logs.any { it.contains("session ended") && it.contains("reason=exception: SocketException: Broken pipe") })
+            assertTrue(logs.any { it.contains("session ended") && it.contains("reason=unexpected_error") })
             assertTrue(logs.none { it.contains("client handler failed") })
             assertTrue(uncaught.isEmpty())
         } finally {
@@ -676,7 +776,7 @@ class ProxyServerTest {
             assertEquals(0, proxy.stats().connectionsActive)
             assertEquals(1L, proxy.stats().sessionUnexpectedErrors)
             assertTrue(logs.any { it.contains("DC2 direct-cold route failed: SocketException: Broken pipe") })
-            assertTrue(logs.any { it.contains("session ended") && it.contains("reason=exception: SocketException: Broken pipe") })
+            assertTrue(logs.any { it.contains("session ended") && it.contains("reason=unexpected_error") })
             assertTrue(uncaught.isEmpty())
         } finally {
             Thread.setDefaultUncaughtExceptionHandler(previousHandler)
