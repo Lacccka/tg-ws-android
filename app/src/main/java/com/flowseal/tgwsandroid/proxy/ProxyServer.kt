@@ -86,6 +86,33 @@ data class HandshakeDiagnostic(
 )
 
 /** Immutable snapshot of lightweight local proxy counters. */
+
+data class CfFirstRecoveryDiagnostics(
+    val wifiAttempts: Long = 0,
+    val wifiSuccesses: Long = 0,
+    val wifiFailures: Long = 0,
+    val lastWifiError: String? = null,
+    val lastWifiTimeMs: Long? = null,
+    val attempts: Long = 0,
+    val successes: Long = 0,
+    val failures: Long = 0,
+    val lastReason: String? = null,
+)
+
+data class EmergencyDirectFallbackDiagnostics(
+    val attempts: Long = 0,
+    val successes: Long = 0,
+    val failures: Long = 0,
+    val suppressed: Long = 0,
+    val lastReason: String? = null,
+    val lastTimeMs: Long? = null,
+)
+
+data class ProxyRecoveryDiagnostics(
+    val cfFirst: CfFirstRecoveryDiagnostics = CfFirstRecoveryDiagnostics(),
+    val emergencyDirectFallback: EmergencyDirectFallbackDiagnostics = EmergencyDirectFallbackDiagnostics(),
+)
+
 data class ProxyServerStats(
     val connectionsTotal: Long,
     val connectionsActive: Int,
@@ -158,20 +185,7 @@ data class ProxyServerStats(
     val wifiDirectRecoveryAttempts: Long = 0,
     val wifiDirectRecoverySuccesses: Long = 0,
     val wifiDirectRecoveryFailures: Long = 0,
-    val wifiCfFirstRecoveryAttempts: Long = 0,
-    val wifiCfFirstRecoverySuccesses: Long = 0,
-    val wifiCfFirstRecoveryFailures: Long = 0,
-    val lastWifiCfFirstRecoveryError: String? = null,
-    val lastWifiCfFirstRecoveryTimeMs: Long? = null,
-    val cfFirstRecoveryAttempts: Long = 0,
-    val cfFirstRecoverySuccesses: Long = 0,
-    val cfFirstRecoveryFailures: Long = 0,
-    val lastCfFirstRecoveryReason: String? = null,
-    val emergencyDirectFallbackAttempts: Long = 0,
-    val emergencyDirectFallbackSuccesses: Long = 0,
-    val emergencyDirectFallbackFailures: Long = 0,
-    val emergencyDirectFallbackSuppressed: Long = 0,
-    val lastEmergencyDirectFallbackReason: String? = null,
+    val recoveryDiagnostics: ProxyRecoveryDiagnostics = ProxyRecoveryDiagnostics(),
     val lastNetworkTypeAtRouteAttempt: String = "unknown",
     val routeAttemptNetworkGeneration: Long = 0,
     val routeAttemptNetworkChangedBeforeSelection: Long = 0,
@@ -753,20 +767,26 @@ class ProxyServer(
             wifiDirectRecoveryAttempts = wifiDirectRecoveryAttempts.get(),
             wifiDirectRecoverySuccesses = wifiDirectRecoverySuccesses.get(),
             wifiDirectRecoveryFailures = wifiDirectRecoveryFailures.get(),
-            wifiCfFirstRecoveryAttempts = wifiCfFirstRecoveryAttempts.get(),
-            wifiCfFirstRecoverySuccesses = wifiCfFirstRecoverySuccesses.get(),
-            wifiCfFirstRecoveryFailures = wifiCfFirstRecoveryFailures.get(),
-            lastWifiCfFirstRecoveryError = lastWifiCfFirstRecoveryError.get(),
-            lastWifiCfFirstRecoveryTimeMs = lastWifiCfFirstRecoveryTimeMs.get().takeIf { it > 0L },
-            cfFirstRecoveryAttempts = cfFirstRecoveryAttempts.get(),
-            cfFirstRecoverySuccesses = cfFirstRecoverySuccesses.get(),
-            cfFirstRecoveryFailures = cfFirstRecoveryFailures.get(),
-            lastCfFirstRecoveryReason = lastCfFirstRecoveryReason.get(),
-            emergencyDirectFallbackAttempts = emergencyDirectFallbackAttempts.get(),
-            emergencyDirectFallbackSuccesses = emergencyDirectFallbackSuccesses.get(),
-            emergencyDirectFallbackFailures = emergencyDirectFallbackFailures.get(),
-            emergencyDirectFallbackSuppressed = emergencyDirectFallbackSuppressed.get(),
-            lastEmergencyDirectFallbackReason = lastEmergencyDirectFallbackReason.get(),
+            recoveryDiagnostics = ProxyRecoveryDiagnostics(
+                cfFirst = CfFirstRecoveryDiagnostics(
+                    wifiAttempts = wifiCfFirstRecoveryAttempts.get(),
+                    wifiSuccesses = wifiCfFirstRecoverySuccesses.get(),
+                    wifiFailures = wifiCfFirstRecoveryFailures.get(),
+                    lastWifiError = lastWifiCfFirstRecoveryError.get(),
+                    lastWifiTimeMs = lastWifiCfFirstRecoveryTimeMs.get().takeIf { it > 0L },
+                    attempts = cfFirstRecoveryAttempts.get(),
+                    successes = cfFirstRecoverySuccesses.get(),
+                    failures = cfFirstRecoveryFailures.get(),
+                    lastReason = lastCfFirstRecoveryReason.get(),
+                ),
+                emergencyDirectFallback = EmergencyDirectFallbackDiagnostics(
+                    attempts = emergencyDirectFallbackAttempts.get(),
+                    successes = emergencyDirectFallbackSuccesses.get(),
+                    failures = emergencyDirectFallbackFailures.get(),
+                    suppressed = emergencyDirectFallbackSuppressed.get(),
+                    lastReason = lastEmergencyDirectFallbackReason.get(),
+                ),
+            ),
             lastNetworkTypeAtRouteAttempt = lastNetworkTypeAtRouteAttempt,
             routeAttemptNetworkGeneration = routeAttemptNetworkGeneration,
             routeAttemptNetworkChangedBeforeSelection = routeAttemptNetworkChangedBeforeSelection.get(),
@@ -1070,7 +1090,9 @@ class ProxyServer(
                         )
                     ) return
                 }
+                var cfFirstDirectFallbackAttempted = false
                 if (isDirectAttemptAllowedForCurrentRoute()) {
+                    cfFirstDirectFallbackAttempted = true
                     logger.log("DC${parsed.dcId} trying short direct fallback after CF-first failure")
                     if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = false, timeoutMs = config.directFallbackTimeoutMs)) return
                 } else {
@@ -1081,7 +1103,7 @@ class ProxyServer(
                         logger.log("DC${parsed.dcId} direct fallback skipped because effective route mode ${effectiveRouteMode().configValue}")
                     }
                 }
-                if (tryEmergencyDirectFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration)) return
+                if (tryEmergencyDirectFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration, cfFirstDirectFallbackAttempted)) return
                 logger.log("DC${parsed.dcId} no route available after CF-first attempts")
             }
             NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> {
@@ -1221,12 +1243,14 @@ class ProxyServer(
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
         routeAttemptStartGeneration: Long,
+        cfFirstDirectFallbackAttempted: Boolean,
     ): Boolean {
         val now = System.currentTimeMillis()
         val reason = when {
             routeState.snapshot().effectiveRouteMode != NetworkRouteMode.CF_FIRST -> "route is not cf_first"
             !isWifi(currentNetworkStatus) -> "network=$currentNetworkStatus"
             routeGeneration.get() != routeAttemptStartGeneration -> "network generation changed"
+            cfFirstDirectFallbackAttempted -> "short direct fallback already attempted"
             directRouteHealth.snapshot().cooldownUntilMs > now -> "direct cooldown"
             emergencyDirectFallbackCooldownUntilMs.get() > now -> "emergency fallback cooldown"
             directRouteHealth.snapshot().lastError?.contains("timeout", ignoreCase = true) == true -> "recent direct timeout"

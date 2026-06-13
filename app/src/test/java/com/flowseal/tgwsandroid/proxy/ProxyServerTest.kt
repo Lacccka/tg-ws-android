@@ -2273,9 +2273,9 @@ class ProxyServerTest {
         assertEquals("expected wifiDirectRecoveryAttempts", 1L, stats.wifiDirectRecoveryAttempts)
         assertEquals("expected wifiDirectRecoverySuccesses", 1L, stats.wifiDirectRecoverySuccesses)
         assertEquals("expected wifiDirectRecoveryFailures", 0L, stats.wifiDirectRecoveryFailures)
-        assertEquals("expected wifiCfFirstRecoveryAttempts", 1L, stats.wifiCfFirstRecoveryAttempts)
-        assertEquals("expected wifiCfFirstRecoverySuccesses", 1L, stats.wifiCfFirstRecoverySuccesses)
-        assertEquals("expected cfFirstRecoveryAttempts", 1L, stats.cfFirstRecoveryAttempts)
+        assertEquals("expected wifiCfFirstRecoveryAttempts", 1L, stats.recoveryDiagnostics.cfFirst.wifiAttempts)
+        assertEquals("expected wifiCfFirstRecoverySuccesses", 1L, stats.recoveryDiagnostics.cfFirst.wifiSuccesses)
+        assertEquals("expected cfFirstRecoveryAttempts", 1L, stats.recoveryDiagnostics.cfFirst.attempts)
         assertEquals("expected direct promotion after recovery", NetworkRouteMode.DIRECT_FIRST.configValue, stats.effectiveRouteMode)
         assertEquals("expected lastRouteUsed", "direct-cold", stats.lastRouteUsed)
         assertTrue(
@@ -2314,9 +2314,9 @@ class ProxyServerTest {
 
         val stats = proxy.stats()
         assertEquals(NetworkRouteMode.CF_FIRST.configValue, stats.effectiveRouteMode)
-        assertEquals(0L, stats.emergencyDirectFallbackAttempts)
-        assertTrue(stats.emergencyDirectFallbackSuppressed > 0L)
-        assertEquals("direct cooldown", stats.lastEmergencyDirectFallbackReason)
+        assertEquals(0L, stats.recoveryDiagnostics.emergencyDirectFallback.attempts)
+        assertTrue(stats.recoveryDiagnostics.emergencyDirectFallback.suppressed > 0L)
+        assertEquals("direct cooldown", stats.recoveryDiagnostics.emergencyDirectFallback.lastReason)
     }
 
     @Test

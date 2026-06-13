@@ -1,6 +1,9 @@
 package com.flowseal.tgwsandroid.service
 
 import com.flowseal.tgwsandroid.proxy.CfDomainSnapshot
+import com.flowseal.tgwsandroid.proxy.CfFirstRecoveryDiagnostics
+import com.flowseal.tgwsandroid.proxy.EmergencyDirectFallbackDiagnostics
+import com.flowseal.tgwsandroid.proxy.ProxyRecoveryDiagnostics
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -721,6 +724,17 @@ class RuntimeLogStoreTest {
             lastRouteUsedUpdateTimeMs = 1_750L,
             wifiDirectRecoveryAttempts = 1,
             wifiDirectRecoverySuccesses = 1,
+            recoveryDiagnostics = ProxyRecoveryDiagnostics(
+                cfFirst = CfFirstRecoveryDiagnostics(
+                    wifiAttempts = 2,
+                    wifiSuccesses = 1,
+                    lastReason = "test recovery",
+                ),
+                emergencyDirectFallback = EmergencyDirectFallbackDiagnostics(
+                    suppressed = 1,
+                    lastReason = "direct cooldown",
+                ),
+            ),
         )
 
         val report = DiagnosticReportFormatter.format(
@@ -752,6 +766,10 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("lastRouteUsed=direct-cold"))
         assertTrue(report.contains("wifiDirectRecoveryAttempts=1"))
         assertTrue(report.contains("wifiDirectRecoverySuccesses=1"))
+        assertTrue(report.contains("wifiCfFirstRecoveryAttempts=2"))
+        assertTrue(report.contains("lastCfFirstRecoveryReason=test recovery"))
+        assertTrue(report.contains("emergencyDirectFallbackSuppressed=1"))
+        assertTrue(report.contains("lastEmergencyDirectFallbackReason=direct cooldown"))
     }
 
 }
