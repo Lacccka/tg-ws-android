@@ -158,6 +158,20 @@ data class ProxyServerStats(
     val wifiDirectRecoveryAttempts: Long = 0,
     val wifiDirectRecoverySuccesses: Long = 0,
     val wifiDirectRecoveryFailures: Long = 0,
+    val wifiCfFirstRecoveryAttempts: Long = 0,
+    val wifiCfFirstRecoverySuccesses: Long = 0,
+    val wifiCfFirstRecoveryFailures: Long = 0,
+    val lastWifiCfFirstRecoveryError: String? = null,
+    val lastWifiCfFirstRecoveryTimeMs: Long? = null,
+    val cfFirstRecoveryAttempts: Long = 0,
+    val cfFirstRecoverySuccesses: Long = 0,
+    val cfFirstRecoveryFailures: Long = 0,
+    val lastCfFirstRecoveryReason: String? = null,
+    val emergencyDirectFallbackAttempts: Long = 0,
+    val emergencyDirectFallbackSuccesses: Long = 0,
+    val emergencyDirectFallbackFailures: Long = 0,
+    val emergencyDirectFallbackSuppressed: Long = 0,
+    val lastEmergencyDirectFallbackReason: String? = null,
     val lastNetworkTypeAtRouteAttempt: String = "unknown",
     val routeAttemptNetworkGeneration: Long = 0,
     val routeAttemptNetworkChangedBeforeSelection: Long = 0,
@@ -564,6 +578,21 @@ class ProxyServer(
     private val wifiDirectRecoveryAttempts = AtomicLong(0)
     private val wifiDirectRecoverySuccesses = AtomicLong(0)
     private val wifiDirectRecoveryFailures = AtomicLong(0)
+    private val wifiCfFirstRecoveryAttempts = AtomicLong(0)
+    private val wifiCfFirstRecoverySuccesses = AtomicLong(0)
+    private val wifiCfFirstRecoveryFailures = AtomicLong(0)
+    private val cfFirstRecoveryAttempts = AtomicLong(0)
+    private val cfFirstRecoverySuccesses = AtomicLong(0)
+    private val cfFirstRecoveryFailures = AtomicLong(0)
+    private val emergencyDirectFallbackAttempts = AtomicLong(0)
+    private val emergencyDirectFallbackSuccesses = AtomicLong(0)
+    private val emergencyDirectFallbackFailures = AtomicLong(0)
+    private val emergencyDirectFallbackSuppressed = AtomicLong(0)
+    private val lastWifiCfFirstRecoveryError = AtomicReference<String?>(null)
+    private val lastWifiCfFirstRecoveryTimeMs = AtomicLong(0)
+    private val lastCfFirstRecoveryReason = AtomicReference<String?>(null)
+    private val lastEmergencyDirectFallbackReason = AtomicReference<String?>(null)
+    private val emergencyDirectFallbackCooldownUntilMs = AtomicLong(0)
     private val routeAttemptNetworkChangedBeforeSelection = AtomicLong(0)
     private val mobileDirectRescueByDc = ConcurrentHashMap<Int, MobileDirectRescueState>()
     private val wifiCapabilityEventsIgnored = AtomicLong(0)
@@ -586,6 +615,8 @@ class ProxyServer(
     @Volatile private var lastNetworkTypeAtRouteAttempt: String = config.networkStatus.ifBlank { "unknown" }
     @Volatile private var routeAttemptNetworkGeneration: Long = 0
     @Volatile private var wifiDirectRecoveryUntilMs: Long = 0
+    @Volatile private var lastDirectDowngradeTimeMs: Long = 0
+    @Volatile private var lastDirectDowngradeReason: String? = null
     @Volatile private var directPoolStaleInWindow: Long = 0
     @Volatile private var lastDirectPoolStaleWindowStartMs: Long = 0
     @Volatile private var lastRouteUsed: String? = null
@@ -722,6 +753,20 @@ class ProxyServer(
             wifiDirectRecoveryAttempts = wifiDirectRecoveryAttempts.get(),
             wifiDirectRecoverySuccesses = wifiDirectRecoverySuccesses.get(),
             wifiDirectRecoveryFailures = wifiDirectRecoveryFailures.get(),
+            wifiCfFirstRecoveryAttempts = wifiCfFirstRecoveryAttempts.get(),
+            wifiCfFirstRecoverySuccesses = wifiCfFirstRecoverySuccesses.get(),
+            wifiCfFirstRecoveryFailures = wifiCfFirstRecoveryFailures.get(),
+            lastWifiCfFirstRecoveryError = lastWifiCfFirstRecoveryError.get(),
+            lastWifiCfFirstRecoveryTimeMs = lastWifiCfFirstRecoveryTimeMs.get().takeIf { it > 0L },
+            cfFirstRecoveryAttempts = cfFirstRecoveryAttempts.get(),
+            cfFirstRecoverySuccesses = cfFirstRecoverySuccesses.get(),
+            cfFirstRecoveryFailures = cfFirstRecoveryFailures.get(),
+            lastCfFirstRecoveryReason = lastCfFirstRecoveryReason.get(),
+            emergencyDirectFallbackAttempts = emergencyDirectFallbackAttempts.get(),
+            emergencyDirectFallbackSuccesses = emergencyDirectFallbackSuccesses.get(),
+            emergencyDirectFallbackFailures = emergencyDirectFallbackFailures.get(),
+            emergencyDirectFallbackSuppressed = emergencyDirectFallbackSuppressed.get(),
+            lastEmergencyDirectFallbackReason = lastEmergencyDirectFallbackReason.get(),
             lastNetworkTypeAtRouteAttempt = lastNetworkTypeAtRouteAttempt,
             routeAttemptNetworkGeneration = routeAttemptNetworkGeneration,
             routeAttemptNetworkChangedBeforeSelection = routeAttemptNetworkChangedBeforeSelection.get(),
@@ -1036,6 +1081,7 @@ class ProxyServer(
                         logger.log("DC${parsed.dcId} direct fallback skipped because effective route mode ${effectiveRouteMode().configValue}")
                     }
                 }
+                if (tryEmergencyDirectFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration)) return
                 logger.log("DC${parsed.dcId} no route available after CF-first attempts")
             }
             NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> {
@@ -1135,7 +1181,10 @@ class ProxyServer(
         splitter: MsgSplitter,
     ): Boolean {
         wifiDirectRecoveryAttempts.incrementAndGet()
-        logger.log("DC${parsed.dcId} Wi-Fi direct recovery allowed while effective route mode ${effectiveRouteMode().configValue}")
+        wifiCfFirstRecoveryAttempts.incrementAndGet()
+        cfFirstRecoveryAttempts.incrementAndGet()
+        lastWifiCfFirstRecoveryTimeMs.set(System.currentTimeMillis())
+        logger.log("DC${parsed.dcId} Wi-Fi direct recovery allowed (cf_first recovery) while effective route mode ${effectiveRouteMode().configValue}")
         val routed = tryDirectRoute(
             client,
             parsed,
@@ -1149,9 +1198,67 @@ class ProxyServer(
         )
         if (routed) {
             wifiDirectRecoverySuccesses.incrementAndGet()
+            wifiCfFirstRecoverySuccesses.incrementAndGet()
+            cfFirstRecoverySuccesses.incrementAndGet()
+            lastWifiCfFirstRecoveryError.set(null)
+            promoteDirectRouteAfterColdSuccess("Wi-Fi cf_first recovery probe success")
             return true
         }
+        val error = directRouteHealth.snapshot().lastError ?: "direct recovery route failed"
         wifiDirectRecoveryFailures.incrementAndGet()
+        wifiCfFirstRecoveryFailures.incrementAndGet()
+        cfFirstRecoveryFailures.incrementAndGet()
+        lastWifiCfFirstRecoveryError.set(error)
+        directRouteHealth.startCooldown(EMERGENCY_DIRECT_FALLBACK_FAILURE_COOLDOWN_MS, error)
+        return false
+    }
+
+    private fun tryEmergencyDirectFallback(
+        client: TcpClientTransport,
+        parsed: MtprotoHandshake.Result,
+        targetHost: String,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+        routeAttemptStartGeneration: Long,
+    ): Boolean {
+        val now = System.currentTimeMillis()
+        val reason = when {
+            routeState.snapshot().effectiveRouteMode != NetworkRouteMode.CF_FIRST -> "route is not cf_first"
+            !isWifi(currentNetworkStatus) -> "network=$currentNetworkStatus"
+            routeGeneration.get() != routeAttemptStartGeneration -> "network generation changed"
+            directRouteHealth.snapshot().cooldownUntilMs > now -> "direct cooldown"
+            emergencyDirectFallbackCooldownUntilMs.get() > now -> "emergency fallback cooldown"
+            directRouteHealth.snapshot().lastError?.contains("timeout", ignoreCase = true) == true -> "recent direct timeout"
+            else -> null
+        }
+        if (reason != null) {
+            emergencyDirectFallbackSuppressed.incrementAndGet()
+            lastEmergencyDirectFallbackReason.set(reason)
+            logger.log("DC${parsed.dcId} emergency direct fallback suppressed: $reason")
+            return false
+        }
+        emergencyDirectFallbackAttempts.incrementAndGet()
+        lastEmergencyDirectFallbackReason.set("CF controlled failure/no route on Wi-Fi")
+        logger.log("DC${parsed.dcId} emergency direct-cold fallback allowed after CF-first controlled failure/no route")
+        val routed = tryDirectRoute(
+            client,
+            parsed,
+            targetHost,
+            relayInit,
+            cryptoContext,
+            splitter,
+            usePool = false,
+            timeoutMs = config.directFallbackTimeoutMs,
+            allowWifiDirectRecovery = true,
+        )
+        if (routed) {
+            emergencyDirectFallbackSuccesses.incrementAndGet()
+            promoteDirectRouteAfterColdSuccess("emergency direct fallback success")
+            return true
+        }
+        emergencyDirectFallbackFailures.incrementAndGet()
+        emergencyDirectFallbackCooldownUntilMs.set(System.currentTimeMillis() + EMERGENCY_DIRECT_FALLBACK_FAILURE_COOLDOWN_MS)
         return false
     }
 
@@ -1826,14 +1933,31 @@ class ProxyServer(
         if (snapshot.configuredRouteMode != NetworkRouteMode.AUTO) return false
         if (snapshot.effectiveRouteMode != NetworkRouteMode.CF_FIRST) return false
         if (!isWifi(currentNetworkStatus)) return false
-        if (System.currentTimeMillis() > wifiDirectRecoveryUntilMs) return false
         val generationChanged = routeGeneration.get() != routeAttemptStartGeneration
         if (generationChanged) {
             routeAttemptNetworkChangedBeforeSelection.incrementAndGet()
+            lastCfFirstRecoveryReason.set("network generation changed on Wi-Fi")
             return true
         }
-        return directRouteHealth.isChecking() || directRouteHealth.hasRecentSuccess(WIFI_DIRECT_RECOVERY_RECENT_SUCCESS_MS)
+        val now = System.currentTimeMillis()
+        if (now <= wifiDirectRecoveryUntilMs && (directRouteHealth.isChecking() || directRouteHealth.hasRecentSuccess(WIFI_DIRECT_RECOVERY_RECENT_SUCCESS_MS))) {
+            lastCfFirstRecoveryReason.set("recent Wi-Fi direct probe success/checking")
+            return true
+        }
+        val cooldownExpired = directRouteHealth.snapshot().cooldownUntilMs <= now
+        val downgradeAgeMs = now - lastDirectDowngradeTimeMs
+        val stalePoolDowngrade = isStalePoolRelated(lastDirectDowngradeReason) || isStalePoolRelated(directRouteHealth.snapshot().lastError)
+        if (cooldownExpired && stalePoolDowngrade && downgradeAgeMs >= WIFI_CF_FIRST_RECOVERY_MIN_DOWNGRADE_AGE_MS) {
+            lastCfFirstRecoveryReason.set("stale pool downgrade recovered after cooldown")
+            return true
+        }
+        return false
     }
+
+    private fun isStalePoolRelated(reason: String?): Boolean =
+        reason?.contains("poolStale", ignoreCase = true) == true ||
+            reason?.contains("stale pool", ignoreCase = true) == true ||
+            reason?.contains("stale-pool", ignoreCase = true) == true
 
     private fun directColdAllowedDuringSettling(): Boolean {
         val snapshot = routeState.snapshot()
@@ -1912,6 +2036,18 @@ class ProxyServer(
         )
     }
 
+    private fun promoteDirectRouteAfterColdSuccess(reason: String) {
+        if (routeState.configuredRouteMode != NetworkRouteMode.AUTO) return
+        if (!isWifi(currentNetworkStatus)) return
+        val before = effectiveRouteMode()
+        if (before == NetworkRouteMode.DIRECT_FIRST) return
+        val result = applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, reason, currentNetworkStatus, source = "direct-recovery")
+        if (result.changed) {
+            directRouteHealth.recordPromotion()
+            logger.log("direct promoted: ${before.configValue} -> ${NetworkRouteMode.DIRECT_FIRST.configValue}")
+        }
+    }
+
     private fun downgradeDirectRouteBecauseHealthDegraded(reason: String) {
         if (routeState.configuredRouteMode != NetworkRouteMode.AUTO) return
         if (effectiveRouteMode() != NetworkRouteMode.DIRECT_FIRST) return
@@ -1919,6 +2055,8 @@ class ProxyServer(
             logger.log("direct downgrade skipped because no route available was caused by route settling: $reason")
             return
         }
+        lastDirectDowngradeTimeMs = System.currentTimeMillis()
+        lastDirectDowngradeReason = reason
         directRouteHealth.startCooldown(DIRECT_HEALTH_COOLDOWN_MS, reason)
         val result = applyEffectiveRouteMode(
             NetworkRouteMode.CF_FIRST,
@@ -1990,6 +2128,8 @@ class ProxyServer(
         private const val DIRECT_PROBE_THROTTLE_MS = 30_000L
         private const val WIFI_DIRECT_RECOVERY_RECENT_SUCCESS_MS = 30_000L
         private const val WIFI_DIRECT_RECOVERY_WINDOW_MS = 5_000L
+        private const val WIFI_CF_FIRST_RECOVERY_MIN_DOWNGRADE_AGE_MS = 0L
+        private const val EMERGENCY_DIRECT_FALLBACK_FAILURE_COOLDOWN_MS = 10_000L
         private const val DIRECT_HEALTH_DEGRADE_WINDOW_MS = 10_000L
         private const val DIRECT_POOL_STALE_DOWNGRADE_THRESHOLD = 3L
 

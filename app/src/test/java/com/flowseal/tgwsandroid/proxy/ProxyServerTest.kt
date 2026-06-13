@@ -2273,6 +2273,10 @@ class ProxyServerTest {
         assertEquals("expected wifiDirectRecoveryAttempts", 1L, stats.wifiDirectRecoveryAttempts)
         assertEquals("expected wifiDirectRecoverySuccesses", 1L, stats.wifiDirectRecoverySuccesses)
         assertEquals("expected wifiDirectRecoveryFailures", 0L, stats.wifiDirectRecoveryFailures)
+        assertEquals("expected wifiCfFirstRecoveryAttempts", 1L, stats.wifiCfFirstRecoveryAttempts)
+        assertEquals("expected wifiCfFirstRecoverySuccesses", 1L, stats.wifiCfFirstRecoverySuccesses)
+        assertEquals("expected cfFirstRecoveryAttempts", 1L, stats.cfFirstRecoveryAttempts)
+        assertEquals("expected direct promotion after recovery", NetworkRouteMode.DIRECT_FIRST.configValue, stats.effectiveRouteMode)
         assertEquals("expected lastRouteUsed", "direct-cold", stats.lastRouteUsed)
         assertTrue(
             "expected lastRouteUsedUpdateTimeMs > 0",
@@ -2287,6 +2291,32 @@ class ProxyServerTest {
             "expected successful direct WebSocket connect log",
             logs.any { it.contains("WebSocket connected via kws2.web.telegram.org") },
         )
+    }
+
+    @Test
+    fun emergencyDirectFallbackIsSuppressedDuringDirectCooldown() {
+        val firstClient = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val secondClient = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ -> throw SocketException("direct timeout") },
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi", poolSize = 0, cfproxyEnabled = false),
+        )
+
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
+        proxy.start()
+        server.enqueue(firstClient)
+        waitUntil { firstClient.closed && proxy.stats().directCooldownUntil > System.currentTimeMillis() }
+        server.enqueue(secondClient)
+        waitUntil { secondClient.closed }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, stats.effectiveRouteMode)
+        assertEquals(0L, stats.emergencyDirectFallbackAttempts)
+        assertTrue(stats.emergencyDirectFallbackSuppressed > 0L)
+        assertEquals("direct cooldown", stats.lastEmergencyDirectFallbackReason)
     }
 
     @Test
