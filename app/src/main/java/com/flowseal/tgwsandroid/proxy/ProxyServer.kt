@@ -131,6 +131,16 @@ data class ProxyServerStats(
     val sessionClientClosed: Long = 0,
     val sessionSocketClosed: Long = 0,
     val sessionUnexpectedErrors: Long = 0,
+    val sessionConnectionReset: Long = 0,
+    val sessionConnectionTimedOut: Long = 0,
+    val lastConnectionResetTimeMs: Long = 0,
+    val lastConnectionResetRoute: String? = null,
+    val lastConnectionResetDc: Int? = null,
+    val lastConnectionResetMedia: Boolean? = null,
+    val lastConnectionTimedOutTimeMs: Long = 0,
+    val lastConnectionTimedOutRoute: String? = null,
+    val lastConnectionTimedOutDc: Int? = null,
+    val lastConnectionTimedOutMedia: Boolean? = null,
     val sessionRemoteEof: Long = 0,
     val sessionRemoteIdleEof: Long = 0,
     val sessionRemoteEofShort: Long = 0,
@@ -415,6 +425,12 @@ internal fun classifySessionEnd(
             SessionEndClassification("timeout", rawReason)
         lower.contains("websocket closed") || lower.contains("socket closed") ->
             SessionEndClassification("socket_closed", rawReason.takeUnless { it == "websocket closed" || it == "socket closed" })
+        error is SocketException && error.message.orEmpty().contains("Connection reset", ignoreCase = true) ||
+            lower.contains("socketexception: connection reset") ->
+            SessionEndClassification("connection_reset", rawReason)
+        error is SocketException && error.message.orEmpty().contains("Connection timed out", ignoreCase = true) ||
+            lower.contains("socketexception: connection timed out") ->
+            SessionEndClassification("connection_timed_out", rawReason)
         error is EOFException || lower.contains("eofexception") || lower.contains("eof") -> {
             val idle = durationMs >= SESSION_REMOTE_IDLE_EOF_MIN_DURATION_MS
             SessionEndClassification(
@@ -568,6 +584,16 @@ class ProxyServer(
     private val sessionClientClosed = AtomicLong(0)
     private val sessionSocketClosed = AtomicLong(0)
     private val sessionUnexpectedErrors = AtomicLong(0)
+    private val sessionConnectionReset = AtomicLong(0)
+    private val sessionConnectionTimedOut = AtomicLong(0)
+    private val lastConnectionResetTimeMs = AtomicLong(0)
+    private val lastConnectionResetRoute = AtomicReference<String?>(null)
+    private val lastConnectionResetDc = AtomicReference<Int?>(null)
+    private val lastConnectionResetMedia = AtomicReference<Boolean?>(null)
+    private val lastConnectionTimedOutTimeMs = AtomicLong(0)
+    private val lastConnectionTimedOutRoute = AtomicReference<String?>(null)
+    private val lastConnectionTimedOutDc = AtomicReference<Int?>(null)
+    private val lastConnectionTimedOutMedia = AtomicReference<Boolean?>(null)
     private val sessionRemoteEof = AtomicLong(0)
     private val sessionRemoteIdleEof = AtomicLong(0)
     private val sessionRemoteEofShort = AtomicLong(0)
@@ -709,6 +735,16 @@ class ProxyServer(
             sessionClientClosed = sessionClientClosed.get(),
             sessionSocketClosed = sessionSocketClosed.get(),
             sessionUnexpectedErrors = sessionUnexpectedErrors.get(),
+            sessionConnectionReset = sessionConnectionReset.get(),
+            sessionConnectionTimedOut = sessionConnectionTimedOut.get(),
+            lastConnectionResetTimeMs = lastConnectionResetTimeMs.get(),
+            lastConnectionResetRoute = lastConnectionResetRoute.get(),
+            lastConnectionResetDc = lastConnectionResetDc.get(),
+            lastConnectionResetMedia = lastConnectionResetMedia.get(),
+            lastConnectionTimedOutTimeMs = lastConnectionTimedOutTimeMs.get(),
+            lastConnectionTimedOutRoute = lastConnectionTimedOutRoute.get(),
+            lastConnectionTimedOutDc = lastConnectionTimedOutDc.get(),
+            lastConnectionTimedOutMedia = lastConnectionTimedOutMedia.get(),
             sessionRemoteEof = sessionRemoteEof.get(),
             sessionRemoteIdleEof = sessionRemoteIdleEof.get(),
             sessionRemoteEofShort = sessionRemoteEofShort.get(),
@@ -1865,8 +1901,26 @@ class ProxyServer(
             "remote_eof", "remote_idle_eof" -> recordRemoteEof(classification, durationMs, route, dc, media)
             "client_closed" -> sessionClientClosed.incrementAndGet()
             "socket_closed" -> sessionSocketClosed.incrementAndGet()
+            "connection_reset" -> recordConnectionReset(route, dc, media)
+            "connection_timed_out" -> recordConnectionTimedOut(route, dc, media)
             "unexpected_error" -> sessionUnexpectedErrors.incrementAndGet()
         }
+    }
+
+    private fun recordConnectionReset(route: String, dc: Int, media: Boolean) {
+        sessionConnectionReset.incrementAndGet()
+        lastConnectionResetTimeMs.set(System.currentTimeMillis())
+        lastConnectionResetRoute.set(route)
+        lastConnectionResetDc.set(dc)
+        lastConnectionResetMedia.set(media)
+    }
+
+    private fun recordConnectionTimedOut(route: String, dc: Int, media: Boolean) {
+        sessionConnectionTimedOut.incrementAndGet()
+        lastConnectionTimedOutTimeMs.set(System.currentTimeMillis())
+        lastConnectionTimedOutRoute.set(route)
+        lastConnectionTimedOutDc.set(dc)
+        lastConnectionTimedOutMedia.set(media)
     }
 
     private fun recordRemoteEof(

@@ -190,6 +190,63 @@ class ProxyServerTest {
     }
 
     @Test
+    fun connectionResetSessionEndIsNotUnexpectedError() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> throw SocketException("Connection reset") },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(1L, stats.sessionConnectionReset)
+        assertEquals(0L, stats.sessionConnectionTimedOut)
+        assertEquals(0L, stats.sessionUnexpectedErrors)
+        assertEquals("direct-cold", stats.lastConnectionResetRoute)
+        assertEquals(2, stats.lastConnectionResetDc)
+        assertFalse(stats.lastConnectionResetMedia ?: true)
+        assertTrue(stats.lastConnectionResetTimeMs > 0L)
+        assertTrue(logs.any { it.contains("session ended") && it.contains("reason=connection_reset") && it.contains("detail=exception: SocketException: Connection reset") })
+        assertFalse(logs.any { it.contains("session ended") && it.contains("reason=unexpected_error") })
+    }
+
+    @Test
+    fun socketConnectionTimedOutSessionEndIsNotSessionTimeoutOrUnexpectedError() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> throw SocketException("Connection timed out") },
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(1L, stats.sessionConnectionTimedOut)
+        assertEquals(0L, stats.sessionConnectionReset)
+        assertEquals(0L, stats.sessionTimeouts)
+        assertEquals(0L, stats.sessionUnexpectedErrors)
+        assertEquals("direct-cold", stats.lastConnectionTimedOutRoute)
+        assertEquals(2, stats.lastConnectionTimedOutDc)
+        assertFalse(stats.lastConnectionTimedOutMedia ?: true)
+        assertTrue(stats.lastConnectionTimedOutTimeMs > 0L)
+        assertTrue(logs.any { it.contains("session ended") && it.contains("reason=connection_timed_out") && it.contains("detail=exception: SocketException: Connection timed out") })
+        assertFalse(logs.any { it.contains("session ended") && it.contains("reason=unexpected_error") })
+    }
+
+    @Test
     fun invalidHandshakeClosesClientAndIncrementsBadCounter() {
         val invalid = handshakeVector("invalid_wrong_secret")
         val client = FakeTcpClientTransport(invalid.getString("handshake_hex").hexToBytes())

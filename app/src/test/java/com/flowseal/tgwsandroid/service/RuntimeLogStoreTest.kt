@@ -236,6 +236,16 @@ class RuntimeLogStoreTest {
             poolMisses = 9,
             poolRefillErrors = 10,
             poolStale = 11,
+            sessionConnectionReset = 2,
+            sessionConnectionTimedOut = 3,
+            lastConnectionResetTimeMs = 1_717_469_130_000,
+            lastConnectionResetRoute = "direct-cold",
+            lastConnectionResetDc = 2,
+            lastConnectionResetMedia = false,
+            lastConnectionTimedOutTimeMs = 1_717_469_131_000,
+            lastConnectionTimedOutRoute = "cfproxy:kws2.one.example",
+            lastConnectionTimedOutDc = 4,
+            lastConnectionTimedOutMedia = true,
             cfHealthEnabled = true,
             cfDomainsTotal = 2,
             cfDomainsInCooldown = 1,
@@ -333,6 +343,14 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("Endpoint: 127.0.0.1:1443"))
         assertTrue(report.contains("Stats: total=7, active=0"))
         assertTrue(report.contains("poolStale=11"))
+        assertTrue(report.contains("sessionConnectionReset=2"))
+        assertTrue(report.contains("lastConnectionResetRoute=direct-cold"))
+        assertTrue(report.contains("lastConnectionResetDc=2"))
+        assertTrue(report.contains("lastConnectionResetMedia=false"))
+        assertTrue(report.contains("sessionConnectionTimedOut=3"))
+        assertTrue(report.contains("lastConnectionTimedOutRoute=cfproxy:kws2.one.example"))
+        assertTrue(report.contains("lastConnectionTimedOutDc=4"))
+        assertTrue(report.contains("lastConnectionTimedOutMedia=true"))
         assertTrue(report.contains("cfHealthEnabled=true"))
         assertTrue(report.contains("cf429Count=12"))
         assertTrue(report.contains("cfInflightSkips=18"))

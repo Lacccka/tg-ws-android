@@ -366,6 +366,12 @@ object DiagnosticReportFormatter {
             "lastRemoteEofDurationMs=${stats.lastRemoteEofDurationMs}, lastRemoteEofRoute=${stats.lastRemoteEofRoute ?: "none"}, " +
             "lastRemoteEofDc=${stats.lastRemoteEofDc?.toString() ?: "none"}, lastRemoteEofMedia=${stats.lastRemoteEofMedia?.toString() ?: "none"}, " +
             "sessionClientClosed=${stats.sessionClientClosed}, sessionSocketClosed=${stats.sessionSocketClosed}, " +
+            "sessionConnectionReset=${stats.sessionConnectionReset}, lastConnectionResetTimeMs=${stats.lastConnectionResetTimeMs}, " +
+            "lastConnectionResetRoute=${stats.lastConnectionResetRoute ?: "none"}, lastConnectionResetDc=${stats.lastConnectionResetDc?.toString() ?: "none"}, " +
+            "lastConnectionResetMedia=${stats.lastConnectionResetMedia?.toString() ?: "none"}, " +
+            "sessionConnectionTimedOut=${stats.sessionConnectionTimedOut}, lastConnectionTimedOutTimeMs=${stats.lastConnectionTimedOutTimeMs}, " +
+            "lastConnectionTimedOutRoute=${stats.lastConnectionTimedOutRoute ?: "none"}, lastConnectionTimedOutDc=${stats.lastConnectionTimedOutDc?.toString() ?: "none"}, " +
+            "lastConnectionTimedOutMedia=${stats.lastConnectionTimedOutMedia?.toString() ?: "none"}, " +
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, configuredRouteMode=${stats.routeMode}, " +
             "effectiveRouteMode=${stats.effectiveRouteMode}, previousEffectiveRouteMode=${stats.previousEffectiveRouteMode ?: "none"}, " +
             "lastRouteChangeReason=${stats.lastRouteChangeReason}, lastRouteChangeSource=${stats.lastRouteChangeSource}, " +
