@@ -316,6 +316,9 @@ object DiagnosticReportFormatter {
         appendLine("  totalLogEntriesDroppedDueToLimit: ${snapshot.totalLogEntriesDroppedDueToLimit}")
         appendLine("  restoredLogEntries: ${snapshot.restoredLogEntries}")
         appendLine("Status: ${snapshot.status}")
+        if (snapshot.latestHistoricalExitLooksLikeCleanerKill()) {
+            appendLine("Diagnostics warning: Process was killed by device cleaner. Foreground service and WakeLock do not protect from manual/OEM cleaner. Lock app in Recents and add it to cleaner exceptions.")
+        }
         appendLine("Endpoint: ${snapshot.endpoint}")
         appendLine("Secret: ${snapshot.secret}")
         appendLine("Secret source: ${snapshot.secretSource}")
@@ -413,6 +416,13 @@ object DiagnosticReportFormatter {
         appendLine("  previousRunLastCrashClass: ${previous?.lastCrashClass ?: "unknown"}")
         appendLine("  previousRunLastCrashMessage: ${maskSecret(previous?.lastCrashMessage ?: "unknown")}")
         appendLine("  previousRunLastCrashTopFrame: ${previous?.lastCrashTopFrame ?: "unknown"}")
+        val cleanerEntry = snapshot.historicalExitReasons.entries.firstOrNull { it.looksLikeCleanerKill() }
+        appendLine("  previousRunLikelyKilledByCleaner: ${cleanerEntry != null}")
+        appendLine("  previousRunCleanerDescription: ${cleanerEntry?.description ?: "none"}")
+        appendLine("  previousRunCleanerRecommendation: ${if (cleanerEntry != null) CLEANER_RECOMMENDATION else "none"}")
+        val sigkillEntry = snapshot.historicalExitReasons.entries.firstOrNull { it.looksLikeSigkill() }
+        appendLine("  previousRunLikelyKilledBySigkill: ${sigkillEntry != null}")
+        appendLine("  previousRunSigkillRecommendation: ${if (sigkillEntry != null) SIGKILL_RECOMMENDATION else "none"}")
         appendLine("  lastTrimMemoryLevel: ${snapshot.trimMemory.lastTrimMemoryLevel?.toString() ?: "unknown"}")
         appendLine("  lastTrimMemoryTimeMs: ${snapshot.trimMemory.lastTrimMemoryTimeMs?.toString() ?: "unknown"}")
         appendLine("  trimMemoryCountByLevel: ${snapshot.trimMemory.trimMemoryCountByLevel.toSortedMap()}")
@@ -424,6 +434,24 @@ object DiagnosticReportFormatter {
             appendLine("  historicalExitReason[$index]: timestamp=${entry.timestamp}, reasonCode=${entry.reasonCode}, reason=${entry.reasonLabel}, status=${entry.status}, importance=${entry.importance}, pss=${entry.pss}, rss=${entry.rss}, description=${entry.description ?: "none"}, processName=${entry.processName ?: "unknown"}, pid=${entry.pid}, traceInputStreamPresent=${entry.traceInputStreamPresent}")
         }
     }
+
+
+    private fun DiagnosticSnapshot.latestHistoricalExitLooksLikeCleanerKill(): Boolean =
+        historicalExitReasons.entries.firstOrNull()?.looksLikeCleanerKill() == true
+
+    private fun ProcessExitReasonEntry.looksLikeCleanerKill(): Boolean =
+        reasonCode == 13 && description?.containsCleanerMarker() == true
+
+    private fun ProcessExitReasonEntry.looksLikeSigkill(): Boolean =
+        reasonCode == 2 && status == 9
+
+    private fun String.containsCleanerMarker(): Boolean {
+        val normalized = lowercase(Locale.US)
+        return listOf("garbageclean", "cleaner", "clean", "security", "boost", "memory clean").any(normalized::contains)
+    }
+
+    private const val CLEANER_RECOMMENDATION = "Lock app in recents / add to Cleaner exceptions / keep battery unrestricted / enable autostart"
+    private const val SIGKILL_RECOMMENDATION = "check OEM battery/cleaner/task-killer restrictions"
 
     private fun formatDurationMs(ms: Long): String {
         val seconds = ms / 1000

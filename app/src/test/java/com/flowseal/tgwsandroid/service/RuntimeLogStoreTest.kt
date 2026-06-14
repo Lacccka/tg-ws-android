@@ -919,10 +919,66 @@ class RuntimeLogStoreTest {
         assertEquals("PERMISSION_CHANGE", ProxyForegroundService.State.applicationExitReasonLabel(8))
         assertEquals("EXCESSIVE_RESOURCE_USAGE", ProxyForegroundService.State.applicationExitReasonLabel(9))
         assertEquals("USER_REQUESTED", ProxyForegroundService.State.applicationExitReasonLabel(10))
-        assertEquals("USER_STOPPED", ProxyForegroundService.State.applicationExitReasonLabel(12))
-        assertEquals("DEPENDENCY_DIED", ProxyForegroundService.State.applicationExitReasonLabel(13))
-        assertEquals("OTHER", ProxyForegroundService.State.applicationExitReasonLabel(14))
+        assertEquals("USER_STOPPED", ProxyForegroundService.State.applicationExitReasonLabel(11))
+        assertEquals("DEPENDENCY_DIED", ProxyForegroundService.State.applicationExitReasonLabel(12))
+        assertEquals("OTHER", ProxyForegroundService.State.applicationExitReasonLabel(13))
+        assertEquals("FREEZER", ProxyForegroundService.State.applicationExitReasonLabel(14))
+        assertEquals("PACKAGE_STATE_CHANGE", ProxyForegroundService.State.applicationExitReasonLabel(15))
+        assertEquals("PACKAGE_UPDATED", ProxyForegroundService.State.applicationExitReasonLabel(16))
         assertEquals("UNKNOWN_99", ProxyForegroundService.State.applicationExitReasonLabel(99))
+    }
+
+    @Test
+    fun processDeathDiagnosticsDetectCleanerKillAndSigkill() {
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy stopped",
+                endpoint = "127.0.0.1:1443",
+                secret = "dd40...3da8",
+                dcSummary = "unknown",
+                batteryOptimization = "unknown",
+                historicalExitReasons = ProcessExitReasonDiagnostics(
+                    available = true,
+                    entries = listOf(
+                        ProcessExitReasonEntry(
+                            timestamp = 1_000L,
+                            reasonCode = 13,
+                            reasonLabel = "OTHER",
+                            status = 0,
+                            importance = 0,
+                            pss = 0L,
+                            rss = 0L,
+                            description = "GarbageClean",
+                            processName = "com.flowseal.tgwsandroid",
+                            pid = 123,
+                            traceInputStreamPresent = false,
+                        ),
+                        ProcessExitReasonEntry(
+                            timestamp = 900L,
+                            reasonCode = 2,
+                            reasonLabel = "SIGNALED",
+                            status = 9,
+                            importance = 0,
+                            pss = 0L,
+                            rss = 0L,
+                            description = null,
+                            processName = "com.flowseal.tgwsandroid",
+                            pid = 122,
+                            traceInputStreamPresent = false,
+                        ),
+                    ),
+                ),
+                logs = emptyList(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("previousRunLikelyKilledByCleaner: true"))
+        assertTrue(report.contains("previousRunCleanerDescription: GarbageClean"))
+        assertTrue(report.contains("previousRunCleanerRecommendation: Lock app in recents / add to Cleaner exceptions / keep battery unrestricted / enable autostart"))
+        assertTrue(report.contains("previousRunLikelyKilledBySigkill: true"))
+        assertTrue(report.contains("previousRunSigkillRecommendation: check OEM battery/cleaner/task-killer restrictions"))
+        assertTrue(report.contains("Diagnostics warning: Process was killed by device cleaner. Foreground service and WakeLock do not protect from manual/OEM cleaner. Lock app in Recents and add it to cleaner exceptions."))
     }
 
 }
