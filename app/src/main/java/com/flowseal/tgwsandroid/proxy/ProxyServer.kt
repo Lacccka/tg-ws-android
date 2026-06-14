@@ -113,6 +113,19 @@ data class ProxyRecoveryDiagnostics(
     val emergencyDirectFallback: EmergencyDirectFallbackDiagnostics = EmergencyDirectFallbackDiagnostics(),
 )
 
+data class ConnectionSocketEndDiagnostics(
+    val count: Long = 0,
+    val lastTimeMs: Long = 0,
+    val lastRoute: String? = null,
+    val lastDc: Int? = null,
+    val lastMedia: Boolean? = null,
+)
+
+data class ProxySessionEndDiagnostics(
+    val connectionReset: ConnectionSocketEndDiagnostics = ConnectionSocketEndDiagnostics(),
+    val connectionTimedOut: ConnectionSocketEndDiagnostics = ConnectionSocketEndDiagnostics(),
+)
+
 data class ProxyServerStats(
     val connectionsTotal: Long,
     val connectionsActive: Int,
@@ -131,16 +144,7 @@ data class ProxyServerStats(
     val sessionClientClosed: Long = 0,
     val sessionSocketClosed: Long = 0,
     val sessionUnexpectedErrors: Long = 0,
-    val sessionConnectionReset: Long = 0,
-    val sessionConnectionTimedOut: Long = 0,
-    val lastConnectionResetTimeMs: Long = 0,
-    val lastConnectionResetRoute: String? = null,
-    val lastConnectionResetDc: Int? = null,
-    val lastConnectionResetMedia: Boolean? = null,
-    val lastConnectionTimedOutTimeMs: Long = 0,
-    val lastConnectionTimedOutRoute: String? = null,
-    val lastConnectionTimedOutDc: Int? = null,
-    val lastConnectionTimedOutMedia: Boolean? = null,
+    val sessionEndDiagnostics: ProxySessionEndDiagnostics = ProxySessionEndDiagnostics(),
     val sessionRemoteEof: Long = 0,
     val sessionRemoteIdleEof: Long = 0,
     val sessionRemoteEofShort: Long = 0,
@@ -735,16 +739,22 @@ class ProxyServer(
             sessionClientClosed = sessionClientClosed.get(),
             sessionSocketClosed = sessionSocketClosed.get(),
             sessionUnexpectedErrors = sessionUnexpectedErrors.get(),
-            sessionConnectionReset = sessionConnectionReset.get(),
-            sessionConnectionTimedOut = sessionConnectionTimedOut.get(),
-            lastConnectionResetTimeMs = lastConnectionResetTimeMs.get(),
-            lastConnectionResetRoute = lastConnectionResetRoute.get(),
-            lastConnectionResetDc = lastConnectionResetDc.get(),
-            lastConnectionResetMedia = lastConnectionResetMedia.get(),
-            lastConnectionTimedOutTimeMs = lastConnectionTimedOutTimeMs.get(),
-            lastConnectionTimedOutRoute = lastConnectionTimedOutRoute.get(),
-            lastConnectionTimedOutDc = lastConnectionTimedOutDc.get(),
-            lastConnectionTimedOutMedia = lastConnectionTimedOutMedia.get(),
+            sessionEndDiagnostics = ProxySessionEndDiagnostics(
+                connectionReset = ConnectionSocketEndDiagnostics(
+                    count = sessionConnectionReset.get(),
+                    lastTimeMs = lastConnectionResetTimeMs.get(),
+                    lastRoute = lastConnectionResetRoute.get(),
+                    lastDc = lastConnectionResetDc.get(),
+                    lastMedia = lastConnectionResetMedia.get(),
+                ),
+                connectionTimedOut = ConnectionSocketEndDiagnostics(
+                    count = sessionConnectionTimedOut.get(),
+                    lastTimeMs = lastConnectionTimedOutTimeMs.get(),
+                    lastRoute = lastConnectionTimedOutRoute.get(),
+                    lastDc = lastConnectionTimedOutDc.get(),
+                    lastMedia = lastConnectionTimedOutMedia.get(),
+                ),
+            ),
             sessionRemoteEof = sessionRemoteEof.get(),
             sessionRemoteIdleEof = sessionRemoteIdleEof.get(),
             sessionRemoteEofShort = sessionRemoteEofShort.get(),

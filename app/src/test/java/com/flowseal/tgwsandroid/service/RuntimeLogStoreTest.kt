@@ -2,8 +2,10 @@ package com.flowseal.tgwsandroid.service
 
 import com.flowseal.tgwsandroid.proxy.CfDomainSnapshot
 import com.flowseal.tgwsandroid.proxy.CfFirstRecoveryDiagnostics
+import com.flowseal.tgwsandroid.proxy.ConnectionSocketEndDiagnostics
 import com.flowseal.tgwsandroid.proxy.EmergencyDirectFallbackDiagnostics
 import com.flowseal.tgwsandroid.proxy.ProxyRecoveryDiagnostics
+import com.flowseal.tgwsandroid.proxy.ProxySessionEndDiagnostics
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -236,16 +238,22 @@ class RuntimeLogStoreTest {
             poolMisses = 9,
             poolRefillErrors = 10,
             poolStale = 11,
-            sessionConnectionReset = 2,
-            sessionConnectionTimedOut = 3,
-            lastConnectionResetTimeMs = 1_717_469_130_000,
-            lastConnectionResetRoute = "direct-cold",
-            lastConnectionResetDc = 2,
-            lastConnectionResetMedia = false,
-            lastConnectionTimedOutTimeMs = 1_717_469_131_000,
-            lastConnectionTimedOutRoute = "cfproxy:kws2.one.example",
-            lastConnectionTimedOutDc = 4,
-            lastConnectionTimedOutMedia = true,
+            sessionEndDiagnostics = ProxySessionEndDiagnostics(
+                connectionReset = ConnectionSocketEndDiagnostics(
+                    count = 2,
+                    lastTimeMs = 1_717_469_130_000,
+                    lastRoute = "direct-cold",
+                    lastDc = 2,
+                    lastMedia = false,
+                ),
+                connectionTimedOut = ConnectionSocketEndDiagnostics(
+                    count = 3,
+                    lastTimeMs = 1_717_469_131_000,
+                    lastRoute = "cfproxy:kws2.one.example",
+                    lastDc = 4,
+                    lastMedia = true,
+                ),
+            ),
             cfHealthEnabled = true,
             cfDomainsTotal = 2,
             cfDomainsInCooldown = 1,

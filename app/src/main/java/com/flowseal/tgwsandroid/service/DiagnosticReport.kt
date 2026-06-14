@@ -366,12 +366,12 @@ object DiagnosticReportFormatter {
             "lastRemoteEofDurationMs=${stats.lastRemoteEofDurationMs}, lastRemoteEofRoute=${stats.lastRemoteEofRoute ?: "none"}, " +
             "lastRemoteEofDc=${stats.lastRemoteEofDc?.toString() ?: "none"}, lastRemoteEofMedia=${stats.lastRemoteEofMedia?.toString() ?: "none"}, " +
             "sessionClientClosed=${stats.sessionClientClosed}, sessionSocketClosed=${stats.sessionSocketClosed}, " +
-            "sessionConnectionReset=${stats.sessionConnectionReset}, lastConnectionResetTimeMs=${stats.lastConnectionResetTimeMs}, " +
-            "lastConnectionResetRoute=${stats.lastConnectionResetRoute ?: "none"}, lastConnectionResetDc=${stats.lastConnectionResetDc?.toString() ?: "none"}, " +
-            "lastConnectionResetMedia=${stats.lastConnectionResetMedia?.toString() ?: "none"}, " +
-            "sessionConnectionTimedOut=${stats.sessionConnectionTimedOut}, lastConnectionTimedOutTimeMs=${stats.lastConnectionTimedOutTimeMs}, " +
-            "lastConnectionTimedOutRoute=${stats.lastConnectionTimedOutRoute ?: "none"}, lastConnectionTimedOutDc=${stats.lastConnectionTimedOutDc?.toString() ?: "none"}, " +
-            "lastConnectionTimedOutMedia=${stats.lastConnectionTimedOutMedia?.toString() ?: "none"}, " +
+            "sessionConnectionReset=${stats.sessionEndDiagnostics.connectionReset.count}, lastConnectionResetTimeMs=${stats.sessionEndDiagnostics.connectionReset.lastTimeMs}, " +
+            "lastConnectionResetRoute=${stats.sessionEndDiagnostics.connectionReset.lastRoute ?: "none"}, lastConnectionResetDc=${stats.sessionEndDiagnostics.connectionReset.lastDc?.toString() ?: "none"}, " +
+            "lastConnectionResetMedia=${stats.sessionEndDiagnostics.connectionReset.lastMedia?.toString() ?: "none"}, " +
+            "sessionConnectionTimedOut=${stats.sessionEndDiagnostics.connectionTimedOut.count}, lastConnectionTimedOutTimeMs=${stats.sessionEndDiagnostics.connectionTimedOut.lastTimeMs}, " +
+            "lastConnectionTimedOutRoute=${stats.sessionEndDiagnostics.connectionTimedOut.lastRoute ?: "none"}, lastConnectionTimedOutDc=${stats.sessionEndDiagnostics.connectionTimedOut.lastDc?.toString() ?: "none"}, " +
+            "lastConnectionTimedOutMedia=${stats.sessionEndDiagnostics.connectionTimedOut.lastMedia?.toString() ?: "none"}, " +
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors}, configuredRouteMode=${stats.routeMode}, " +
             "effectiveRouteMode=${stats.effectiveRouteMode}, previousEffectiveRouteMode=${stats.previousEffectiveRouteMode ?: "none"}, " +
             "lastRouteChangeReason=${stats.lastRouteChangeReason}, lastRouteChangeSource=${stats.lastRouteChangeSource}, " +
