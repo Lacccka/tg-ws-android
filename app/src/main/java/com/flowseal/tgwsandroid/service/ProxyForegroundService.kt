@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.app.ActivityManager
+import android.app.ApplicationExitInfo
 import android.Manifest
 import android.content.Context
 import android.content.Intent
@@ -56,16 +58,18 @@ class ProxyForegroundService : Service() {
         State.initialize(applicationContext, "service")
         State.markServiceStarted()
         State.addLog("service created", LogSeverity.INFO, "service")
-        State.markServiceEvent("service_created")
+        State.markServiceEvent("service_on_create")
         ensureNotificationChannel()
         State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
         State.addLog("battery optimization status at start: ${State.batteryOptimizationStatus}", LogSeverity.INFO, "battery")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        State.markServiceEvent("service_on_start_command")
         when (intent?.action) {
             ACTION_STOP_FROM_UI, ACTION_STOP_FROM_NOTIFICATION, ACTION_STOP_FROM_TILE, ACTION_STOP_LEGACY -> {
                 val stopSource = stopSourceForAction(intent.action)
+                State.markServiceEvent("explicit_stop_${stopSource.markerReason}")
                 State.addLog("=== Proxy stop ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, stopSource.logSource)
                 State.addLog(stopSource.logMessage, LogSeverity.INFO, "service")
                 stopProxyAsync(stopSource.markerReason)
@@ -89,16 +93,19 @@ class ProxyForegroundService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onTaskRemoved(rootIntent: Intent?) {
+        State.markServiceEvent("service_on_task_removed")
         State.addLog("onTaskRemoved: app task removed while service running=${State.running}", LogSeverity.WARN, "service")
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onTrimMemory(level: Int) {
+        State.markTrimMemory(level)
         State.addLog("trim memory requested: level=$level", LogSeverity.WARN, "service")
         super.onTrimMemory(level)
     }
 
     override fun onLowMemory() {
+        State.markLowMemory()
         State.addLog("low memory callback received", LogSeverity.WARN, "service")
         super.onLowMemory()
     }
@@ -113,7 +120,7 @@ class ProxyForegroundService : Service() {
 
     override fun onDestroy() {
         State.addLog("service destroyed", LogSeverity.INFO, "service")
-        State.markServiceEvent("service_destroyed")
+        State.markServiceEvent("service_on_destroy")
         stopProxyBlocking("service_destroyed")
         unregisterNetworkCallback()
         routeDebouncer.cancel()
@@ -126,7 +133,9 @@ class ProxyForegroundService : Service() {
 
     private fun startProxyAsync() {
         try {
-            startForegroundCompat(buildNotification())
+            val notification = buildNotification()
+            State.markServiceEvent("foreground_notification_built")
+            startForegroundCompat(notification)
             State.addLog(
                 "foreground notification started: declared=${declaredForegroundServiceStrategy()} runtime=${runtimeForegroundServiceTypeName(Build.VERSION.SDK_INT)}",
                 LogSeverity.INFO,
@@ -145,6 +154,7 @@ class ProxyForegroundService : Service() {
                     return@execute
                 }
                 State.addLog("proxy start requested", LogSeverity.INFO, "service")
+                State.markServiceEvent("proxy_start_requested")
                 registerNetworkCallback()
                 val logger = ProxyLogger { message -> State.addProxyLog(message) }
                 val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus), logger = logger)
@@ -189,6 +199,7 @@ class ProxyForegroundService : Service() {
     }
 
     private fun stopProxyBlocking(stopReason: String = "service_stop") {
+        State.markServiceEvent("proxy_stop_begin")
         stopWatchdog()
         val wasRunning = State.running
         val server = synchronized(lock) {
@@ -206,6 +217,7 @@ class ProxyForegroundService : Service() {
         releaseWakeLock()
         unregisterNetworkCallback()
         State.setRunning(false, "Proxy stopped")
+        State.markServiceEvent("proxy_stop_completed")
         if (wasRunning || server != null) State.markProxyStopped(stopReason)
     }
 
@@ -255,6 +267,7 @@ class ProxyForegroundService : Service() {
     }
 
     private fun startForegroundCompat(notification: Notification) {
+        State.markServiceEvent("foreground_service_type_selected")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val runtimeType = runtimeForegroundServiceType(Build.VERSION.SDK_INT)
             if (runtimeType != null) {
@@ -265,6 +278,7 @@ class ProxyForegroundService : Service() {
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
+        State.markServiceEvent("start_foreground_succeeded")
     }
 
     private fun stopForegroundCompat() {
@@ -297,6 +311,7 @@ class ProxyForegroundService : Service() {
                 acquire()
             }
             State.setWakeLockHeld(true)
+            State.markServiceEvent("wake_lock_acquired")
             State.addLog("WakeLock acquired", LogSeverity.INFO, "battery")
         } catch (error: Throwable) {
             State.addLog("WakeLock acquire failed: ${error.message ?: error::class.java.simpleName}", LogSeverity.WARN, "battery")
@@ -309,6 +324,7 @@ class ProxyForegroundService : Service() {
             if (lock.isHeld) {
                 lock.release()
                 State.setWakeLockHeld(false)
+                State.markServiceEvent("wake_lock_released")
                 State.addLog("WakeLock released", LogSeverity.INFO, "battery")
             }
         } catch (error: Throwable) {
@@ -572,6 +588,17 @@ class ProxyForegroundService : Service() {
         private var lastWatchdogHeartbeatAt: String? = null
         @Volatile
         private var wakeLockHeld: Boolean = false
+        @Volatile
+        private var currentProcessStartTime: String? = null
+        @Volatile
+        private var currentProcessStartReason: String? = null
+        @Volatile
+        private var lastTrimMemoryLevel: Int? = null
+        @Volatile
+        private var lastTrimMemoryTimeMs: Long? = null
+        @Volatile
+        private var lastLowMemoryTimeMs: Long? = null
+        private val trimMemoryCounts = linkedMapOf<Int, Long>()
 
         fun initialize(context: Context, openedBy: String) {
             appContext = context.applicationContext
@@ -582,6 +609,8 @@ class ProxyForegroundService : Service() {
                     runMarker = ProxyRunMarker(File(runtimeDir, "proxy_run.marker"))
                     persistenceConfigured = true
                     installCrashHandlerLocked()
+                    currentProcessStartTime = Instant.now().toString()
+                    currentProcessStartReason = openedBy.ifBlank { "unknown" }
                     addLog("app process diagnostics initialized", LogSeverity.INFO, "process")
                     addLog("=== Process started ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, "process")
                     if (restored > 0) addLog("Restored $restored persisted log lines", LogSeverity.INFO, "process")
@@ -600,6 +629,7 @@ class ProxyForegroundService : Service() {
                     LogSeverity.ERROR,
                     "crash",
                 )
+                runMarker?.markCrash(error.javaClass.name, error.message, error.stackTrace.firstOrNull()?.toString())
                 error.stackTrace.take(6).forEach { frame -> addLog("  at $frame", LogSeverity.ERROR, "crash") }
                 if (previous != null) {
                     previous.uncaughtException(thread, error)
@@ -639,7 +669,7 @@ class ProxyForegroundService : Service() {
             lastWatchdogHeartbeatAt = null
             proxyStartedAtMs = System.currentTimeMillis()
             lastStopReason = null
-            val runId = runMarker?.markStarted() ?: return
+            val runId = runMarker?.markStarted(networkStatus, currentStatsSnapshot()?.effectiveRouteMode ?: "unknown", wakeLockHeld, foregroundStartedAt != null) ?: return
             if (foregroundStartedAt != null) runMarker?.markForegroundStarted()
             addLog("proxy run marker started: run_id=$runId", LogSeverity.INFO, "service")
         }
@@ -656,11 +686,25 @@ class ProxyForegroundService : Service() {
 
         fun markWatchdogHeartbeat() {
             lastWatchdogHeartbeatAt = Instant.now().toString()
-            runMarker?.markHeartbeat()
+            runMarker?.markHeartbeat(networkStatus, currentStatsSnapshot()?.effectiveRouteMode ?: "unknown", wakeLockHeld, foregroundStartedAt != null)
         }
 
         fun markServiceEvent(event: String) {
-            runMarker?.markServiceEvent(event)
+            runMarker?.markServiceEvent(event, networkStatus, currentStatsSnapshot()?.effectiveRouteMode ?: "unknown", wakeLockHeld, foregroundStartedAt != null)
+        }
+
+        fun markTrimMemory(level: Int) {
+            synchronized(trimMemoryCounts) {
+                trimMemoryCounts[level] = (trimMemoryCounts[level] ?: 0L) + 1L
+            }
+            lastTrimMemoryLevel = level
+            lastTrimMemoryTimeMs = System.currentTimeMillis()
+            markServiceEvent("trim_memory_level_$level")
+        }
+
+        fun markLowMemory() {
+            lastLowMemoryTimeMs = System.currentTimeMillis()
+            markServiceEvent("low_memory")
         }
 
         fun markForegroundTimeout(timeMs: Long, reason: String) {
@@ -747,6 +791,8 @@ class ProxyForegroundService : Service() {
             val runtimeLogTailUntilMs = System.currentTimeMillis()
             val stats = currentStatsSnapshot()
             val networkDiagnostics = context?.let { collectNetworkDiagnostics(it, stats) } ?: NetworkDiagnostics()
+            val exitReasons = context?.let { collectHistoricalExitReasons(it) }
+                ?: ProcessExitReasonDiagnostics(available = false, errorClass = "NoContext", errorMessage = "Application context unavailable")
             val effectiveRouteMode = stats?.effectiveRouteMode ?: fallbackEffectiveRouteMode
             return DiagnosticReportFormatter.format(
                 DiagnosticReportFormatter.snapshot(
@@ -769,6 +815,15 @@ class ProxyForegroundService : Service() {
                     lastWatchdogHeartbeat = lastWatchdogHeartbeatAt,
                     wakeLockHeld = wakeLockHeld,
                     previousRun = previousRun,
+                    currentProcessStartTime = currentProcessStartTime,
+                    currentProcessStartReason = currentProcessStartReason,
+                    historicalExitReasons = exitReasons,
+                    trimMemory = TrimMemoryDiagnostics(
+                        lastTrimMemoryLevel = lastTrimMemoryLevel,
+                        lastTrimMemoryTimeMs = lastTrimMemoryTimeMs,
+                        trimMemoryCountByLevel = synchronized(trimMemoryCounts) { trimMemoryCounts.toMap() },
+                        lastLowMemoryTimeMs = lastLowMemoryTimeMs,
+                    ),
                     previousEffectiveRouteMode = stats?.previousEffectiveRouteMode,
                     lastRouteChangeReason = stats?.lastRouteChangeReason ?: "unknown",
                     lastRouteChangeTimeMs = stats?.lastRouteChangeTimeMs,
@@ -846,6 +901,59 @@ class ProxyForegroundService : Service() {
             val captive = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)
             val available = capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
             return "available=$available validated=$validated captive=$captive"
+        }
+
+        private fun collectHistoricalExitReasons(context: Context): ProcessExitReasonDiagnostics {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                return ProcessExitReasonDiagnostics(
+                    available = false,
+                    errorClass = "UnsupportedApi",
+                    errorMessage = "ApplicationExitInfo requires Android 11/API 30",
+                )
+            }
+            return try {
+                val activityManager = context.getSystemService(ActivityManager::class.java)
+                val entries = activityManager.getHistoricalProcessExitReasons(context.packageName, 0, 5).map { info ->
+                    ProcessExitReasonEntry(
+                        timestamp = info.timestamp,
+                        reasonCode = info.reason,
+                        reasonLabel = applicationExitReasonLabel(info.reason),
+                        status = info.status,
+                        importance = info.importance,
+                        pss = info.pss,
+                        rss = info.rss,
+                        description = info.description,
+                        processName = info.processName,
+                        pid = info.pid,
+                        traceInputStreamPresent = runCatching { info.traceInputStream?.use { true } ?: false }.getOrDefault(false),
+                    )
+                }
+                ProcessExitReasonDiagnostics(available = true, entries = entries)
+            } catch (error: Throwable) {
+                ProcessExitReasonDiagnostics(
+                    available = false,
+                    errorClass = error.javaClass.simpleName,
+                    errorMessage = error.message ?: "no message",
+                )
+            }
+        }
+
+        fun applicationExitReasonLabel(reason: Int): String = when (reason) {
+            ApplicationExitInfo.REASON_UNKNOWN -> "UNKNOWN"
+            ApplicationExitInfo.REASON_EXIT_SELF -> "EXIT_SELF"
+            ApplicationExitInfo.REASON_SIGNALED -> "SIGNALED"
+            ApplicationExitInfo.REASON_LOW_MEMORY -> "LOW_MEMORY"
+            ApplicationExitInfo.REASON_CRASH -> "CRASH"
+            ApplicationExitInfo.REASON_CRASH_NATIVE -> "CRASH_NATIVE"
+            ApplicationExitInfo.REASON_ANR -> "ANR"
+            ApplicationExitInfo.REASON_INITIALIZATION_FAILURE -> "INITIALIZATION_FAILURE"
+            ApplicationExitInfo.REASON_PERMISSION_CHANGE -> "PERMISSION_CHANGE"
+            ApplicationExitInfo.REASON_EXCESSIVE_RESOURCE_USAGE -> "EXCESSIVE_RESOURCE_USAGE"
+            ApplicationExitInfo.REASON_USER_REQUESTED -> "USER_REQUESTED"
+            12 -> "USER_STOPPED"
+            13 -> "DEPENDENCY_DIED"
+            14 -> "OTHER"
+            else -> "UNKNOWN_$reason"
         }
 
         private fun notificationPermissionStatus(context: Context): String = try {

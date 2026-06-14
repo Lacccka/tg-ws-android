@@ -2,9 +2,38 @@ package com.flowseal.tgwsandroid.service
 
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import java.time.Clock
+import java.time.Instant
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+
+data class ProcessExitReasonDiagnostics(
+    val available: Boolean,
+    val errorClass: String? = null,
+    val errorMessage: String? = null,
+    val entries: List<ProcessExitReasonEntry> = emptyList(),
+)
+
+data class ProcessExitReasonEntry(
+    val timestamp: Long,
+    val reasonCode: Int,
+    val reasonLabel: String,
+    val status: Int,
+    val importance: Int,
+    val pss: Long,
+    val rss: Long,
+    val description: String?,
+    val processName: String?,
+    val pid: Int,
+    val traceInputStreamPresent: Boolean,
+)
+
+data class TrimMemoryDiagnostics(
+    val lastTrimMemoryLevel: Int? = null,
+    val lastTrimMemoryTimeMs: Long? = null,
+    val trimMemoryCountByLevel: Map<Int, Long> = emptyMap(),
+    val lastLowMemoryTimeMs: Long? = null,
+)
 
 data class DiagnosticSnapshot(
     val generated: LocalDateTime,
@@ -61,6 +90,10 @@ data class DiagnosticSnapshot(
     val lastWatchdogHeartbeat: String? = null,
     val wakeLockHeld: Boolean = false,
     val previousRun: PreviousRunCheck? = null,
+    val currentProcessStartTime: String? = null,
+    val currentProcessStartReason: String? = null,
+    val historicalExitReasons: ProcessExitReasonDiagnostics = ProcessExitReasonDiagnostics(available = false),
+    val trimMemory: TrimMemoryDiagnostics = TrimMemoryDiagnostics(),
     val previousEffectiveRouteMode: String? = null,
     val lastRouteChangeReason: String = "unknown",
     val lastRouteChangeTimeMs: Long? = null,
@@ -99,6 +132,10 @@ object DiagnosticReportFormatter {
         lastWatchdogHeartbeat: String? = null,
         wakeLockHeld: Boolean = false,
         previousRun: PreviousRunCheck? = null,
+        currentProcessStartTime: String? = null,
+        currentProcessStartReason: String? = null,
+        historicalExitReasons: ProcessExitReasonDiagnostics = ProcessExitReasonDiagnostics(available = false),
+        trimMemory: TrimMemoryDiagnostics = TrimMemoryDiagnostics(),
         previousEffectiveRouteMode: String? = null,
         lastRouteChangeReason: String = "unknown",
         lastRouteChangeTimeMs: Long? = null,
@@ -209,6 +246,10 @@ object DiagnosticReportFormatter {
         lastWatchdogHeartbeat = lastWatchdogHeartbeat,
         wakeLockHeld = wakeLockHeld,
         previousRun = previousRun,
+        currentProcessStartTime = currentProcessStartTime,
+        currentProcessStartReason = currentProcessStartReason,
+        historicalExitReasons = historicalExitReasons,
+        trimMemory = trimMemory,
         previousEffectiveRouteMode = previousEffectiveRouteMode,
         lastRouteChangeReason = lastRouteChangeReason.ifBlank { "unknown" },
         lastRouteChangeTimeMs = lastRouteChangeTimeMs,
@@ -297,6 +338,7 @@ object DiagnosticReportFormatter {
         appendLine("Previous run last stop reason: ${snapshot.previousRun?.lastStopReason ?: "unknown"}")
         appendLine("Previous run stopped at: ${snapshot.previousRun?.stoppedAt ?: "unknown"}")
         appendLine("Previous run marker: ${formatPreviousRun(snapshot.previousRun)}")
+        appendProcessDeathDiagnostics(snapshot)
         val dataSyncWarningApplies = snapshot.declaredForegroundServiceStrategy == "dataSync" && snapshot.targetSdk >= 35
         appendLine("Android 15 dataSync warning applies: $dataSyncWarningApplies")
         if (dataSyncWarningApplies) {
@@ -329,8 +371,69 @@ object DiagnosticReportFormatter {
         "hadMarker=${previous.hadMarker}, wasRunning=${previous.wasRunning}, wasUnexpected=${previous.wasUnexpected}, " +
             "runId=${previous.runId ?: "unknown"}, startedAt=${previous.startedAt ?: "unknown"}, " +
             "lastHeartbeatAt=${previous.lastHeartbeatAt ?: "unknown"}, lastServiceEvent=${previous.lastServiceEvent ?: "unknown"}, " +
-            "lastForegroundStartedAt=${previous.lastForegroundStartedAt ?: "unknown"}, " +
-            "lastStopReason=${previous.lastStopReason ?: "unknown"}, stoppedAt=${previous.stoppedAt ?: "unknown"}"
+            "lastServiceEventAt=${previous.lastServiceEventAt ?: "unknown"}, lastForegroundStartedAt=${previous.lastForegroundStartedAt ?: "unknown"}, " +
+            "lastStopReason=${previous.lastStopReason ?: "unknown"}, stoppedAt=${previous.stoppedAt ?: "unknown"}, " +
+            "wakeLock=${previous.hadWakeLockAtLastMarker?.toString() ?: "unknown"}, foreground=${previous.wasForegroundAtLastMarker?.toString() ?: "unknown"}, " +
+            "network=${previous.networkAtLastMarker ?: "unknown"}, route=${previous.routeAtLastMarker ?: "unknown"}"
+    }
+
+    private fun String?.toEpochMsOrNull(): Long? = runCatching {
+        this?.let { Instant.parse(it).toEpochMilli() }
+    }.getOrNull()
+
+    private fun appendProcessDeathDiagnostics(snapshot: DiagnosticSnapshot) {
+        val previous = snapshot.previousRun
+        val heartbeatMs = previous?.lastHeartbeatAt.toEpochMsOrNull()
+        val stoppedMs = previous?.stoppedAt.toEpochMsOrNull()
+        val likelyDiedAtMs = stoppedMs ?: heartbeatMs
+        val diedAfterHeartbeatMs = if (previous?.wasUnexpected == true && heartbeatMs != null) {
+            (likelyDiedAtMs ?: snapshot.reportGeneratedTimeMs) - heartbeatMs
+        } else {
+            null
+        }?.coerceAtLeast(0L)
+        appendLine("Process death diagnostics:")
+        appendLine("  currentProcessStartTime: ${snapshot.currentProcessStartTime ?: "unknown"}")
+        appendLine("  currentProcessStartReason: ${snapshot.currentProcessStartReason ?: "unknown"}")
+        appendLine("  previousRunWasUnexpected: ${previous?.wasUnexpected?.toString() ?: "unknown"}")
+        appendLine("  previousRunId: ${previous?.runId ?: "unknown"}")
+        appendLine("  previousRunStartedAt: ${previous?.startedAt ?: "unknown"}")
+        appendLine("  previousRunLastHeartbeatAt: ${previous?.lastHeartbeatAt ?: "unknown"}")
+        appendLine("  previousRunLastServiceEvent: ${previous?.lastServiceEvent ?: "unknown"}")
+        appendLine("  previousRunLastServiceEventAt: ${previous?.lastServiceEventAt ?: "unknown"}")
+        appendLine("  previousRunLastForegroundStartedAt: ${previous?.lastForegroundStartedAt ?: "unknown"}")
+        appendLine("  previousRunLastStopReason: ${previous?.lastStopReason ?: "unknown"}")
+        appendLine("  previousRunStoppedAt: ${previous?.stoppedAt ?: "unknown"}")
+        appendLine("  previousRunDiedAfterLastHeartbeatMs: ${diedAfterHeartbeatMs?.toString() ?: "unknown"}")
+        appendLine("  previousRunDiedAfterLastHeartbeatHumanReadable: ${diedAfterHeartbeatMs?.let(::formatDurationMs) ?: "unknown"}")
+        appendLine("  previousRunLikelyDiedAtApprox: ${likelyDiedAtMs?.let { Instant.ofEpochMilli(it).toString() } ?: "unknown"}")
+        appendLine("  previousRunHadWakeLockAtLastMarker: ${previous?.hadWakeLockAtLastMarker?.toString() ?: "unknown"}")
+        appendLine("  previousRunWasForegroundAtLastMarker: ${previous?.wasForegroundAtLastMarker?.toString() ?: "unknown"}")
+        appendLine("  previousRunNetworkAtLastMarker: ${previous?.networkAtLastMarker ?: "unknown"}")
+        appendLine("  previousRunRouteAtLastMarker: ${previous?.routeAtLastMarker ?: "unknown"}")
+        appendLine("  previousRunLastCrashClass: ${previous?.lastCrashClass ?: "unknown"}")
+        appendLine("  previousRunLastCrashMessage: ${maskSecret(previous?.lastCrashMessage ?: "unknown")}")
+        appendLine("  previousRunLastCrashTopFrame: ${previous?.lastCrashTopFrame ?: "unknown"}")
+        appendLine("  lastTrimMemoryLevel: ${snapshot.trimMemory.lastTrimMemoryLevel?.toString() ?: "unknown"}")
+        appendLine("  lastTrimMemoryTimeMs: ${snapshot.trimMemory.lastTrimMemoryTimeMs?.toString() ?: "unknown"}")
+        appendLine("  trimMemoryCountByLevel: ${snapshot.trimMemory.trimMemoryCountByLevel.toSortedMap()}")
+        appendLine("  lastLowMemoryTimeMs: ${snapshot.trimMemory.lastLowMemoryTimeMs?.toString() ?: "unknown"}")
+        appendLine("  historicalExitReasonsAvailable: ${snapshot.historicalExitReasons.available}")
+        appendLine("  historicalExitReasonsErrorClass: ${snapshot.historicalExitReasons.errorClass ?: "none"}")
+        appendLine("  historicalExitReasonsErrorMessage: ${snapshot.historicalExitReasons.errorMessage ?: "none"}")
+        snapshot.historicalExitReasons.entries.forEachIndexed { index, entry ->
+            appendLine("  historicalExitReason[$index]: timestamp=${entry.timestamp}, reasonCode=${entry.reasonCode}, reason=${entry.reasonLabel}, status=${entry.status}, importance=${entry.importance}, pss=${entry.pss}, rss=${entry.rss}, description=${entry.description ?: "none"}, processName=${entry.processName ?: "unknown"}, pid=${entry.pid}, traceInputStreamPresent=${entry.traceInputStreamPresent}")
+        }
+    }
+
+    private fun formatDurationMs(ms: Long): String {
+        val seconds = ms / 1000
+        val minutes = seconds / 60
+        val hours = minutes / 60
+        return when {
+            hours > 0 -> "${hours}h ${minutes % 60}m ${seconds % 60}s"
+            minutes > 0 -> "${minutes}m ${seconds % 60}s"
+            else -> "${seconds}s"
+        }
     }
 
     private fun maskSecret(secret: String): String {

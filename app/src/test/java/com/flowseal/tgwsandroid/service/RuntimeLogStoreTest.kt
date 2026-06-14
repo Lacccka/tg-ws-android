@@ -798,4 +798,131 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("lastEmergencyDirectFallbackReason=direct cooldown"))
     }
 
+    @Test
+    fun processDeathDiagnosticsRenderUnexpectedRunAndHeartbeatDelta() {
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy stopped",
+                endpoint = "127.0.0.1:1443",
+                secret = "super-secret-token",
+                dcSummary = "unknown",
+                batteryOptimization = "unknown",
+                previousRun = PreviousRunCheck(
+                    hadMarker = true,
+                    wasRunning = true,
+                    wasUnexpected = true,
+                    runId = "run-1",
+                    startedAt = "2026-06-04T06:58:00Z",
+                    lastHeartbeatAt = "2026-06-04T06:59:00Z",
+                    lastServiceEvent = "watchdog_heartbeat",
+                    lastServiceEventAt = "2026-06-04T06:59:00Z",
+                    lastForegroundStartedAt = "2026-06-04T06:58:05Z",
+                    lastStopReason = null,
+                    stoppedAt = null,
+                    hadWakeLockAtLastMarker = true,
+                    wasForegroundAtLastMarker = true,
+                    networkAtLastMarker = "Wi-Fi",
+                    routeAtLastMarker = "direct_first",
+                ),
+                reportGeneratedTimeMs = Instant.parse("2026-06-04T07:00:30Z").toEpochMilli(),
+                logs = emptyList(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("Process death diagnostics:"))
+        assertTrue(report.contains("previousRunWasUnexpected: true"))
+        assertTrue(report.contains("previousRunId: run-1"))
+        assertTrue(report.contains("previousRunDiedAfterLastHeartbeatMs: 90000"))
+        assertTrue(report.contains("previousRunDiedAfterLastHeartbeatHumanReadable: 1m 30s"))
+        assertTrue(report.contains("previousRunLikelyDiedAtApprox: 2026-06-04T06:59:00Z"))
+        assertTrue(report.contains("previousRunHadWakeLockAtLastMarker: true"))
+        assertTrue(report.contains("previousRunWasForegroundAtLastMarker: true"))
+        assertTrue(report.contains("previousRunNetworkAtLastMarker: Wi-Fi"))
+        assertTrue(report.contains("previousRunRouteAtLastMarker: direct_first"))
+        assertTrue(report.contains("Secret: supe...oken"))
+    }
+
+    @Test
+    fun processDeathDiagnosticsRenderGracefulStopAsNotUnexpected() {
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy stopped",
+                endpoint = "127.0.0.1:1443",
+                secret = "dd40...3da8",
+                dcSummary = "unknown",
+                batteryOptimization = "unknown",
+                previousRun = PreviousRunCheck(
+                    hadMarker = true,
+                    wasRunning = false,
+                    wasUnexpected = false,
+                    runId = "run-1",
+                    startedAt = "2026-06-04T06:58:00Z",
+                    lastHeartbeatAt = "2026-06-04T06:59:00Z",
+                    lastServiceEvent = "stopped",
+                    lastStopReason = "ui",
+                    stoppedAt = "2026-06-04T07:00:00Z",
+                ),
+                logs = emptyList(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("previousRunWasUnexpected: false"))
+        assertTrue(report.contains("previousRunLastStopReason: ui"))
+        assertTrue(report.contains("previousRunDiedAfterLastHeartbeatMs: unknown"))
+    }
+
+    @Test
+    fun historicalExitProviderFailureAndTrimMemoryCountersRender() {
+        val report = DiagnosticReportFormatter.format(
+            DiagnosticReportFormatter.snapshot(
+                status = "Proxy stopped",
+                endpoint = "127.0.0.1:1443",
+                secret = "dd40...3da8",
+                dcSummary = "unknown",
+                batteryOptimization = "unknown",
+                historicalExitReasons = ProcessExitReasonDiagnostics(
+                    available = false,
+                    errorClass = "SecurityException",
+                    errorMessage = "permission denied",
+                ),
+                trimMemory = TrimMemoryDiagnostics(
+                    lastTrimMemoryLevel = 5,
+                    lastTrimMemoryTimeMs = 1234L,
+                    trimMemoryCountByLevel = mapOf(5 to 2L, 10 to 1L),
+                    lastLowMemoryTimeMs = 5678L,
+                ),
+                logs = emptyList(),
+                clock = fixedClock,
+            ),
+        )
+
+        assertTrue(report.contains("historicalExitReasonsAvailable: false"))
+        assertTrue(report.contains("historicalExitReasonsErrorClass: SecurityException"))
+        assertTrue(report.contains("historicalExitReasonsErrorMessage: permission denied"))
+        assertTrue(report.contains("lastTrimMemoryLevel: 5"))
+        assertTrue(report.contains("trimMemoryCountByLevel: {5=2, 10=1}"))
+        assertTrue(report.contains("lastLowMemoryTimeMs: 5678"))
+    }
+
+    @Test
+    fun processExitReasonMappingUsesReadableLabels() {
+        assertEquals("UNKNOWN", ProxyForegroundService.State.applicationExitReasonLabel(0))
+        assertEquals("EXIT_SELF", ProxyForegroundService.State.applicationExitReasonLabel(1))
+        assertEquals("SIGNALED", ProxyForegroundService.State.applicationExitReasonLabel(2))
+        assertEquals("LOW_MEMORY", ProxyForegroundService.State.applicationExitReasonLabel(3))
+        assertEquals("CRASH", ProxyForegroundService.State.applicationExitReasonLabel(4))
+        assertEquals("CRASH_NATIVE", ProxyForegroundService.State.applicationExitReasonLabel(5))
+        assertEquals("ANR", ProxyForegroundService.State.applicationExitReasonLabel(6))
+        assertEquals("INITIALIZATION_FAILURE", ProxyForegroundService.State.applicationExitReasonLabel(7))
+        assertEquals("PERMISSION_CHANGE", ProxyForegroundService.State.applicationExitReasonLabel(8))
+        assertEquals("EXCESSIVE_RESOURCE_USAGE", ProxyForegroundService.State.applicationExitReasonLabel(9))
+        assertEquals("USER_REQUESTED", ProxyForegroundService.State.applicationExitReasonLabel(10))
+        assertEquals("USER_STOPPED", ProxyForegroundService.State.applicationExitReasonLabel(12))
+        assertEquals("DEPENDENCY_DIED", ProxyForegroundService.State.applicationExitReasonLabel(13))
+        assertEquals("OTHER", ProxyForegroundService.State.applicationExitReasonLabel(14))
+        assertEquals("UNKNOWN_99", ProxyForegroundService.State.applicationExitReasonLabel(99))
+    }
+
 }
