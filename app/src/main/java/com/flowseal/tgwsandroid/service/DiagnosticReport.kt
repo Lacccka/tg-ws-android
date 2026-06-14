@@ -381,13 +381,13 @@ object DiagnosticReportFormatter {
         this?.let { Instant.parse(it).toEpochMilli() }
     }.getOrNull()
 
-    private fun appendProcessDeathDiagnostics(snapshot: DiagnosticSnapshot) {
+    private fun StringBuilder.appendProcessDeathDiagnostics(snapshot: DiagnosticSnapshot) {
         val previous = snapshot.previousRun
         val heartbeatMs = previous?.lastHeartbeatAt.toEpochMsOrNull()
         val stoppedMs = previous?.stoppedAt.toEpochMsOrNull()
         val likelyDiedAtMs = stoppedMs ?: heartbeatMs
         val diedAfterHeartbeatMs = if (previous?.wasUnexpected == true && heartbeatMs != null) {
-            (likelyDiedAtMs ?: snapshot.reportGeneratedTimeMs) - heartbeatMs
+            (stoppedMs ?: snapshot.reportGeneratedTimeMs) - heartbeatMs
         } else {
             null
         }?.coerceAtLeast(0L)
