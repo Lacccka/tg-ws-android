@@ -1106,6 +1106,9 @@ class ProxyServer(
                 logger.log("DC${parsed.dcId} no route available after CF-only attempts")
             }
             NetworkRouteMode.CF_FIRST -> {
+                if (shouldAttemptActiveWifiDirectRecoveryBeforeCf()) {
+                    if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return
+                }
                 if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
                 val currentGenerationBeforeFallback = routeGeneration.get()
                 if (currentGenerationBeforeFallback != routeAttemptStartGeneration) {
@@ -2037,6 +2040,18 @@ class ProxyServer(
             return true
         }
         return false
+    }
+
+    private fun shouldAttemptActiveWifiDirectRecoveryBeforeCf(): Boolean {
+        val snapshot = routeState.snapshot()
+        if (snapshot.configuredRouteMode != NetworkRouteMode.AUTO) return false
+        if (snapshot.effectiveRouteMode != NetworkRouteMode.CF_FIRST) return false
+        if (!isWifi(currentNetworkStatus)) return false
+        val now = System.currentTimeMillis()
+        if (now > wifiDirectRecoveryUntilMs) return false
+        if (!directRouteHealth.isChecking() && !directRouteHealth.hasRecentSuccess(WIFI_DIRECT_RECOVERY_RECENT_SUCCESS_MS)) return false
+        lastCfFirstRecoveryReason.set("active Wi-Fi direct probe/checking before CF")
+        return true
     }
 
     private fun isStalePoolRelated(reason: String?): Boolean =
