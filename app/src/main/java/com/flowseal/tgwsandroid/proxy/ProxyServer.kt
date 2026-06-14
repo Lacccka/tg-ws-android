@@ -1106,9 +1106,6 @@ class ProxyServer(
                 logger.log("DC${parsed.dcId} no route available after CF-only attempts")
             }
             NetworkRouteMode.CF_FIRST -> {
-                if (shouldAttemptWifiDirectRecovery(routeAttemptStartGeneration)) {
-                    if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return
-                }
                 if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
                 val currentGenerationBeforeFallback = routeGeneration.get()
                 if (currentGenerationBeforeFallback != routeAttemptStartGeneration) {
@@ -1117,9 +1114,9 @@ class ProxyServer(
                         "DC${parsed.dcId} route attempt network changed before fallback selection: " +
                             "$routeAttemptStartNetwork/$routeAttemptStartGeneration -> $currentNetworkStatus/$currentGenerationBeforeFallback; re-evaluating route policy",
                     )
-                    if (shouldAttemptWifiDirectRecovery(routeAttemptStartGeneration)) {
-                        if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return
-                    }
+                }
+                if (shouldAttemptWifiDirectRecovery(routeAttemptStartGeneration)) {
+                    if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return
                 }
                 if (routeState.snapshot().effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST && isWifi(currentNetworkStatus)) {
                     logger.log("DC${parsed.dcId} route re-evaluated to direct_first after network change; trying cold direct")
