@@ -2398,6 +2398,100 @@ class ProxyServerTest {
         assertTrue(stats.lastEffectiveRouteModeUpdateTimeMs != null && stats.lastEffectiveRouteModeUpdateTimeMs > 0L)
     }
 
+
+    @Test
+    fun reconnectBurstAfterIdleWithPoolMissesMarksClientExperienceBurst() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ -> throw IOException("direct unavailable") },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        repeat(4) {
+            server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        }
+        waitUntil { proxy.stats().recentAcceptedHandshakeCount >= 4L && proxy.stats().poolMisses >= 4L }
+        proxy.stop()
+
+        val experience = proxy.stats().clientExperience
+        assertTrue(experience.likelyReconnectBurst)
+        assertTrue(experience.recentPoolMisses >= 4L)
+        assertEquals(0L, proxy.stats().recentInvalidHandshakeCount)
+    }
+
+    @Test
+    fun dcWithoutDirectRedirectAndCfDisabledRecordsUnsupportedAndNoRouteByDc() {
+        val client = FakeTcpClientTransport(buildClientHandshake(5, RelayInit.PROTO_TAG_ABRIDGED))
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(dcRedirects = mapOf(2 to "203.0.113.2", 4 to "203.0.113.4"), cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        val experience = proxy.stats().clientExperience
+        assertEquals(1L, experience.recentUnsupportedDcByDc[5])
+        assertEquals(1L, experience.recentNoRouteByDc[5])
+    }
+
+    @Test
+    fun manyConnectionResetsAfterAcceptedHandshakesCanMarkTelegramDisabledProxy() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RecordingConnector(FakeWebSocketBinaryStream(sendError = SocketException("Connection reset"))),
+            config = baseConfig().copy(cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        repeat(4) {
+            server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        }
+        waitUntil { proxy.stats().clientExperience.likelyTelegramDisabledProxy }
+        val experience = proxy.stats().clientExperience
+        proxy.stop()
+
+        assertTrue(experience.likelyTelegramDisabledProxy)
+        assertFalse(proxy.stats().badHandshakeStormRecent)
+    }
+
+    @Test
+    fun normalSuccessfulDirectRouteDoesNotMarkReconnectBurst() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(server = server, connector = RecordingConnector(FakeWebSocketBinaryStream()))
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertFalse(proxy.stats().clientExperience.likelyReconnectBurst)
+    }
+
+    @Test
+    fun invalidHandshakeStormRemainsSeparateFromClientExperienceDiagnostics() {
+        val invalid = handshakeVector("invalid_wrong_secret").getString("handshake_hex").hexToBytes()
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(server = server)
+
+        proxy.start()
+        repeat(120) { server.enqueue(FakeTcpClientTransport(invalid)) }
+        waitUntil { proxy.stats().recentInvalidHandshakeCount >= 100L }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertTrue(stats.badHandshakeStormRecent)
+        assertFalse(stats.clientExperience.likelyReconnectBurst)
+        assertEquals(0L, stats.clientExperience.recentAcceptedHandshakes)
+    }
+
     @Test
     fun protoTagsMapToExpectedSplitterProtoInts() {
         assertEquals(MsgSplitter.PROTO_ABRIDGED_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_ABRIDGED))

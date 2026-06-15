@@ -362,6 +362,7 @@ object DiagnosticReportFormatter {
         appendLine("Runtime log tail until ms: ${snapshot.runtimeLogTailUntilMs?.toString() ?: "unknown"}")
         appendLine("Last effective route mode update time ms: ${snapshot.lastEffectiveRouteModeUpdateTimeMs?.toString() ?: "unknown"}")
         appendLine("Last route used update time ms: ${snapshot.lastRouteUsedUpdateTimeMs?.toString() ?: "unknown"}")
+        appendClientExperienceDiagnostics(snapshot.stats)
         appendLine("Stats: ${formatStats(snapshot.stats)}")
         appendCfHealth(snapshot.stats)
         appendLine("---")
@@ -485,6 +486,22 @@ object DiagnosticReportFormatter {
             "lastRouteUsedUpdateTimeMs=${stats.lastRouteUsedUpdateTimeMs ?: "unknown"}, " +
             "secondsSinceLastAcceptedHandshake=${stats.secondsSinceLastAcceptedHandshake?.toString() ?: "unknown"}, " +
             "secondsSinceLastSuccessfulRoute=${stats.secondsSinceLastSuccessfulRoute?.toString() ?: "unknown"}, " +
+            "clientExperienceLikelyReconnectBurst=${stats.clientExperience.likelyReconnectBurst}, " +
+            "clientExperienceLikelyTelegramDisabledProxy=${stats.clientExperience.likelyTelegramDisabledProxy}, " +
+            "clientExperienceRecentAcceptedHandshakes=${stats.clientExperience.recentAcceptedHandshakes}, " +
+            "clientExperienceRecentClientClosedSessions=${stats.clientExperience.recentClientClosedSessions}, " +
+            "clientExperienceRecentVeryShortClientClosedSessions=${stats.clientExperience.recentVeryShortClientClosedSessions}, " +
+            "clientExperienceRecentShortRemoteEofSessions=${stats.clientExperience.recentShortRemoteEofSessions}, " +
+            "clientExperienceRecentConnectionResetSessions=${stats.clientExperience.recentConnectionResetSessions}, " +
+            "clientExperienceRecentDirectTimeouts=${stats.clientExperience.recentDirectTimeouts}, " +
+            "clientExperienceRecentPoolMisses=${stats.clientExperience.recentPoolMisses}, " +
+            "clientExperienceRecentPoolRefillErrors=${stats.clientExperience.recentPoolRefillErrors}, " +
+            "clientExperienceRecentPoolStale=${stats.clientExperience.recentPoolStale}, " +
+            "clientExperienceRecentCfQueueControlledFailures=${stats.clientExperience.recentCfQueueControlledFailures}, " +
+            "clientExperienceRecentCfConnectQueueTimeouts=${stats.clientExperience.recentCfConnectQueueTimeouts}, " +
+            "clientExperienceRecentUnsupportedDcByDc=${formatLongByDc(stats.clientExperience.recentUnsupportedDcByDc)}, " +
+            "clientExperienceRecentNoRouteByDc=${formatLongByDc(stats.clientExperience.recentNoRouteByDc)}, " +
+            "clientExperienceTimeToFirstSuccessfulRouteAfterIdleMs=${stats.clientExperience.timeToFirstSuccessfulRouteAfterIdleMs ?: "unknown"}, " +
             "handshakeDiagnosticState=${stats.handshakeDiagnosticState}, " +
             "handshakeDiagnosticReason=${stats.handshakeDiagnosticReason}, " +
             "recentHandshakeDiagnostic=${stats.handshakeDiagnosticReason}, " +
@@ -606,6 +623,25 @@ object DiagnosticReportFormatter {
             "networkSettlingStaleAttemptsIgnored=${stats.networkSettlingStaleAttemptsIgnored}, " +
             "networkSettlingUntilMs=${stats.networkSettlingUntilMs}, lastNetworkLostAtMs=${stats.lastNetworkLostAtMs}, " +
             "lastNetworkAvailableAtMs=${stats.lastNetworkAvailableAtMs}, networkGeneration=${stats.networkGeneration}"
+    }
+
+    private fun StringBuilder.appendClientExperienceDiagnostics(stats: ProxyServerStats?) {
+        val experience = stats?.clientExperience
+        appendLine("Client experience diagnostics:")
+        appendLine("  likelyReconnectBurst: ${experience?.likelyReconnectBurst?.toString() ?: "unknown"}")
+        appendLine("  likelyTelegramDisabledProxy: ${experience?.likelyTelegramDisabledProxy?.toString() ?: "unknown"}")
+        appendLine("  recentAcceptedHandshakes: ${experience?.recentAcceptedHandshakes?.toString() ?: "unknown"}")
+        appendLine("  recentClientClosedSessions: ${experience?.recentClientClosedSessions?.toString() ?: "unknown"}")
+        appendLine("  recentVeryShortClientClosedSessions: ${experience?.recentVeryShortClientClosedSessions?.toString() ?: "unknown"}")
+        appendLine("  recentShortRemoteEofSessions: ${experience?.recentShortRemoteEofSessions?.toString() ?: "unknown"}")
+        appendLine("  recentConnectionResetSessions: ${experience?.recentConnectionResetSessions?.toString() ?: "unknown"}")
+        appendLine("  recentDirectTimeouts: ${experience?.recentDirectTimeouts?.toString() ?: "unknown"}")
+        appendLine("  recentPoolMisses: ${experience?.recentPoolMisses?.toString() ?: "unknown"}")
+        appendLine("  recentPoolRefillErrors: ${experience?.recentPoolRefillErrors?.toString() ?: "unknown"}")
+        appendLine("  recentPoolStale: ${experience?.recentPoolStale?.toString() ?: "unknown"}")
+        appendLine("  recentUnsupportedDcByDc: ${experience?.recentUnsupportedDcByDc?.let(::formatLongByDc) ?: "unknown"}")
+        appendLine("  recentNoRouteByDc: ${experience?.recentNoRouteByDc?.let(::formatLongByDc) ?: "unknown"}")
+        appendLine("  timeToFirstSuccessfulRouteAfterIdleMs: ${experience?.timeToFirstSuccessfulRouteAfterIdleMs?.toString() ?: "unknown"}")
     }
 
     private fun StringBuilder.appendCfHealth(stats: ProxyServerStats?) {

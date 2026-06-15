@@ -87,6 +87,26 @@ data class HandshakeDiagnostic(
 
 /** Immutable snapshot of lightweight local proxy counters. */
 
+
+data class ClientExperienceDiagnostics(
+    val likelyReconnectBurst: Boolean = false,
+    val likelyTelegramDisabledProxy: Boolean = false,
+    val recentAcceptedHandshakes: Long = 0,
+    val recentClientClosedSessions: Long = 0,
+    val recentVeryShortClientClosedSessions: Long = 0,
+    val recentShortRemoteEofSessions: Long = 0,
+    val recentConnectionResetSessions: Long = 0,
+    val recentDirectTimeouts: Long = 0,
+    val recentPoolMisses: Long = 0,
+    val recentPoolRefillErrors: Long = 0,
+    val recentPoolStale: Long = 0,
+    val recentUnsupportedDcByDc: Map<Int, Long> = emptyMap(),
+    val recentNoRouteByDc: Map<Int, Long> = emptyMap(),
+    val recentCfQueueControlledFailures: Long = 0,
+    val recentCfConnectQueueTimeouts: Long = 0,
+    val timeToFirstSuccessfulRouteAfterIdleMs: Long? = null,
+)
+
 data class CfFirstRecoveryDiagnostics(
     val wifiAttempts: Long = 0,
     val wifiSuccesses: Long = 0,
@@ -276,6 +296,7 @@ data class ProxyServerStats(
     val lastAcceptedHandshakeTimeMs: Long = 0,
     val lastSuccessfulRouteTimeMs: Long = 0,
     val networkGeneration: Long = 0,
+    val clientExperience: ClientExperienceDiagnostics = ClientExperienceDiagnostics(),
 ) {
     val badHandshakeRatio: Double
         get() = if (connectionsTotal > 0L) connectionsBad.toDouble() / connectionsTotal.toDouble() else 0.0
@@ -575,6 +596,21 @@ class ProxyServer(
     private val connectionsBad = AtomicLong(0)
     private val recentInvalidHandshakeTimes = ConcurrentLinkedDeque<Long>()
     private val recentAcceptedHandshakeTimes = ConcurrentLinkedDeque<Long>()
+    private val recentIdleWaveAcceptedTimes = ConcurrentLinkedDeque<Long>()
+    private val recentClientClosedTimes = ConcurrentLinkedDeque<Long>()
+    private val recentVeryShortClientClosedTimes = ConcurrentLinkedDeque<Long>()
+    private val recentShortRemoteEofTimes = ConcurrentLinkedDeque<Long>()
+    private val recentConnectionResetTimes = ConcurrentLinkedDeque<Long>()
+    private val recentDirectTimeoutTimes = ConcurrentLinkedDeque<Long>()
+    private val recentPoolMissTimes = ConcurrentLinkedDeque<Long>()
+    private val recentPoolRefillErrorTimes = ConcurrentLinkedDeque<Long>()
+    private val recentPoolStaleTimes = ConcurrentLinkedDeque<Long>()
+    private val recentCfQueueControlledFailureTimes = ConcurrentLinkedDeque<Long>()
+    private val recentCfConnectQueueTimeoutTimes = ConcurrentLinkedDeque<Long>()
+    private val recentUnsupportedDcTimes = ConcurrentHashMap<Int, ConcurrentLinkedDeque<Long>>()
+    private val recentNoRouteTimes = ConcurrentHashMap<Int, ConcurrentLinkedDeque<Long>>()
+    private val currentIdleWaveStartMs = AtomicLong(0)
+    private val lastTimeToFirstSuccessfulRouteAfterIdleMs = AtomicLong(-1)
     private val lastInvalidHandshakeTimeMs = AtomicLong(0)
     private val lastAcceptedHandshakeTimeMs = AtomicLong(0)
     private val lastSuccessfulRouteTimeMs = AtomicLong(0)
@@ -671,7 +707,7 @@ class ProxyServer(
         poolSize = config.poolSize,
         connector = webSocketConnector,
         logger = logger,
-        onRefillError = { poolRefillErrors.incrementAndGet() },
+        onRefillError = { poolRefillErrors.incrementAndGet(); recordRecentEvent(recentPoolRefillErrorTimes) },
         onRefillAttempt = { directAttempts.incrementAndGet() },
         onRefillCancelled = { count -> poolRefillsCancelled.addAndGet(count.toLong()) },
         onResultDiscardedAfterRouteChange = { poolResultsDiscardedAfterRouteChange.incrementAndGet() },
@@ -909,6 +945,7 @@ class ProxyServer(
             lastAcceptedHandshakeTimeMs = lastAcceptedHandshakeTimeMs.get(),
             lastSuccessfulRouteTimeMs = lastSuccessfulRouteTimeMs.get(),
             networkGeneration = routeGeneration.get(),
+            clientExperience = buildClientExperienceDiagnostics(snapshotTimeMs),
         )
     }
 
@@ -1016,8 +1053,10 @@ class ProxyServer(
             } ?: continue
 
             connectionsTotal.incrementAndGet()
+            val wasIdle = connectionsActive.get() == 0
             activeClients.add(client)
             connectionsActive.incrementAndGet()
+            if (wasIdle) recordRecentEvent(recentIdleWaveAcceptedTimes)
             Thread({ handleClientAndClose(client) }, "ProxyServer-client-${client.remoteLabel}").also {
                 it.isDaemon = true
                 it.start()
@@ -1093,6 +1132,8 @@ class ProxyServer(
             if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) {
                 return
             }
+            recordUnsupportedDc(parsed.dcId)
+            recordNoRoute(parsed.dcId)
             markBad("Unsupported DC ${parsed.dcId} from ${client.remoteLabel}; no direct redirect or CF proxy route available")
             return
         }
@@ -1103,6 +1144,7 @@ class ProxyServer(
                 if (cfDomainHealth.mobileRescueRecommended(parsed.dcId)) {
                     logger.log("DC${parsed.dcId} CF exhausted but CF_ONLY forbids direct rescue")
                 }
+                recordNoRoute(parsed.dcId)
                 logger.log("DC${parsed.dcId} no route available after CF-only attempts")
             }
             NetworkRouteMode.CF_FIRST -> {
@@ -1150,11 +1192,13 @@ class ProxyServer(
                     }
                 }
                 if (tryEmergencyDirectFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration, cfFirstDirectFallbackAttempted)) return
+                recordNoRoute(parsed.dcId)
                 logger.log("DC${parsed.dcId} no route available after CF-first attempts")
             }
             NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> {
                 if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = true, timeoutMs = RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)) return
                 if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
+                recordNoRoute(parsed.dcId)
                 logger.log("DC${parsed.dcId} no route available after direct WebSocket attempts")
                 downgradeDirectRouteBecauseHealthDegraded("no route available after direct attempts")
             }
@@ -1422,7 +1466,7 @@ class ProxyServer(
             webSocket
         } catch (error: Throwable) {
             wsConnectErrors.incrementAndGet()
-            if (isTimeout(error)) directTimeouts.incrementAndGet()
+            if (isTimeout(error)) { directTimeouts.incrementAndGet(); recordRecentEvent(recentDirectTimeoutTimes) }
             val detail = websocketFailureDetail(error)
             finishMobileDirectRescueFailure(parsed.dcId, detail)
             logger.log("DC${parsed.dcId} mobile direct rescue failed: $detail")
@@ -1482,6 +1526,7 @@ class ProxyServer(
                     return WebSocketRoute(pooled, "direct-pool")
                 }
                 poolMisses.incrementAndGet()
+                recordRecentEvent(recentPoolMissTimes)
                 logger.log("DC${parsed.dcId} direct WS pool miss")
             }
         }
@@ -1544,7 +1589,7 @@ class ProxyServer(
                 return webSocket
             } catch (error: Throwable) {
                 wsConnectErrors.incrementAndGet()
-                if (isTimeout(error)) directTimeouts.incrementAndGet()
+                if (isTimeout(error)) { directTimeouts.incrementAndGet(); recordRecentEvent(recentDirectTimeoutTimes) }
                 val detail = websocketFailureDetail(error)
                 failures.add("$domain ($detail)")
                 logger.log("DC${parsed.dcId} WebSocket attempt via $domain failed: $detail")
@@ -1668,6 +1713,8 @@ class ProxyServer(
                 CfConnectAcquireResult.ACQUIRED -> Unit
                 CfConnectAcquireResult.QUEUE_TIMEOUT -> {
                     logCfPressureLevelChanges()
+                    recordRecentEvent(recentCfConnectQueueTimeoutTimes)
+                    recordRecentEvent(recentCfQueueControlledFailureTimes)
                     logger.log("CF connect queue controlled failure DC${parsed.dcId} domain=$baseDomain")
                     if (selectionPlan.allDomainsInCooldownFallback) {
                         cfDomainHealth.recordAllCooldownSingleAttemptFailure()
@@ -1740,7 +1787,7 @@ class ProxyServer(
                 lastCfDomain = domain
                 val circuitReset = cfDomainHealth.recordSuccess(parsed.dcId, parsed.isMedia, baseDomain, latencyMs)
                 logCfPressureLevelChanges()
-                lastSuccessfulRouteTimeMs.set(System.currentTimeMillis())
+                recordSuccessfulRoute()
                 if (circuitReset) logger.log("CF all-cooldown circuit reset after success for DC${parsed.dcId}")
                 logger.log("CF pressure reset/relaxed after success for DC${parsed.dcId} $baseDomain")
                 logger.log("CF domain success DC${parsed.dcId} $baseDomain latencyMs=$latencyMs")
@@ -1800,7 +1847,7 @@ class ProxyServer(
             lastRouteUsed = route.type
             lastRouteUsedUpdateTimeMs.set(System.currentTimeMillis())
             route.stream.send(relayInit)
-            lastSuccessfulRouteTimeMs.set(System.currentTimeMillis())
+            recordSuccessfulRoute()
             bridgeStarted = true
             bridgeRunner.run(client, route.stream, cryptoContext, splitter, counters)
         } catch (error: Throwable) {
@@ -1841,6 +1888,7 @@ class ProxyServer(
         val retryableStalePooled = stalePooled && isRetrySafeStalePooledRoute(counters, failedBeforeBridge)
         if (stalePooled) {
             poolStale.incrementAndGet()
+            recordRecentEvent(recentPoolStaleTimes)
             recordDirectPoolStaleForHealth()
             logger.log(
                 "DC${parsed.dcId} direct-pool stale route detected: $reason " +
@@ -1909,7 +1957,11 @@ class ProxyServer(
         when (classification.reason) {
             "timeout" -> sessionTimeouts.incrementAndGet()
             "remote_eof", "remote_idle_eof" -> recordRemoteEof(classification, durationMs, route, dc, media)
-            "client_closed" -> sessionClientClosed.incrementAndGet()
+            "client_closed" -> {
+                sessionClientClosed.incrementAndGet()
+                recordRecentEvent(recentClientClosedTimes)
+                if (durationMs <= VERY_SHORT_SESSION_MS) recordRecentEvent(recentVeryShortClientClosedTimes)
+            }
             "socket_closed" -> sessionSocketClosed.incrementAndGet()
             "connection_reset" -> recordConnectionReset(route, dc, media)
             "connection_timed_out" -> recordConnectionTimedOut(route, dc, media)
@@ -1919,6 +1971,7 @@ class ProxyServer(
 
     private fun recordConnectionReset(route: String, dc: Int, media: Boolean) {
         sessionConnectionReset.incrementAndGet()
+        recordRecentEvent(recentConnectionResetTimes)
         lastConnectionResetTimeMs.set(System.currentTimeMillis())
         lastConnectionResetRoute.set(route)
         lastConnectionResetDc.set(dc)
@@ -1946,6 +1999,7 @@ class ProxyServer(
             sessionRemoteIdleEof.incrementAndGet()
         } else {
             sessionRemoteEofShort.incrementAndGet()
+            if (durationMs <= SHORT_REMOTE_EOF_SESSION_MS) recordRecentEvent(recentShortRemoteEofTimes)
         }
         lastRemoteEofTimeMs.set(System.currentTimeMillis())
         lastRemoteEofDurationMs.set(durationMs)
@@ -1973,13 +2027,87 @@ class ProxyServer(
     private fun recordAcceptedHandshake(now: Long = System.currentTimeMillis()) {
         lastAcceptedHandshakeTimeMs.set(now)
         recentAcceptedHandshakeTimes.addLast(now)
+        if (recentIdleWaveAcceptedTimes.peekLast()?.let { now - it <= CLIENT_EXPERIENCE_RECENT_WINDOW_MS } == true) {
+            currentIdleWaveStartMs.compareAndSet(0L, recentIdleWaveAcceptedTimes.peekLast() ?: now)
+            lastTimeToFirstSuccessfulRouteAfterIdleMs.set(-1L)
+        }
         pruneRecentHandshakeWindows(now)
+    }
+
+    private fun recordSuccessfulRoute(now: Long = System.currentTimeMillis()) {
+        lastSuccessfulRouteTimeMs.set(now)
+        val idleStart = currentIdleWaveStartMs.get()
+        if (idleStart > 0L && lastTimeToFirstSuccessfulRouteAfterIdleMs.compareAndSet(-1L, (now - idleStart).coerceAtLeast(0L))) {
+            currentIdleWaveStartMs.set(0L)
+        }
+    }
+
+    private fun recordRecentEvent(events: ConcurrentLinkedDeque<Long>, now: Long = System.currentTimeMillis()) {
+        events.addLast(now)
+        pruneDeque(events, now - CLIENT_EXPERIENCE_RECENT_WINDOW_MS)
+    }
+
+    private fun recordUnsupportedDc(dcId: Int, now: Long = System.currentTimeMillis()) {
+        recordRecentEvent(recentUnsupportedDcTimes.getOrPut(dcId) { ConcurrentLinkedDeque() }, now)
+    }
+
+    private fun recordNoRoute(dcId: Int, now: Long = System.currentTimeMillis()) {
+        recordRecentEvent(recentNoRouteTimes.getOrPut(dcId) { ConcurrentLinkedDeque() }, now)
     }
 
     private fun pruneRecentHandshakeWindows(now: Long) {
         val cutoff = now - ProxyServerStats.BAD_HANDSHAKE_RECENT_WINDOW_MS
-        while (recentInvalidHandshakeTimes.peekFirst()?.let { it < cutoff } == true) recentInvalidHandshakeTimes.pollFirst()
-        while (recentAcceptedHandshakeTimes.peekFirst()?.let { it < cutoff } == true) recentAcceptedHandshakeTimes.pollFirst()
+        pruneDeque(recentInvalidHandshakeTimes, cutoff)
+        pruneDeque(recentAcceptedHandshakeTimes, cutoff)
+        pruneClientExperienceWindows(now)
+    }
+
+    private fun pruneClientExperienceWindows(now: Long) {
+        val cutoff = now - CLIENT_EXPERIENCE_RECENT_WINDOW_MS
+        listOf(
+            recentIdleWaveAcceptedTimes, recentClientClosedTimes, recentVeryShortClientClosedTimes,
+            recentShortRemoteEofTimes, recentConnectionResetTimes, recentDirectTimeoutTimes, recentPoolMissTimes,
+            recentPoolRefillErrorTimes, recentPoolStaleTimes, recentCfQueueControlledFailureTimes, recentCfConnectQueueTimeoutTimes,
+        ).forEach { pruneDeque(it, cutoff) }
+        recentUnsupportedDcTimes.values.forEach { pruneDeque(it, cutoff) }
+        recentNoRouteTimes.values.forEach { pruneDeque(it, cutoff) }
+    }
+
+    private fun pruneDeque(events: ConcurrentLinkedDeque<Long>, cutoff: Long) {
+        while (events.peekFirst()?.let { it < cutoff } == true) events.pollFirst()
+    }
+
+    private fun buildClientExperienceDiagnostics(now: Long): ClientExperienceDiagnostics {
+        pruneClientExperienceWindows(now)
+        val unsupported = recentUnsupportedDcTimes.mapValues { it.value.size.toLong() }.filterValues { it > 0L }.toSortedMap()
+        val noRoute = recentNoRouteTimes.mapValues { it.value.size.toLong() }.filterValues { it > 0L }.toSortedMap()
+        val accepted = recentAcceptedHandshakeTimes.size.toLong()
+        val qualitySignals = recentPoolMissTimes.isNotEmpty() || recentVeryShortClientClosedTimes.isNotEmpty() ||
+            recentShortRemoteEofTimes.isNotEmpty() || recentDirectTimeoutTimes.isNotEmpty() || unsupported.isNotEmpty() || noRoute.isNotEmpty() ||
+            recentCfQueueControlledFailureTimes.isNotEmpty() || recentCfConnectQueueTimeoutTimes.isNotEmpty()
+        val likelyBurst = recentIdleWaveAcceptedTimes.isNotEmpty() && accepted >= RECONNECT_BURST_MIN_HANDSHAKES && qualitySignals
+        val disruptiveEnds = recentVeryShortClientClosedTimes.size + recentShortRemoteEofTimes.size + recentConnectionResetTimes.size
+        val routeAgeMs = lastSuccessfulRouteTimeMs.get().takeIf { it > 0L }?.let { (now - it).coerceAtLeast(0L) }
+        val likelyDisabled = accepted >= TELEGRAM_DISABLED_MIN_HANDSHAKES && disruptiveEnds >= TELEGRAM_DISABLED_MIN_DISRUPTIVE_ENDS &&
+            (routeAgeMs == null || routeAgeMs >= TELEGRAM_DISABLED_NO_ROUTE_MS) && connectionsActive.get() == 0 && running.get()
+        return ClientExperienceDiagnostics(
+            likelyReconnectBurst = likelyBurst,
+            likelyTelegramDisabledProxy = likelyDisabled,
+            recentAcceptedHandshakes = accepted,
+            recentClientClosedSessions = recentClientClosedTimes.size.toLong(),
+            recentVeryShortClientClosedSessions = recentVeryShortClientClosedTimes.size.toLong(),
+            recentShortRemoteEofSessions = recentShortRemoteEofTimes.size.toLong(),
+            recentConnectionResetSessions = recentConnectionResetTimes.size.toLong(),
+            recentDirectTimeouts = recentDirectTimeoutTimes.size.toLong(),
+            recentPoolMisses = recentPoolMissTimes.size.toLong(),
+            recentPoolRefillErrors = recentPoolRefillErrorTimes.size.toLong(),
+            recentPoolStale = recentPoolStaleTimes.size.toLong(),
+            recentUnsupportedDcByDc = unsupported,
+            recentNoRouteByDc = noRoute,
+            recentCfQueueControlledFailures = recentCfQueueControlledFailureTimes.size.toLong(),
+            recentCfConnectQueueTimeouts = recentCfConnectQueueTimeoutTimes.size.toLong(),
+            timeToFirstSuccessfulRouteAfterIdleMs = lastTimeToFirstSuccessfulRouteAfterIdleMs.get().takeIf { it >= 0L },
+        )
     }
 
     private fun effectiveRouteMode(): NetworkRouteMode = routeState.effectiveRouteMode
@@ -2215,6 +2343,13 @@ class ProxyServer(
 
     companion object {
         const val DEFAULT_WS_PATH = "/apiws"
+        const val CLIENT_EXPERIENCE_RECENT_WINDOW_MS: Long = 60_000L
+        const val RECONNECT_BURST_MIN_HANDSHAKES: Long = 4L
+        const val VERY_SHORT_SESSION_MS: Long = 2_000L
+        const val SHORT_REMOTE_EOF_SESSION_MS: Long = 5_000L
+        const val TELEGRAM_DISABLED_MIN_HANDSHAKES: Long = 4L
+        const val TELEGRAM_DISABLED_MIN_DISRUPTIVE_ENDS: Int = 3
+        const val TELEGRAM_DISABLED_NO_ROUTE_MS: Long = 30_000L
         const val MOBILE_DIRECT_RESCUE_FAILURE_COOLDOWN_MS: Long = 45_000L
         const val MOBILE_DIRECT_RESCUE_SUCCESS_REUSE_MS: Long = 30_000L
         private const val INVALID_MTPROTO_HANDSHAKE_PREFIX = "Invalid MTProto handshake"
