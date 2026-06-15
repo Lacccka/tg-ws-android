@@ -2520,6 +2520,127 @@ class ProxyServerTest {
     }
 
     @Test
+    fun idleDirectPoolMaintenanceWarmsConfiguredDirectDc() {
+        val attempts = AtomicInteger(0)
+        val domains = CopyOnWriteArrayList<String>()
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, domain, _, _ ->
+                attempts.incrementAndGet()
+                domains.add(domain)
+                FakeWebSocketBinaryStream()
+            },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().clientExperience.idlePoolMaintenanceRuns >= 1L }
+        waitUntil { attempts.get() >= 4 }
+        proxy.stop()
+
+        val experience = proxy.stats().clientExperience
+        assertTrue(experience.idlePoolMaintenanceAttempts >= 2L)
+        assertTrue(experience.idlePoolMaintenanceSuccesses >= 2L)
+        assertTrue(domains.any { it == "kws2.web.telegram.org" })
+        assertTrue(domains.any { it == "kws4.web.telegram.org" })
+    }
+
+    @Test
+    fun idleDirectPoolMaintenanceSkipsUnsupportedDc() {
+        val domains = CopyOnWriteArrayList<String>()
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, domain, _, _ ->
+                domains.add(domain)
+                FakeWebSocketBinaryStream()
+            },
+            config = baseConfig().copy(poolSize = 1, dcRedirects = mapOf(2 to "203.0.113.2"), cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        waitUntil { proxy.stats().clientExperience.idlePoolMaintenanceRuns >= 1L }
+        proxy.stop()
+
+        assertTrue(domains.any { it == "kws2.web.telegram.org" })
+        assertFalse(domains.any { it.contains("kws5.") })
+    }
+
+    @Test
+    fun idleDirectPoolMaintenanceSkipsWhenNetworkUnavailable() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(server = server, config = baseConfig().copy(poolSize = 1, networkStatus = "none"))
+
+        proxy.start()
+        waitUntil { proxy.stats().clientExperience.idlePoolMaintenanceSkippedNetwork >= 1L }
+        proxy.stop()
+
+        assertEquals(0L, proxy.stats().clientExperience.idlePoolMaintenanceRuns)
+    }
+
+    @Test
+    fun idleDirectPoolMaintenanceSkipsWhenDirectHealthUnhealthy() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(server = server, config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false))
+
+        proxy.directRouteHealthForTest().startCooldown(ProxyServer.IDLE_POOL_MAINTENANCE_COOLDOWN_MS, "test unhealthy")
+        proxy.start()
+        waitUntil { proxy.stats().clientExperience.idlePoolMaintenanceSkippedDirectHealth >= 1L }
+        proxy.stop()
+    }
+
+    @Test
+    fun idleDirectPoolMaintenanceSkipsWhenClientSessionsActive() {
+        val bridgeEntered = CountDownLatch(1)
+        val releaseBridge = CountDownLatch(1)
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
+            runner = ProxyBridgeRunner { _, _, _, _, _ ->
+                bridgeEntered.countDown()
+                releaseBridge.await(5, TimeUnit.SECONDS)
+            },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        assertTrue(bridgeEntered.await(5, TimeUnit.SECONDS))
+        waitUntil { proxy.stats().clientExperience.idlePoolMaintenanceSkippedActiveSessions >= 1L }
+        releaseBridge.countDown()
+        proxy.stop()
+    }
+
+    @Test
+    fun idleDirectPoolMaintenanceDoesNotChangeRouteSelection() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(server = server, config = baseConfig().copy(poolSize = 1, routeMode = NetworkRouteMode.CF_ONLY))
+
+        proxy.start()
+        waitUntil { proxy.stats().clientExperience.idlePoolMaintenanceSkippedRoute >= 1L }
+        proxy.stop()
+
+        assertEquals(NetworkRouteMode.CF_ONLY, proxy.stats().effectiveRouteMode)
+    }
+
+    @Test
+    fun invalidHandshakesDoNotTriggerIdleMaintenance() {
+        val invalid = handshakeVector("invalid_proto_tag").getString("handshake_hex").hexToBytes()
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(server = server, config = baseConfig().copy(poolSize = 0))
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(invalid))
+        waitUntil { proxy.stats().recentInvalidHandshakeCount == 1L }
+        proxy.stop()
+
+        assertEquals(0L, proxy.stats().clientExperience.idlePoolMaintenanceRuns)
+        assertEquals(0L, proxy.stats().clientExperience.idlePoolMaintenanceAttempts)
+    }
+
+    @Test
     fun normalActiveSessionDoesNotRepeatedlyPrewarm() {
         val bridgeEntered = java.util.concurrent.CountDownLatch(1)
         val releaseBridge = java.util.concurrent.CountDownLatch(1)
@@ -2743,6 +2864,12 @@ class ProxyServerTest {
         field.isAccessible = true
         val counter = field.get(this) as java.util.concurrent.atomic.AtomicInteger
         return counter.get()
+    }
+
+    private fun ProxyServer.directRouteHealthForTest(): DirectRouteHealth {
+        val field = ProxyServer::class.java.getDeclaredField("directRouteHealth")
+        field.isAccessible = true
+        return field.get(this) as DirectRouteHealth
     }
 
     private fun waitUntil(message: String = "condition", predicate: () -> Boolean) {

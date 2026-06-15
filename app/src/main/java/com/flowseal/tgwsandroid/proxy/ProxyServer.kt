@@ -114,6 +114,16 @@ data class ClientExperienceDiagnostics(
     val lastWakeBurstPrewarmTimeMs: Long = 0,
     val lastWakeBurstPrewarmDc: Int? = null,
     val lastWakeBurstPrewarmError: String? = null,
+    val idlePoolMaintenanceRuns: Long = 0,
+    val idlePoolMaintenanceSkippedNetwork: Long = 0,
+    val idlePoolMaintenanceSkippedRoute: Long = 0,
+    val idlePoolMaintenanceSkippedDirectHealth: Long = 0,
+    val idlePoolMaintenanceSkippedActiveSessions: Long = 0,
+    val idlePoolMaintenanceAttempts: Long = 0,
+    val idlePoolMaintenanceSuccesses: Long = 0,
+    val idlePoolMaintenanceFailures: Long = 0,
+    val lastIdlePoolMaintenanceTimeMs: Long = 0,
+    val lastIdlePoolMaintenanceError: String? = null,
 )
 
 data class CfFirstRecoveryDiagnostics(
@@ -635,6 +645,17 @@ class ProxyServer(
     private val lastWakeBurstPrewarmDc = AtomicReference<Int?>(null)
     private val lastWakeBurstPrewarmError = AtomicReference<String?>(null)
     private val wakeBurstPrewarmCooldownUntilMs = AtomicLong(0)
+    private val idlePoolMaintenanceRuns = AtomicLong(0)
+    private val idlePoolMaintenanceSkippedNetwork = AtomicLong(0)
+    private val idlePoolMaintenanceSkippedRoute = AtomicLong(0)
+    private val idlePoolMaintenanceSkippedDirectHealth = AtomicLong(0)
+    private val idlePoolMaintenanceSkippedActiveSessions = AtomicLong(0)
+    private val idlePoolMaintenanceAttempts = AtomicLong(0)
+    private val idlePoolMaintenanceSuccesses = AtomicLong(0)
+    private val idlePoolMaintenanceFailures = AtomicLong(0)
+    private val lastIdlePoolMaintenanceTimeMs = AtomicLong(0)
+    private val lastIdlePoolMaintenanceError = AtomicReference<String?>(null)
+    private val idlePoolMaintenanceCooldownUntilMs = AtomicLong(0)
     private val wsConnectErrors = AtomicLong(0)
     private val cfProxyConnections = AtomicLong(0)
     private val cfProxyErrors = AtomicLong(0)
@@ -740,6 +761,7 @@ class ProxyServer(
         logger = logger,
     )
     private var acceptThread: Thread? = null
+    private var idlePoolMaintenanceThread: Thread? = null
 
     val isRunning: Boolean get() = running.get()
 
@@ -753,6 +775,7 @@ class ProxyServer(
             logger.log("Direct WS pool warmup skipped because effective route mode ${effectiveRouteMode().configValue}")
         }
         maybeStartAutoWifiDirectProbe(currentNetworkStatus)
+        startIdlePoolMaintenanceThread()
         acceptThread = Thread(::acceptLoop, "ProxyServer-accept-${config.host}:${config.port}").also {
             it.isDaemon = true
             it.start()
@@ -773,6 +796,7 @@ class ProxyServer(
         }
         webSocketPool.closeAll()
         joinAcceptThreadBestEffort()
+        joinIdlePoolMaintenanceThreadBestEffort()
         logger.log("ProxyServer stopped")
     }
 
@@ -2152,6 +2176,16 @@ class ProxyServer(
             lastWakeBurstPrewarmTimeMs = lastWakeBurstPrewarmTimeMs.get(),
             lastWakeBurstPrewarmDc = lastWakeBurstPrewarmDc.get(),
             lastWakeBurstPrewarmError = lastWakeBurstPrewarmError.get(),
+            idlePoolMaintenanceRuns = idlePoolMaintenanceRuns.get(),
+            idlePoolMaintenanceSkippedNetwork = idlePoolMaintenanceSkippedNetwork.get(),
+            idlePoolMaintenanceSkippedRoute = idlePoolMaintenanceSkippedRoute.get(),
+            idlePoolMaintenanceSkippedDirectHealth = idlePoolMaintenanceSkippedDirectHealth.get(),
+            idlePoolMaintenanceSkippedActiveSessions = idlePoolMaintenanceSkippedActiveSessions.get(),
+            idlePoolMaintenanceAttempts = idlePoolMaintenanceAttempts.get(),
+            idlePoolMaintenanceSuccesses = idlePoolMaintenanceSuccesses.get(),
+            idlePoolMaintenanceFailures = idlePoolMaintenanceFailures.get(),
+            lastIdlePoolMaintenanceTimeMs = lastIdlePoolMaintenanceTimeMs.get(),
+            lastIdlePoolMaintenanceError = lastIdlePoolMaintenanceError.get(),
         )
     }
 
@@ -2256,6 +2290,78 @@ class ProxyServer(
         logger.log("Direct WS pool warmup started because effective route mode ${effectiveRouteMode().configValue} ($reason)")
         webSocketPool.warmup(config.dcRedirects, ::wsDomains)
     }
+
+    private fun startIdlePoolMaintenanceThread() {
+        if (config.poolSize <= 0 || config.dcRedirects.isEmpty()) return
+        idlePoolMaintenanceThread = Thread(::idlePoolMaintenanceLoop, "ProxyServer-idle-pool-maintenance").also {
+            it.isDaemon = true
+            it.start()
+        }
+    }
+
+    private fun idlePoolMaintenanceLoop() {
+        while (running.get()) {
+            try {
+                Thread.sleep(IDLE_POOL_MAINTENANCE_POLL_MS)
+                maybeRunIdlePoolMaintenance()
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                return
+            } catch (error: Throwable) {
+                idlePoolMaintenanceFailures.incrementAndGet()
+                lastIdlePoolMaintenanceError.set(failureDetail(error))
+                logger.log("idle direct WS pool maintenance failed: ${failureDetail(error)}")
+            }
+        }
+    }
+
+    private fun maybeRunIdlePoolMaintenance() {
+        if (!running.get() || config.poolSize <= 0) return
+        val now = System.currentTimeMillis()
+        if (now < idlePoolMaintenanceCooldownUntilMs.get()) return
+        if (clientExperienceActiveSessions.get() > 0) {
+            idlePoolMaintenanceSkippedActiveSessions.incrementAndGet()
+            idlePoolMaintenanceCooldownUntilMs.compareAndSet(idlePoolMaintenanceCooldownUntilMs.get(), now + IDLE_POOL_MAINTENANCE_COOLDOWN_MS)
+            return
+        }
+        if (now - clientExperienceLastIdleAtMs.get() < IDLE_POOL_MAINTENANCE_IDLE_THRESHOLD_MS) return
+        if (!isIdlePoolMaintenanceNetworkReady()) {
+            idlePoolMaintenanceSkippedNetwork.incrementAndGet()
+            idlePoolMaintenanceCooldownUntilMs.compareAndSet(idlePoolMaintenanceCooldownUntilMs.get(), now + IDLE_POOL_MAINTENANCE_COOLDOWN_MS)
+            return
+        }
+        if (!isDirectPoolEnabled()) {
+            idlePoolMaintenanceSkippedRoute.incrementAndGet()
+            idlePoolMaintenanceCooldownUntilMs.compareAndSet(idlePoolMaintenanceCooldownUntilMs.get(), now + IDLE_POOL_MAINTENANCE_COOLDOWN_MS)
+            return
+        }
+        val directHealth = directRouteHealth.currentState()
+        if (directRouteHealth.isSettling() || directHealth == DirectHealthState.UNHEALTHY || directHealth == DirectHealthState.COOLDOWN) {
+            idlePoolMaintenanceSkippedDirectHealth.incrementAndGet()
+            idlePoolMaintenanceCooldownUntilMs.compareAndSet(idlePoolMaintenanceCooldownUntilMs.get(), now + IDLE_POOL_MAINTENANCE_COOLDOWN_MS)
+            return
+        }
+        if (!idlePoolMaintenanceCooldownUntilMs.compareAndSet(idlePoolMaintenanceCooldownUntilMs.get(), now + IDLE_POOL_MAINTENANCE_COOLDOWN_MS)) return
+        idlePoolMaintenanceRuns.incrementAndGet()
+        lastIdlePoolMaintenanceTimeMs.set(now)
+        lastIdlePoolMaintenanceError.set(null)
+        for ((dcId, targetHost) in config.dcRedirects) {
+            idlePoolMaintenanceAttempts.incrementAndGet()
+            try {
+                webSocketPool.ensureMinReadyForDc(dcId, targetHost, MIN_IDLE_WARM_POOL_PER_DC, ::wsDomains)
+                idlePoolMaintenanceSuccesses.incrementAndGet()
+            } catch (error: Throwable) {
+                idlePoolMaintenanceFailures.incrementAndGet()
+                lastIdlePoolMaintenanceError.set(failureDetail(error))
+                logger.log("DC${dcId} idle direct WS pool maintenance failed: ${failureDetail(error)}")
+            }
+        }
+    }
+
+    private fun isIdlePoolMaintenanceNetworkReady(): Boolean =
+        !currentNetworkStatus.equals("none", ignoreCase = true) &&
+            !currentNetworkStatus.contains("unvalidated", ignoreCase = true) &&
+            networkSettlingUntilMs.get() <= System.currentTimeMillis()
 
     private fun maybeScheduleWakeBurstPrewarm(
         dcId: Int,
@@ -2424,6 +2530,17 @@ class ProxyServer(
         }
     }
 
+    private fun joinIdlePoolMaintenanceThreadBestEffort() {
+        val thread = idlePoolMaintenanceThread ?: return
+        if (Thread.currentThread() == thread) return
+        thread.interrupt()
+        try {
+            thread.join(STOP_JOIN_TIMEOUT_MS)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+    }
+
     companion object {
         const val DEFAULT_WS_PATH = "/apiws"
         const val CLIENT_EXPERIENCE_RECENT_WINDOW_MS: Long = 60_000L
@@ -2435,6 +2552,10 @@ class ProxyServer(
         const val TELEGRAM_DISABLED_NO_ROUTE_MS: Long = 30_000L
         const val WAKE_BURST_IDLE_THRESHOLD_MS: Long = 30_000L
         const val WAKE_BURST_PREWARM_COOLDOWN_MS: Long = 30_000L
+        const val MIN_IDLE_WARM_POOL_PER_DC: Int = 1
+        const val IDLE_POOL_MAINTENANCE_IDLE_THRESHOLD_MS: Long = 30_000L
+        const val IDLE_POOL_MAINTENANCE_COOLDOWN_MS: Long = 30_000L
+        private const val IDLE_POOL_MAINTENANCE_POLL_MS: Long = 250L
         const val MOBILE_DIRECT_RESCUE_FAILURE_COOLDOWN_MS: Long = 45_000L
         const val MOBILE_DIRECT_RESCUE_SUCCESS_REUSE_MS: Long = 30_000L
         private const val INVALID_MTPROTO_HANDSHAKE_PREFIX = "Invalid MTProto handshake"

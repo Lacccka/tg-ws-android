@@ -101,6 +101,26 @@ class WebSocketPool(
         scheduleRefill(dc, isMedia = true, targetHost, wsDomainsProvider(dc, true))
     }
 
+    /**
+     * Best-effort idle maintenance for one direct-capable DC.
+     *
+     * Unlike startup/wake warmup, this only tops each route key up to [minReady]
+     * entries so background traffic stays conservative even when [poolSize] is
+     * larger.
+     */
+    fun ensureMinReadyForDc(
+        dc: Int,
+        targetHost: String,
+        minReady: Int,
+        wsDomainsProvider: (dc: Int, isMedia: Boolean) -> List<String>,
+    ) {
+        if (poolSize <= 0 || minReady <= 0) return
+        enabled.set(true)
+        val desired = minOf(poolSize, minReady)
+        scheduleRefill(dc, isMedia = false, targetHost, wsDomainsProvider(dc, false), desiredSize = desired)
+        scheduleRefill(dc, isMedia = true, targetHost, wsDomainsProvider(dc, true), desiredSize = desired)
+    }
+
     /** Disables future pool use and closes all currently idle sockets without shutting down the refill executor. */
     fun disableAndClear() {
         enabled.set(false)
@@ -163,8 +183,11 @@ class WebSocketPool(
         isMedia: Boolean,
         targetHost: String,
         domains: List<String>,
+        desiredSize: Int = poolSize,
     ) {
         if (poolSize <= 0 || domains.isEmpty() || !enabled.get()) return
+        val targetSize = desiredSize.coerceIn(0, poolSize)
+        if (targetSize <= 0) return
         val refillGeneration = generation.get()
         val key = Key(dc, isMedia)
         val expired = mutableListOf<WebSocketBinaryStream>()
@@ -172,7 +195,7 @@ class WebSocketPool(
             expired.addAll(pruneExpiredLocked(key))
             val ready = entries[key]?.size ?: 0
             val pending = pendingRefills[key] ?: 0
-            val needed = (poolSize - ready - pending).coerceAtLeast(0)
+            val needed = (targetSize - ready - pending).coerceAtLeast(0)
             if (needed > 0) pendingRefills[key] = pending + needed
             needed
         }

@@ -511,6 +511,16 @@ object DiagnosticReportFormatter {
             "lastWakeBurstPrewarmTimeMs=${stats.clientExperience.lastWakeBurstPrewarmTimeMs}, " +
             "lastWakeBurstPrewarmDc=${stats.clientExperience.lastWakeBurstPrewarmDc ?: "unknown"}, " +
             "lastWakeBurstPrewarmError=${stats.clientExperience.lastWakeBurstPrewarmError ?: "none"}, " +
+            "idlePoolMaintenanceRuns=${stats.clientExperience.idlePoolMaintenanceRuns}, " +
+            "idlePoolMaintenanceSkippedNetwork=${stats.clientExperience.idlePoolMaintenanceSkippedNetwork}, " +
+            "idlePoolMaintenanceSkippedRoute=${stats.clientExperience.idlePoolMaintenanceSkippedRoute}, " +
+            "idlePoolMaintenanceSkippedDirectHealth=${stats.clientExperience.idlePoolMaintenanceSkippedDirectHealth}, " +
+            "idlePoolMaintenanceSkippedActiveSessions=${stats.clientExperience.idlePoolMaintenanceSkippedActiveSessions}, " +
+            "idlePoolMaintenanceAttempts=${stats.clientExperience.idlePoolMaintenanceAttempts}, " +
+            "idlePoolMaintenanceSuccesses=${stats.clientExperience.idlePoolMaintenanceSuccesses}, " +
+            "idlePoolMaintenanceFailures=${stats.clientExperience.idlePoolMaintenanceFailures}, " +
+            "lastIdlePoolMaintenanceTimeMs=${stats.clientExperience.lastIdlePoolMaintenanceTimeMs}, " +
+            "lastIdlePoolMaintenanceError=${stats.clientExperience.lastIdlePoolMaintenanceError ?: "none"}, " +
             "handshakeDiagnosticState=${stats.handshakeDiagnosticState}, " +
             "handshakeDiagnosticReason=${stats.handshakeDiagnosticReason}, " +
             "recentHandshakeDiagnostic=${stats.handshakeDiagnosticReason}, " +
@@ -660,6 +670,16 @@ object DiagnosticReportFormatter {
         appendLine("  lastWakeBurstPrewarmTimeMs: ${experience?.lastWakeBurstPrewarmTimeMs?.toString() ?: "unknown"}")
         appendLine("  lastWakeBurstPrewarmDc: ${experience?.lastWakeBurstPrewarmDc?.toString() ?: "unknown"}")
         appendLine("  lastWakeBurstPrewarmError: ${experience?.lastWakeBurstPrewarmError ?: "none"}")
+        appendLine("  idlePoolMaintenanceRuns: ${experience?.idlePoolMaintenanceRuns?.toString() ?: "unknown"}")
+        appendLine("  idlePoolMaintenanceSkippedNetwork: ${experience?.idlePoolMaintenanceSkippedNetwork?.toString() ?: "unknown"}")
+        appendLine("  idlePoolMaintenanceSkippedRoute: ${experience?.idlePoolMaintenanceSkippedRoute?.toString() ?: "unknown"}")
+        appendLine("  idlePoolMaintenanceSkippedDirectHealth: ${experience?.idlePoolMaintenanceSkippedDirectHealth?.toString() ?: "unknown"}")
+        appendLine("  idlePoolMaintenanceSkippedActiveSessions: ${experience?.idlePoolMaintenanceSkippedActiveSessions?.toString() ?: "unknown"}")
+        appendLine("  idlePoolMaintenanceAttempts: ${experience?.idlePoolMaintenanceAttempts?.toString() ?: "unknown"}")
+        appendLine("  idlePoolMaintenanceSuccesses: ${experience?.idlePoolMaintenanceSuccesses?.toString() ?: "unknown"}")
+        appendLine("  idlePoolMaintenanceFailures: ${experience?.idlePoolMaintenanceFailures?.toString() ?: "unknown"}")
+        appendLine("  lastIdlePoolMaintenanceTimeMs: ${experience?.lastIdlePoolMaintenanceTimeMs?.toString() ?: "unknown"}")
+        appendLine("  lastIdlePoolMaintenanceError: ${experience?.lastIdlePoolMaintenanceError ?: "none"}")
     }
 
     private fun StringBuilder.appendCfHealth(stats: ProxyServerStats?) {
