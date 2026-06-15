@@ -2097,7 +2097,7 @@ class ProxyServer(
         val disruptiveEnds = recentVeryShortClientClosedTimes.size + recentShortRemoteEofTimes.size + recentConnectionResetTimes.size
         val routeAgeMs = lastSuccessfulRouteTimeMs.get().takeIf { it > 0L }?.let { (now - it).coerceAtLeast(0L) }
         val likelyDisabled = hasAcceptedHandshake && accepted >= TELEGRAM_DISABLED_MIN_HANDSHAKES && disruptiveEnds >= TELEGRAM_DISABLED_MIN_DISRUPTIVE_ENDS &&
-            (routeAgeMs == null || routeAgeMs >= TELEGRAM_DISABLED_NO_ROUTE_MS) && connectionsActive.get() == 0 && running.get()
+            (routeAgeMs == null || routeAgeMs >= TELEGRAM_DISABLED_NO_ROUTE_MS) && clientExperienceActiveSessions.get() == 0 && running.get()
         return ClientExperienceDiagnostics(
             likelyReconnectBurst = likelyBurst,
             likelyTelegramDisabledProxy = likelyDisabled,
