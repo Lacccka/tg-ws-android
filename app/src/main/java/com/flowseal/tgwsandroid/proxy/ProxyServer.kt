@@ -1131,7 +1131,7 @@ class ProxyServer(
         }
         recordAcceptedHandshake(wasClientExperienceIdle = wasClientExperienceIdle)
         val targetHost = config.dcRedirects[parsed.dcId]
-        maybeScheduleWakeBurstPrewarm(parsed.dcId, targetHost, wasClientExperienceIdle, idleDurationMs)
+        maybeScheduleWakeBurstPrewarm(parsed.dcId, wasClientExperienceIdle, idleDurationMs)
 
         val protoInt = protoIntForProtoTag(parsed.protoTag)
         logger.log(
@@ -2259,16 +2259,16 @@ class ProxyServer(
 
     private fun maybeScheduleWakeBurstPrewarm(
         dcId: Int,
-        targetHost: String?,
         wasClientExperienceIdle: Boolean,
         idleDurationMs: Long,
     ) {
         if (!wasClientExperienceIdle || idleDurationMs < WAKE_BURST_IDLE_THRESHOLD_MS) return
-        if (config.poolSize <= 0 || !isDirectPoolEnabled()) return
+        val targetHost = config.dcRedirects[dcId]
         if (targetHost == null) {
             wakeBurstPrewarmSkippedNoDirectRedirect.incrementAndGet()
             return
         }
+        if (config.poolSize <= 0 || !isDirectPoolEnabled()) return
         val now = System.currentTimeMillis()
         val cooldownUntil = wakeBurstPrewarmCooldownUntilMs.get()
         if (now < cooldownUntil) {

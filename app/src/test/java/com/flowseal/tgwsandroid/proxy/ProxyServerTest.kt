@@ -2534,7 +2534,7 @@ class ProxyServerTest {
         proxy.start()
         server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
         assertTrue(bridgeEntered.await(5, TimeUnit.SECONDS))
-        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc4").getString("handshake_hex").hexToBytes()))
+        server.enqueue(FakeTcpClientTransport(handshakeVector("intermediate_dc4").getString("handshake_hex").hexToBytes()))
         waitUntil { proxy.stats().recentAcceptedHandshakeCount >= 2L }
         releaseBridge.countDown()
         proxy.stop()
