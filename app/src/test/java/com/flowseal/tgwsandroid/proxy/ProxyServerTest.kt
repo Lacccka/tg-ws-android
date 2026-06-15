@@ -2619,10 +2619,14 @@ class ProxyServerTest {
         val proxy = newProxy(server = server, config = baseConfig().copy(poolSize = 1, routeMode = NetworkRouteMode.CF_ONLY))
 
         proxy.start()
+        val routeBefore = proxy.stats().effectiveRouteMode
         waitUntil { proxy.stats().clientExperience.idlePoolMaintenanceSkippedRoute >= 1L }
+        val stats = proxy.stats()
         proxy.stop()
 
-        assertEquals(NetworkRouteMode.CF_ONLY, proxy.stats().effectiveRouteMode)
+        assertEquals(routeBefore, stats.effectiveRouteMode)
+        assertEquals(1L, stats.clientExperience.idlePoolMaintenanceSkippedRoute)
+        assertEquals(0L, stats.clientExperience.idlePoolMaintenanceAttempts)
     }
 
     @Test
