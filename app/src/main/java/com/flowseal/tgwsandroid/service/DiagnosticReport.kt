@@ -502,6 +502,15 @@ object DiagnosticReportFormatter {
             "clientExperienceRecentUnsupportedDcByDc=${formatLongByDc(stats.clientExperience.recentUnsupportedDcByDc)}, " +
             "clientExperienceRecentNoRouteByDc=${formatLongByDc(stats.clientExperience.recentNoRouteByDc)}, " +
             "clientExperienceTimeToFirstSuccessfulRouteAfterIdleMs=${stats.clientExperience.timeToFirstSuccessfulRouteAfterIdleMs ?: "unknown"}, " +
+            "wakeBurstPrewarmTriggers=${stats.clientExperience.wakeBurstPrewarmTriggers}, " +
+            "wakeBurstPrewarmSkippedNoDirectRedirect=${stats.clientExperience.wakeBurstPrewarmSkippedNoDirectRedirect}, " +
+            "wakeBurstPrewarmSkippedCooldown=${stats.clientExperience.wakeBurstPrewarmSkippedCooldown}, " +
+            "wakeBurstPrewarmAttempts=${stats.clientExperience.wakeBurstPrewarmAttempts}, " +
+            "wakeBurstPrewarmSuccesses=${stats.clientExperience.wakeBurstPrewarmSuccesses}, " +
+            "wakeBurstPrewarmFailures=${stats.clientExperience.wakeBurstPrewarmFailures}, " +
+            "lastWakeBurstPrewarmTimeMs=${stats.clientExperience.lastWakeBurstPrewarmTimeMs}, " +
+            "lastWakeBurstPrewarmDc=${stats.clientExperience.lastWakeBurstPrewarmDc ?: "unknown"}, " +
+            "lastWakeBurstPrewarmError=${stats.clientExperience.lastWakeBurstPrewarmError ?: "none"}, " +
             "handshakeDiagnosticState=${stats.handshakeDiagnosticState}, " +
             "handshakeDiagnosticReason=${stats.handshakeDiagnosticReason}, " +
             "recentHandshakeDiagnostic=${stats.handshakeDiagnosticReason}, " +
@@ -642,6 +651,15 @@ object DiagnosticReportFormatter {
         appendLine("  recentUnsupportedDcByDc: ${experience?.recentUnsupportedDcByDc?.let(::formatLongByDc) ?: "unknown"}")
         appendLine("  recentNoRouteByDc: ${experience?.recentNoRouteByDc?.let(::formatLongByDc) ?: "unknown"}")
         appendLine("  timeToFirstSuccessfulRouteAfterIdleMs: ${experience?.timeToFirstSuccessfulRouteAfterIdleMs?.toString() ?: "unknown"}")
+        appendLine("  wakeBurstPrewarmTriggers: ${experience?.wakeBurstPrewarmTriggers?.toString() ?: "unknown"}")
+        appendLine("  wakeBurstPrewarmSkippedNoDirectRedirect: ${experience?.wakeBurstPrewarmSkippedNoDirectRedirect?.toString() ?: "unknown"}")
+        appendLine("  wakeBurstPrewarmSkippedCooldown: ${experience?.wakeBurstPrewarmSkippedCooldown?.toString() ?: "unknown"}")
+        appendLine("  wakeBurstPrewarmAttempts: ${experience?.wakeBurstPrewarmAttempts?.toString() ?: "unknown"}")
+        appendLine("  wakeBurstPrewarmSuccesses: ${experience?.wakeBurstPrewarmSuccesses?.toString() ?: "unknown"}")
+        appendLine("  wakeBurstPrewarmFailures: ${experience?.wakeBurstPrewarmFailures?.toString() ?: "unknown"}")
+        appendLine("  lastWakeBurstPrewarmTimeMs: ${experience?.lastWakeBurstPrewarmTimeMs?.toString() ?: "unknown"}")
+        appendLine("  lastWakeBurstPrewarmDc: ${experience?.lastWakeBurstPrewarmDc?.toString() ?: "unknown"}")
+        appendLine("  lastWakeBurstPrewarmError: ${experience?.lastWakeBurstPrewarmError ?: "none"}")
     }
 
     private fun StringBuilder.appendCfHealth(stats: ProxyServerStats?) {

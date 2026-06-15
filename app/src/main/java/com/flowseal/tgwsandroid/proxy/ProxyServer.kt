@@ -105,6 +105,15 @@ data class ClientExperienceDiagnostics(
     val recentCfQueueControlledFailures: Long = 0,
     val recentCfConnectQueueTimeouts: Long = 0,
     val timeToFirstSuccessfulRouteAfterIdleMs: Long? = null,
+    val wakeBurstPrewarmTriggers: Long = 0,
+    val wakeBurstPrewarmSkippedNoDirectRedirect: Long = 0,
+    val wakeBurstPrewarmSkippedCooldown: Long = 0,
+    val wakeBurstPrewarmAttempts: Long = 0,
+    val wakeBurstPrewarmSuccesses: Long = 0,
+    val wakeBurstPrewarmFailures: Long = 0,
+    val lastWakeBurstPrewarmTimeMs: Long = 0,
+    val lastWakeBurstPrewarmDc: Int? = null,
+    val lastWakeBurstPrewarmError: String? = null,
 )
 
 data class CfFirstRecoveryDiagnostics(
@@ -594,6 +603,7 @@ class ProxyServer(
     private val connectionsTotal = AtomicLong(0)
     private val connectionsActive = AtomicInteger(0)
     private val clientExperienceActiveSessions = AtomicInteger(0)
+    private val clientExperienceLastIdleAtMs = AtomicLong(System.currentTimeMillis() - WAKE_BURST_IDLE_THRESHOLD_MS)
     private val connectionsBad = AtomicLong(0)
     private val recentInvalidHandshakeTimes = ConcurrentLinkedDeque<Long>()
     private val recentAcceptedHandshakeTimes = ConcurrentLinkedDeque<Long>()
@@ -615,6 +625,16 @@ class ProxyServer(
     private val lastInvalidHandshakeTimeMs = AtomicLong(0)
     private val lastAcceptedHandshakeTimeMs = AtomicLong(0)
     private val lastSuccessfulRouteTimeMs = AtomicLong(0)
+    private val wakeBurstPrewarmTriggers = AtomicLong(0)
+    private val wakeBurstPrewarmSkippedNoDirectRedirect = AtomicLong(0)
+    private val wakeBurstPrewarmSkippedCooldown = AtomicLong(0)
+    private val wakeBurstPrewarmAttempts = AtomicLong(0)
+    private val wakeBurstPrewarmSuccesses = AtomicLong(0)
+    private val wakeBurstPrewarmFailures = AtomicLong(0)
+    private val lastWakeBurstPrewarmTimeMs = AtomicLong(0)
+    private val lastWakeBurstPrewarmDc = AtomicReference<Int?>(null)
+    private val lastWakeBurstPrewarmError = AtomicReference<String?>(null)
+    private val wakeBurstPrewarmCooldownUntilMs = AtomicLong(0)
     private val wsConnectErrors = AtomicLong(0)
     private val cfProxyConnections = AtomicLong(0)
     private val cfProxyErrors = AtomicLong(0)
@@ -1071,7 +1091,9 @@ class ProxyServer(
             sessionUnexpectedErrors.incrementAndGet()
             logger.log("${client.remoteLabel} client handler failed: ${failureDetail(error)}")
         } finally {
-            if (clientExperienceStarted) clientExperienceActiveSessions.decrementAndGet()
+            if (clientExperienceStarted && clientExperienceActiveSessions.decrementAndGet() == 0) {
+                clientExperienceLastIdleAtMs.set(System.currentTimeMillis())
+            }
             activeClients.remove(client)
             connectionsActive.decrementAndGet()
             closeClient(client)
@@ -1102,8 +1124,14 @@ class ProxyServer(
         }
 
         val wasClientExperienceIdle = clientExperienceActiveSessions.getAndIncrement() == 0
+        val idleDurationMs = if (wasClientExperienceIdle) {
+            (System.currentTimeMillis() - clientExperienceLastIdleAtMs.get()).coerceAtLeast(0L)
+        } else {
+            0L
+        }
         recordAcceptedHandshake(wasClientExperienceIdle = wasClientExperienceIdle)
         val targetHost = config.dcRedirects[parsed.dcId]
+        maybeScheduleWakeBurstPrewarm(parsed.dcId, targetHost, wasClientExperienceIdle, idleDurationMs)
 
         val protoInt = protoIntForProtoTag(parsed.protoTag)
         logger.log(
@@ -2115,6 +2143,15 @@ class ProxyServer(
             recentCfQueueControlledFailures = recentCfQueueControlledFailureTimes.size.toLong(),
             recentCfConnectQueueTimeouts = recentCfConnectQueueTimeoutTimes.size.toLong(),
             timeToFirstSuccessfulRouteAfterIdleMs = lastTimeToFirstSuccessfulRouteAfterIdleMs.get().takeIf { it >= 0L },
+            wakeBurstPrewarmTriggers = wakeBurstPrewarmTriggers.get(),
+            wakeBurstPrewarmSkippedNoDirectRedirect = wakeBurstPrewarmSkippedNoDirectRedirect.get(),
+            wakeBurstPrewarmSkippedCooldown = wakeBurstPrewarmSkippedCooldown.get(),
+            wakeBurstPrewarmAttempts = wakeBurstPrewarmAttempts.get(),
+            wakeBurstPrewarmSuccesses = wakeBurstPrewarmSuccesses.get(),
+            wakeBurstPrewarmFailures = wakeBurstPrewarmFailures.get(),
+            lastWakeBurstPrewarmTimeMs = lastWakeBurstPrewarmTimeMs.get(),
+            lastWakeBurstPrewarmDc = lastWakeBurstPrewarmDc.get(),
+            lastWakeBurstPrewarmError = lastWakeBurstPrewarmError.get(),
         )
     }
 
@@ -2218,6 +2255,44 @@ class ProxyServer(
         if (config.poolSize <= 0) return
         logger.log("Direct WS pool warmup started because effective route mode ${effectiveRouteMode().configValue} ($reason)")
         webSocketPool.warmup(config.dcRedirects, ::wsDomains)
+    }
+
+    private fun maybeScheduleWakeBurstPrewarm(
+        dcId: Int,
+        targetHost: String?,
+        wasClientExperienceIdle: Boolean,
+        idleDurationMs: Long,
+    ) {
+        if (!wasClientExperienceIdle || idleDurationMs < WAKE_BURST_IDLE_THRESHOLD_MS) return
+        if (config.poolSize <= 0 || !isDirectPoolEnabled()) return
+        if (targetHost == null) {
+            wakeBurstPrewarmSkippedNoDirectRedirect.incrementAndGet()
+            return
+        }
+        val now = System.currentTimeMillis()
+        val cooldownUntil = wakeBurstPrewarmCooldownUntilMs.get()
+        if (now < cooldownUntil) {
+            wakeBurstPrewarmSkippedCooldown.incrementAndGet()
+            return
+        }
+        if (!wakeBurstPrewarmCooldownUntilMs.compareAndSet(cooldownUntil, now + WAKE_BURST_PREWARM_COOLDOWN_MS)) {
+            wakeBurstPrewarmSkippedCooldown.incrementAndGet()
+            return
+        }
+        wakeBurstPrewarmTriggers.incrementAndGet()
+        wakeBurstPrewarmAttempts.incrementAndGet()
+        lastWakeBurstPrewarmTimeMs.set(now)
+        lastWakeBurstPrewarmDc.set(dcId)
+        lastWakeBurstPrewarmError.set(null)
+        try {
+            webSocketPool.prewarmDc(dcId, targetHost, ::wsDomains)
+            wakeBurstPrewarmSuccesses.incrementAndGet()
+            logger.log("DC${dcId} wake-burst direct WS pool prewarm scheduled")
+        } catch (error: Throwable) {
+            wakeBurstPrewarmFailures.incrementAndGet()
+            lastWakeBurstPrewarmError.set(failureDetail(error))
+            logger.log("DC${dcId} wake-burst direct WS pool prewarm failed: ${failureDetail(error)}")
+        }
     }
 
 
@@ -2358,6 +2433,8 @@ class ProxyServer(
         const val TELEGRAM_DISABLED_MIN_HANDSHAKES: Long = 4L
         const val TELEGRAM_DISABLED_MIN_DISRUPTIVE_ENDS: Int = 3
         const val TELEGRAM_DISABLED_NO_ROUTE_MS: Long = 30_000L
+        const val WAKE_BURST_IDLE_THRESHOLD_MS: Long = 30_000L
+        const val WAKE_BURST_PREWARM_COOLDOWN_MS: Long = 30_000L
         const val MOBILE_DIRECT_RESCUE_FAILURE_COOLDOWN_MS: Long = 45_000L
         const val MOBILE_DIRECT_RESCUE_SUCCESS_REUSE_MS: Long = 30_000L
         private const val INVALID_MTPROTO_HANDSHAKE_PREFIX = "Invalid MTProto handshake"

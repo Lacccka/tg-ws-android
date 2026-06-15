@@ -89,6 +89,18 @@ class WebSocketPool(
         }
     }
 
+    /** Starts non-blocking warmup for one direct-capable DC and both media modes. */
+    fun prewarmDc(
+        dc: Int,
+        targetHost: String,
+        wsDomainsProvider: (dc: Int, isMedia: Boolean) -> List<String>,
+    ) {
+        if (poolSize <= 0) return
+        enabled.set(true)
+        scheduleRefill(dc, isMedia = false, targetHost, wsDomainsProvider(dc, false))
+        scheduleRefill(dc, isMedia = true, targetHost, wsDomainsProvider(dc, true))
+    }
+
     /** Disables future pool use and closes all currently idle sockets without shutting down the refill executor. */
     fun disableAndClear() {
         enabled.set(false)

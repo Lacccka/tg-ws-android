@@ -2431,6 +2431,118 @@ class ProxyServerTest {
     }
 
     @Test
+    fun validHandshakeAfterIdleTriggersDirectPoolPrewarm() {
+        val attempts = java.util.concurrent.atomic.AtomicInteger(0)
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ ->
+                attempts.incrementAndGet()
+                FakeWebSocketBinaryStream()
+            },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { proxy.stats().clientExperience.wakeBurstPrewarmTriggers == 1L }
+        waitUntil { attempts.get() > 0 }
+        proxy.stop()
+
+        val experience = proxy.stats().clientExperience
+        assertEquals(1L, experience.wakeBurstPrewarmTriggers)
+        assertEquals(1L, experience.wakeBurstPrewarmAttempts)
+        assertEquals(2, experience.lastWakeBurstPrewarmDc)
+    }
+
+    @Test
+    fun invalidHandshakeAfterIdleDoesNotTriggerPrewarm() {
+        val invalid = handshakeVector("invalid_proto_tag").getString("handshake_hex").hexToBytes()
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(server = server, config = baseConfig().copy(poolSize = 1))
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(invalid))
+        waitUntil { proxy.stats().recentInvalidHandshakeCount == 1L }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(1L, stats.recentInvalidHandshakeCount)
+        assertEquals(0L, stats.clientExperience.wakeBurstPrewarmTriggers)
+        assertEquals(0L, stats.clientExperience.recentAcceptedHandshakes)
+    }
+
+    @Test
+    fun repeatedBurstHandshakesRespectPrewarmCooldown() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        repeat(6) {
+            server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        }
+        waitUntil { proxy.stats().recentAcceptedHandshakeCount >= 6L }
+        proxy.stop()
+
+        val experience = proxy.stats().clientExperience
+        assertEquals(1L, experience.wakeBurstPrewarmTriggers)
+        assertEquals(1L, experience.wakeBurstPrewarmAttempts)
+    }
+
+    @Test
+    fun unsupportedDcDoesNotPrewarmDirectPool() {
+        val attempts = java.util.concurrent.atomic.AtomicInteger(0)
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ ->
+                attempts.incrementAndGet()
+                FakeWebSocketBinaryStream()
+            },
+            config = baseConfig().copy(poolSize = 1, dcRedirects = mapOf(2 to "203.0.113.2", 4 to "203.0.113.4"), cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(buildClientHandshake(5, RelayInit.PROTO_TAG_ABRIDGED)))
+        waitUntil { proxy.stats().clientExperience.wakeBurstPrewarmSkippedNoDirectRedirect == 1L }
+        proxy.stop()
+
+        assertEquals(1L, proxy.stats().clientExperience.wakeBurstPrewarmSkippedNoDirectRedirect)
+        assertEquals(0L, proxy.stats().clientExperience.wakeBurstPrewarmTriggers)
+        assertEquals(0, attempts.get())
+    }
+
+    @Test
+    fun normalActiveSessionDoesNotRepeatedlyPrewarm() {
+        val bridgeEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseBridge = java.util.concurrent.CountDownLatch(1)
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
+            runner = ProxyBridgeRunner { _, _, _, _, _ ->
+                bridgeEntered.countDown()
+                releaseBridge.await(5, TimeUnit.SECONDS)
+            },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        assertTrue(bridgeEntered.await(5, TimeUnit.SECONDS))
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc4").getString("handshake_hex").hexToBytes()))
+        waitUntil { proxy.stats().recentAcceptedHandshakeCount >= 2L }
+        releaseBridge.countDown()
+        proxy.stop()
+
+        assertEquals(1L, proxy.stats().clientExperience.wakeBurstPrewarmTriggers)
+    }
+
+    @Test
     fun dcWithoutDirectRedirectAndCfDisabledRecordsUnsupportedAndNoRouteByDc() {
         val client = FakeTcpClientTransport(buildClientHandshake(5, RelayInit.PROTO_TAG_ABRIDGED))
         val server = FakeTcpServerTransport()
