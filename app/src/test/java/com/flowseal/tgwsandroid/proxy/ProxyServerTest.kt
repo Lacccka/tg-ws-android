@@ -2487,9 +2487,24 @@ class ProxyServerTest {
         proxy.stop()
 
         val stats = proxy.stats()
-        assertTrue(stats.badHandshakeStormRecent)
-        assertFalse(stats.clientExperience.likelyReconnectBurst)
-        assertEquals(0L, stats.clientExperience.recentAcceptedHandshakes)
+        val experience = stats.clientExperience
+        assertTrue("invalid handshakes should still trigger bad-handshake storm diagnostics", stats.badHandshakeStormRecent)
+        assertFalse("likelyReconnectBurst leaked invalid handshakes", experience.likelyReconnectBurst)
+        assertFalse("likelyTelegramDisabledProxy leaked invalid handshakes", experience.likelyTelegramDisabledProxy)
+        assertEquals("recentAcceptedHandshakes leaked invalid handshakes", 0L, experience.recentAcceptedHandshakes)
+        assertEquals("recentClientClosedSessions leaked invalid handshakes", 0L, experience.recentClientClosedSessions)
+        assertEquals("recentVeryShortClientClosedSessions leaked invalid handshakes", 0L, experience.recentVeryShortClientClosedSessions)
+        assertEquals("recentShortRemoteEofSessions leaked invalid handshakes", 0L, experience.recentShortRemoteEofSessions)
+        assertEquals("recentConnectionResetSessions leaked invalid handshakes", 0L, experience.recentConnectionResetSessions)
+        assertEquals("recentDirectTimeouts leaked invalid handshakes", 0L, experience.recentDirectTimeouts)
+        assertEquals("recentPoolMisses leaked invalid handshakes", 0L, experience.recentPoolMisses)
+        assertEquals("recentPoolRefillErrors leaked invalid handshakes", 0L, experience.recentPoolRefillErrors)
+        assertEquals("recentPoolStale leaked invalid handshakes", 0L, experience.recentPoolStale)
+        assertTrue("recentUnsupportedDcByDc leaked invalid handshakes: ${experience.recentUnsupportedDcByDc}", experience.recentUnsupportedDcByDc.isEmpty())
+        assertTrue("recentNoRouteByDc leaked invalid handshakes: ${experience.recentNoRouteByDc}", experience.recentNoRouteByDc.isEmpty())
+        assertEquals("recentCfQueueControlledFailures leaked invalid handshakes", 0L, experience.recentCfQueueControlledFailures)
+        assertEquals("recentCfConnectQueueTimeouts leaked invalid handshakes", 0L, experience.recentCfConnectQueueTimeouts)
+        assertNull("idle-wave recovery timing leaked invalid handshakes", experience.timeToFirstSuccessfulRouteAfterIdleMs)
     }
 
     @Test

@@ -593,6 +593,7 @@ class ProxyServer(
     private val activeClients: MutableSet<TcpClientTransport> = Collections.newSetFromMap(ConcurrentHashMap<TcpClientTransport, Boolean>())
     private val connectionsTotal = AtomicLong(0)
     private val connectionsActive = AtomicInteger(0)
+    private val clientExperienceActiveSessions = AtomicInteger(0)
     private val connectionsBad = AtomicLong(0)
     private val recentInvalidHandshakeTimes = ConcurrentLinkedDeque<Long>()
     private val recentAcceptedHandshakeTimes = ConcurrentLinkedDeque<Long>()
@@ -1053,10 +1054,8 @@ class ProxyServer(
             } ?: continue
 
             connectionsTotal.incrementAndGet()
-            val wasIdle = connectionsActive.get() == 0
             activeClients.add(client)
             connectionsActive.incrementAndGet()
-            if (wasIdle) recordRecentEvent(recentIdleWaveAcceptedTimes)
             Thread({ handleClientAndClose(client) }, "ProxyServer-client-${client.remoteLabel}").also {
                 it.isDaemon = true
                 it.start()
@@ -1065,42 +1064,45 @@ class ProxyServer(
     }
 
     private fun handleClientAndClose(client: TcpClientTransport) {
+        var clientExperienceStarted = false
         try {
-            handleClient(client)
+            clientExperienceStarted = handleClient(client)
         } catch (error: Throwable) {
             sessionUnexpectedErrors.incrementAndGet()
             logger.log("${client.remoteLabel} client handler failed: ${failureDetail(error)}")
         } finally {
+            if (clientExperienceStarted) clientExperienceActiveSessions.decrementAndGet()
             activeClients.remove(client)
             connectionsActive.decrementAndGet()
             closeClient(client)
         }
     }
 
-    private fun handleClient(client: TcpClientTransport) {
+    private fun handleClient(client: TcpClientTransport): Boolean {
         val handshake = try {
             client.readExact(MtprotoHandshake.HANDSHAKE_LEN)
         } catch (error: Throwable) {
             markBad("Failed to read MTProto handshake from ${client.remoteLabel}: ${error.message ?: error::class.java.simpleName}")
-            return
+            return false
         }
         if (handshake == null) {
             markBad("Client ${client.remoteLabel} closed before MTProto handshake")
-            return
+            return false
         }
 
         val parsed = try {
             MtprotoHandshake.parse(handshake, config.secretHex)
         } catch (error: IllegalArgumentException) {
             markBad("Invalid proxy configuration or handshake for ${client.remoteLabel}: ${error.message}")
-            return
+            return false
         }
         if (parsed == null) {
             markBad("Invalid MTProto handshake from ${client.remoteLabel}")
-            return
+            return false
         }
 
-        recordAcceptedHandshake()
+        val wasClientExperienceIdle = clientExperienceActiveSessions.getAndIncrement() == 0
+        recordAcceptedHandshake(wasClientExperienceIdle = wasClientExperienceIdle)
         val targetHost = config.dcRedirects[parsed.dcId]
 
         val protoInt = protoIntForProtoTag(parsed.protoTag)
@@ -1118,7 +1120,7 @@ class ProxyServer(
         )
         val splitter = MsgSplitter(relayInit, protoInt)
 
-        if (!waitForNetworkSettlingBeforeRoute(parsed.dcId)) return
+        if (!waitForNetworkSettlingBeforeRoute(parsed.dcId)) return true
 
         val routeAttemptStartGeneration = routeGeneration.get()
         val routeAttemptStartNetwork = currentNetworkStatus
@@ -1130,17 +1132,17 @@ class ProxyServer(
                 logger.log("DC${parsed.dcId} has no direct redirect configured; trying CF fallback")
             }
             if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) {
-                return
+                return true
             }
             recordUnsupportedDc(parsed.dcId)
             recordNoRoute(parsed.dcId)
             markBad("Unsupported DC ${parsed.dcId} from ${client.remoteLabel}; no direct redirect or CF proxy route available")
-            return
+            return true
         }
 
         when (effectiveRouteMode()) {
             NetworkRouteMode.CF_ONLY -> {
-                if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
+                if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return true
                 if (cfDomainHealth.mobileRescueRecommended(parsed.dcId)) {
                     logger.log("DC${parsed.dcId} CF exhausted but CF_ONLY forbids direct rescue")
                 }
@@ -1149,9 +1151,9 @@ class ProxyServer(
             }
             NetworkRouteMode.CF_FIRST -> {
                 if (shouldAttemptActiveWifiDirectRecoveryBeforeCf()) {
-                    if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return
+                    if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return true
                 }
-                if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
+                if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return true
                 val currentGenerationBeforeFallback = routeGeneration.get()
                 if (currentGenerationBeforeFallback != routeAttemptStartGeneration) {
                     routeAttemptNetworkChangedBeforeSelection.incrementAndGet()
@@ -1161,7 +1163,7 @@ class ProxyServer(
                     )
                 }
                 if (shouldAttemptWifiDirectRecovery(routeAttemptStartGeneration)) {
-                    if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return
+                    if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return true
                 }
                 if (routeState.snapshot().effectiveRouteMode == NetworkRouteMode.DIRECT_FIRST && isWifi(currentNetworkStatus)) {
                     logger.log("DC${parsed.dcId} route re-evaluated to direct_first after network change; trying cold direct")
@@ -1176,33 +1178,34 @@ class ProxyServer(
                             timeoutMs = config.directFallbackTimeoutMs,
                             allowWifiDirectRecovery = true,
                         )
-                    ) return
+                    ) return true
                 }
                 var cfFirstDirectFallbackAttempted = false
                 if (isDirectAttemptAllowedForCurrentRoute()) {
                     cfFirstDirectFallbackAttempted = true
                     logger.log("DC${parsed.dcId} trying short direct fallback after CF-first failure")
-                    if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = false, timeoutMs = config.directFallbackTimeoutMs)) return
+                    if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = false, timeoutMs = config.directFallbackTimeoutMs)) return true
                 } else {
                     val rescue = tryMobileDirectRescueIfAllowed(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration)
-                    if (rescue.routed) return
+                    if (rescue.routed) return true
                     if (!rescue.attempted) {
                         directAttemptsSkippedBecauseRoute.incrementAndGet()
                         logger.log("DC${parsed.dcId} direct fallback skipped because effective route mode ${effectiveRouteMode().configValue}")
                     }
                 }
-                if (tryEmergencyDirectFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration, cfFirstDirectFallbackAttempted)) return
+                if (tryEmergencyDirectFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration, cfFirstDirectFallbackAttempted)) return true
                 recordNoRoute(parsed.dcId)
                 logger.log("DC${parsed.dcId} no route available after CF-first attempts")
             }
             NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> {
-                if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = true, timeoutMs = RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)) return
-                if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return
+                if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = true, timeoutMs = RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)) return true
+                if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return true
                 recordNoRoute(parsed.dcId)
                 logger.log("DC${parsed.dcId} no route available after direct WebSocket attempts")
                 downgradeDirectRouteBecauseHealthDegraded("no route available after direct attempts")
             }
         }
+        return true
     }
 
 
@@ -2024,11 +2027,15 @@ class ProxyServer(
         pruneRecentHandshakeWindows(now)
     }
 
-    private fun recordAcceptedHandshake(now: Long = System.currentTimeMillis()) {
+    private fun recordAcceptedHandshake(
+        now: Long = System.currentTimeMillis(),
+        wasClientExperienceIdle: Boolean = false,
+    ) {
         lastAcceptedHandshakeTimeMs.set(now)
         recentAcceptedHandshakeTimes.addLast(now)
-        if (recentIdleWaveAcceptedTimes.peekLast()?.let { now - it <= CLIENT_EXPERIENCE_RECENT_WINDOW_MS } == true) {
-            currentIdleWaveStartMs.compareAndSet(0L, recentIdleWaveAcceptedTimes.peekLast() ?: now)
+        if (wasClientExperienceIdle) {
+            recordRecentEvent(recentIdleWaveAcceptedTimes, now)
+            currentIdleWaveStartMs.compareAndSet(0L, now)
             lastTimeToFirstSuccessfulRouteAfterIdleMs.set(-1L)
         }
         pruneRecentHandshakeWindows(now)
@@ -2085,10 +2092,11 @@ class ProxyServer(
         val qualitySignals = recentPoolMissTimes.isNotEmpty() || recentVeryShortClientClosedTimes.isNotEmpty() ||
             recentShortRemoteEofTimes.isNotEmpty() || recentDirectTimeoutTimes.isNotEmpty() || unsupported.isNotEmpty() || noRoute.isNotEmpty() ||
             recentCfQueueControlledFailureTimes.isNotEmpty() || recentCfConnectQueueTimeoutTimes.isNotEmpty()
-        val likelyBurst = recentIdleWaveAcceptedTimes.isNotEmpty() && accepted >= RECONNECT_BURST_MIN_HANDSHAKES && qualitySignals
+        val hasAcceptedHandshake = accepted > 0L
+        val likelyBurst = hasAcceptedHandshake && recentIdleWaveAcceptedTimes.isNotEmpty() && accepted >= RECONNECT_BURST_MIN_HANDSHAKES && qualitySignals
         val disruptiveEnds = recentVeryShortClientClosedTimes.size + recentShortRemoteEofTimes.size + recentConnectionResetTimes.size
         val routeAgeMs = lastSuccessfulRouteTimeMs.get().takeIf { it > 0L }?.let { (now - it).coerceAtLeast(0L) }
-        val likelyDisabled = accepted >= TELEGRAM_DISABLED_MIN_HANDSHAKES && disruptiveEnds >= TELEGRAM_DISABLED_MIN_DISRUPTIVE_ENDS &&
+        val likelyDisabled = hasAcceptedHandshake && accepted >= TELEGRAM_DISABLED_MIN_HANDSHAKES && disruptiveEnds >= TELEGRAM_DISABLED_MIN_DISRUPTIVE_ENDS &&
             (routeAgeMs == null || routeAgeMs >= TELEGRAM_DISABLED_NO_ROUTE_MS) && connectionsActive.get() == 0 && running.get()
         return ClientExperienceDiagnostics(
             likelyReconnectBurst = likelyBurst,
