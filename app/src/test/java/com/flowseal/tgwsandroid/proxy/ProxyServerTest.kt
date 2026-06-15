@@ -2483,7 +2483,7 @@ class ProxyServerTest {
 
         proxy.start()
         repeat(120) { server.enqueue(FakeTcpClientTransport(invalid)) }
-        waitUntil { proxy.stats().recentInvalidHandshakeCount >= 100L }
+        waitUntil({ invalidHandshakeStormStatsMessage(proxy) }) { proxy.stats().recentInvalidHandshakeCount >= 100L }
         proxy.stop()
 
         val stats = proxy.stats()
@@ -2596,13 +2596,38 @@ class ProxyServerTest {
         return cipher.doFinal(input)
     }
 
+    private fun invalidHandshakeStormStatsMessage(proxy: ProxyServer): String {
+        val stats = proxy.stats()
+        val experience = stats.clientExperience
+        return "invalid handshake storm diagnostics; last stats snapshot: " +
+            "connectionsBad=${stats.connectionsBad}, " +
+            "recentInvalidHandshakeCount=${stats.recentInvalidHandshakeCount}, " +
+            "badHandshakeStormRecent=${stats.badHandshakeStormRecent}, " +
+            "badHandshakeStormCumulative=${stats.badHandshakeStormCumulative}, " +
+            "clientExperience.recentAcceptedHandshakes=${experience.recentAcceptedHandshakes}, " +
+            "clientExperienceActiveSessions=${proxy.clientExperienceActiveSessionsForTest()}, " +
+            "clientExperience.likelyReconnectBurst=${experience.likelyReconnectBurst}, " +
+            "clientExperience.likelyTelegramDisabledProxy=${experience.likelyTelegramDisabledProxy}"
+    }
+
+    private fun ProxyServer.clientExperienceActiveSessionsForTest(): Int {
+        val field = ProxyServer::class.java.getDeclaredField("clientExperienceActiveSessions")
+        field.isAccessible = true
+        val counter = field.get(this) as java.util.concurrent.atomic.AtomicInteger
+        return counter.get()
+    }
+
     private fun waitUntil(message: String = "condition", predicate: () -> Boolean) {
+        waitUntil({ message }, predicate)
+    }
+
+    private fun waitUntil(message: () -> String, predicate: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
         while (System.nanoTime() < deadline) {
             if (predicate()) return
             Thread.sleep(10)
         }
-        throw AssertionError("Timed out waiting for $message")
+        throw AssertionError("Timed out waiting for ${message()}")
     }
 
     private object DeterministicRandomBytes : RelayInit.RandomBytes {
