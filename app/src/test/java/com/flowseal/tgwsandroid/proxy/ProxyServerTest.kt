@@ -247,6 +247,15 @@ class ProxyServerTest {
     }
 
     @Test
+    fun invalidHandshakeVectorsAreRejectedByParserWithBaseSecret() {
+        val invalidWrongSecret = handshakeVector("invalid_wrong_secret").getString("handshake_hex").hexToBytes()
+        assertNull(MtprotoHandshake.parse(invalidWrongSecret, baseConfig().secretHex))
+
+        val invalidProtoTag = handshakeVector("invalid_proto_tag").getString("handshake_hex").hexToBytes()
+        assertNull(MtprotoHandshake.parse(invalidProtoTag, baseConfig().secretHex))
+    }
+
+    @Test
     fun invalidHandshakeClosesClientAndIncrementsBadCounter() {
         val invalid = handshakeVector("invalid_wrong_secret")
         val client = FakeTcpClientTransport(invalid.getString("handshake_hex").hexToBytes())
@@ -2477,7 +2486,9 @@ class ProxyServerTest {
 
     @Test
     fun invalidHandshakeStormRemainsSeparateFromClientExperienceDiagnostics() {
-        val invalid = handshakeVector("invalid_wrong_secret").getString("handshake_hex").hexToBytes()
+        val invalid = handshakeVector("invalid_proto_tag").getString("handshake_hex").hexToBytes()
+        assertNull(MtprotoHandshake.parse(invalid, baseConfig().secretHex))
+
         val server = FakeTcpServerTransport()
         val proxy = newProxy(server = server)
 
@@ -2488,6 +2499,8 @@ class ProxyServerTest {
 
         val stats = proxy.stats()
         val experience = stats.clientExperience
+        assertTrue("invalid handshakes should increment recent invalid handshakes", stats.recentInvalidHandshakeCount >= 100L)
+        assertEquals("invalid handshakes should increment bad connections", 120L, stats.connectionsBad)
         assertTrue("invalid handshakes should still trigger bad-handshake storm diagnostics", stats.badHandshakeStormRecent)
         assertFalse("likelyReconnectBurst leaked invalid handshakes", experience.likelyReconnectBurst)
         assertFalse("likelyTelegramDisabledProxy leaked invalid handshakes", experience.likelyTelegramDisabledProxy)

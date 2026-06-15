@@ -73,9 +73,9 @@
         },
         {
             "expected": null,
-            "handshake_hex": "6da0c99c9407baa03ad30fa479e43057e05f5a4c1c9bb2269a482d2bd44b4ec52feb2eb88c285f3e7845a7ce5f7ae19ce88a6009befc7e77132fbd133d0eedcf",
+            "handshake_hex": "7ff4317a5f73f847ff040252cfad95526ed788fb8641b41d3f398dbae594b316988caab81e69be361eb86017bf5e8f4798cce3352f1865745ead0100d4f3837d",
             "name": "invalid_wrong_secret",
-            "secret_hex": "00112233445566778899aabbccddeeff"
+            "secret_hex": "0123456789abcdeffedcba9876543210"
         },
         {
             "expected": null,
