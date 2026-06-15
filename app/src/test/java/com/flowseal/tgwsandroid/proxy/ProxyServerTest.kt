@@ -2511,9 +2511,12 @@ class ProxyServerTest {
         waitUntil { proxy.stats().clientExperience.wakeBurstPrewarmSkippedNoDirectRedirect == 1L }
         proxy.stop()
 
-        assertEquals(1L, proxy.stats().clientExperience.wakeBurstPrewarmSkippedNoDirectRedirect)
-        assertEquals(0L, proxy.stats().clientExperience.wakeBurstPrewarmTriggers)
-        assertEquals(0, attempts.get())
+        val stats = proxy.stats()
+        assertEquals(1L, stats.clientExperience.wakeBurstPrewarmSkippedNoDirectRedirect)
+        assertEquals(0L, stats.clientExperience.wakeBurstPrewarmTriggers)
+        assertEquals(0L, stats.clientExperience.wakeBurstPrewarmAttempts)
+        assertEquals(0L, stats.clientExperience.wakeBurstPrewarmSuccesses)
+        assertEquals(0L, stats.clientExperience.wakeBurstPrewarmFailures)
     }
 
     @Test
