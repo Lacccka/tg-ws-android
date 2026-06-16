@@ -23,7 +23,7 @@ class MainUiModelTest {
         val auto = UserRouteModes.normalOptions.single { it.routeMode == NetworkRouteMode.AUTO }
 
         assertEquals("Авто", auto.title)
-        assertEquals("Рекомендуется", auto.subtitle)
+        assertEquals("Рекомендуется. Приложение само выбирает подходящий режим.", auto.subtitle)
     }
 
     @Test
@@ -43,15 +43,15 @@ class MainUiModelTest {
         val auto = UserRouteModes.normalOptions.single { it.routeMode == NetworkRouteMode.AUTO }
         val direct = UserRouteModes.normalOptions.single { it.routeMode == NetworkRouteMode.DIRECT_FIRST }
 
-        assertEquals("✓ Авто\nРекомендуется", UserRouteModes.buttonText(auto, selected = true))
+        assertEquals("✓ Авто\nРекомендуется. Приложение само выбирает подходящий режим.", UserRouteModes.buttonText(auto, selected = true))
         assertEquals("Быстрый Wi-Fi", UserRouteModes.buttonText(direct, selected = false))
     }
 
     @Test
     fun selectedRouteHelperTextChangesBySelectedMode() {
-        assertEquals("Авто выбирает быстрый маршрут на Wi-Fi и совместимый на мобильной сети.", UserRouteModes.helperFor(NetworkRouteMode.AUTO))
-        assertEquals("Подходит для Wi-Fi. На мобильной сети может не работать.", UserRouteModes.helperFor(NetworkRouteMode.DIRECT_FIRST))
-        assertEquals("Подходит для Wi-Fi и мобильной сети, но ping может быть выше.", UserRouteModes.helperFor(NetworkRouteMode.CF_FIRST))
+        assertEquals("Рекомендуется. Приложение само выбирает подходящий режим.", UserRouteModes.helperFor(NetworkRouteMode.AUTO))
+        assertEquals("Для стабильного Wi-Fi. Может подключаться быстрее.", UserRouteModes.helperFor(NetworkRouteMode.DIRECT_FIRST))
+        assertEquals("Для мобильной сети и нестабильного подключения.", UserRouteModes.helperFor(NetworkRouteMode.CF_FIRST))
     }
 
     @Test
@@ -62,7 +62,7 @@ class MainUiModelTest {
     @Test
     fun developerDiagnosticsMayExposeRawRouteMode() {
         assertEquals("CF_ONLY", DeveloperUiModel.routeModeValue(NetworkRouteMode.CF_ONLY, developerModeEnabled = true))
-        assertEquals("cf_only", DeveloperUiModel.routeModeValue(NetworkRouteMode.CF_ONLY, developerModeEnabled = false))
+        assertEquals("Совместимый", DeveloperUiModel.routeModeValue(NetworkRouteMode.CF_ONLY, developerModeEnabled = false))
     }
 
     @Test

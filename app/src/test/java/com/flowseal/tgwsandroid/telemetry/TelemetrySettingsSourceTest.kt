@@ -18,8 +18,8 @@ class TelemetrySettingsSourceTest {
     }
 
     @Test fun clickingSendTestTelemetryIsOnlyManualSender() {
-        assertTrue(source.contains("telemetryTestButton = createButton(\"Send test telemetry\") { sendTestTelemetry() }"))
-        assertEquals(1, Regex("createButton\\(\\\"Send test telemetry\\\"\\) \\{ sendTestTelemetry\\(\\) \\}").findAll(source).count())
+        assertTrue(source.contains("telemetryTestButton = createButton(\"Отправить тестовую телеметрию\") { sendTestTelemetry() }"))
+        assertEquals(1, Regex("createButton\\(\\\"Отправить тестовую телеметрию\\\"\\) \\{ sendTestTelemetry\\(\\) \\}").findAll(source).count())
     }
 
     @Test fun telemetryDisabledBlocksManualSendBeforeNetworkCall() {

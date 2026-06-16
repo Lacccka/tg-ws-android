@@ -5,13 +5,13 @@ import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 
 object RussianUiText {
     const val ROUTE_AUTO = "Авто"
-    const val ROUTE_AUTO_SUBTITLE = "Рекомендуется"
+    const val ROUTE_AUTO_SUBTITLE = "Рекомендуется. Приложение само выбирает подходящий режим."
     const val ROUTE_FAST_WIFI = "Быстрый Wi-Fi"
     const val ROUTE_COMPATIBLE_SHORT = "Совместимый"
     const val ROUTE_AUTO_SELECTION = "Автоматический выбор"
-    const val ROUTE_AUTO_HELPER = "Авто выбирает быстрый маршрут на Wi-Fi и совместимый на мобильной сети."
-    const val ROUTE_FAST_WIFI_HELPER = "Подходит для Wi-Fi. На мобильной сети может не работать."
-    const val ROUTE_COMPATIBLE_HELPER = "Подходит для Wi-Fi и мобильной сети, но ping может быть выше."
+    const val ROUTE_AUTO_HELPER = ROUTE_AUTO_SUBTITLE
+    const val ROUTE_FAST_WIFI_HELPER = "Для стабильного Wi-Fi. Может подключаться быстрее."
+    const val ROUTE_COMPATIBLE_HELPER = "Для мобильной сети и нестабильного подключения."
     const val MOBILE_COMPATIBLE_ROUTE_HELPER = "На мобильной сети используется совместимый маршрут. Ping может быть выше."
 }
 
@@ -55,7 +55,7 @@ object UserRouteModes {
     )
 
     fun labelFor(mode: NetworkRouteMode): String = normalOptions.firstOrNull { it.routeMode == mode }?.title
-        ?: mode.configValue
+        ?: RussianUiText.ROUTE_COMPATIBLE_SHORT
 
     fun buttonText(option: UserRouteModeOption, selected: Boolean): String = buildString {
         if (selected) append("✓ ")

@@ -42,6 +42,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import com.flowseal.tgwsandroid.config.AppConfigStore
+import com.flowseal.tgwsandroid.config.Appearance
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.service.LogSeverity
 import com.flowseal.tgwsandroid.service.ProxyForegroundService
@@ -70,7 +71,10 @@ class MainActivity : Activity() {
 
     private lateinit var batteryStatusText: TextView
     private lateinit var routeModeValueText: TextView
-    private val routeModeButtons = mutableListOf<Pair<UserRouteModeOption, Button>>()
+    private lateinit var notificationStatusText: TextView
+    private lateinit var autostartStatusText: TextView
+    private lateinit var telemetryStatusText: TextView
+    private lateinit var themeStatusText: TextView
     private lateinit var secretStateText: TextView
     private lateinit var diagnosticsSummaryText: TextView
     private lateinit var restartProxyButton: Button
@@ -208,9 +212,12 @@ class MainActivity : Activity() {
         val density = resources.displayMetrics.density
         val padding = (16 * density).toInt()
         val rowGap = (8 * density).toInt()
-        routeModeButtons.clear()
         routeModeValueText = createValueText()
+        notificationStatusText = createValueText()
         batteryStatusText = createValueText()
+        autostartStatusText = createValueText()
+        telemetryStatusText = createValueText()
+        themeStatusText = createValueText()
         secretStateText = createValueText().apply { setTextColor(COLOR_SUCCESS) }
         restartProxyHintText = createValueText().apply { setTextColor(COLOR_TEXT_SECONDARY) }
         restartProxyButton = createButton("Перезагрузить прокси") { restartProxyService() }
@@ -226,7 +233,7 @@ class MainActivity : Activity() {
                 refreshState()
             }
         }
-        telemetryTestButton = createButton("Send test telemetry") { sendTestTelemetry() }
+        telemetryTestButton = createButton("Отправить тестовую телеметрию") { sendTestTelemetry() }
         developerModeCheckBox = CheckBox(this).apply {
             text = "Режим разработчика"
             isAllCaps = false
@@ -247,6 +254,7 @@ class MainActivity : Activity() {
             addView(createTextRow("Состояние резервных доменов", cfDetailsText), matchWrapParams(topMargin = rowGap))
             addView(createTextRow("Состояние прямого маршрута", directDetailsText), matchWrapParams(topMargin = rowGap))
             addView(createSectionTitle("Действия"), matchWrapParams(topMargin = rowGap))
+            addView(telemetryTestButton, matchWrapParams(topMargin = rowGap))
             addView(createButton("Копировать диагностику") { copyDiagnostics() }, matchWrapParams(topMargin = rowGap))
             addView(createButton("Очистить логи") {
                 ProxyForegroundService.State.clearLogs()
@@ -265,30 +273,47 @@ class MainActivity : Activity() {
             setPadding(padding, padding, padding, padding)
             setBackgroundColor(COLOR_BACKGROUND)
             addHeader()
-            addView(SettingsSection("Режим подключения") {
-                UserRouteModes.normalOptions.forEach { option ->
-                    addView(createRouteModeButton(option), matchWrapParams(topMargin = rowGap))
-                }
-                addView(routeModeValueText, matchWrapParams(topMargin = rowGap))
+            addView(SettingsSection("Важное для стабильной работы") {
+                addView(SettingsRow(
+                    title = "Уведомления",
+                    description = "Показывают состояние прокси.",
+                    value = notificationStatusText,
+                    badge = Badge("Рекомендуется"),
+                    onClick = { openNotificationSettingsFlow() },
+                ), matchWrapParams())
+                addView(SettingsRow(
+                    title = "Работа в фоне",
+                    description = "Помогает не останавливать прокси при блокировке экрана.",
+                    value = batteryStatusText,
+                    badge = Badge("Важно", COLOR_WARNING, Color.WHITE),
+                    onClick = { openBatterySettings() },
+                ), matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow(
+                    title = "Автозапуск",
+                    description = "Позволяет запускаться после перезагрузки устройства.",
+                    value = autostartStatusText,
+                    badge = Badge("Важно", COLOR_WARNING, Color.WHITE),
+                    onClick = { openAutostartSettings() },
+                ), matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow(
+                    title = "Анонимная диагностика",
+                    description = "Помогает улучшать стабильность без личных данных.",
+                    value = telemetryStatusText,
+                    badge = Badge("Рекомендуется"),
+                    onClick = { toggleTelemetry() },
+                ), matchWrapParams(topMargin = rowGap))
             }, cardParams())
-            addView(SettingsSection(SettingsUiText.BATTERY_BACKGROUND_TITLE) {
-                addView(batteryStatusText, matchWrapParams())
-                addView(createButton("Открыть настройки батареи") { openBatterySettings() }, matchWrapParams(topMargin = rowGap))
-                addView(createValueText().apply {
-                    text = if (BatterySettingsIntentPlan.isXiaomiFamily(Build.MANUFACTURER.orEmpty())) {
-                        SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT
-                    } else {
-                        SettingsUiText.BATTERY_BUTTON_HELP_TEXT
-                    }
-                    setTextColor(COLOR_TEXT_SECONDARY)
-                }, matchWrapParams(topMargin = rowGap))
+            addView(SettingsSection("Подключение") {
+                addView(ConnectionModeSelector(), matchWrapParams())
+                addView(routeModeValueText, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
-            addView(SettingsSection(SettingsUiText.QS_TILE_TITLE) {
-                addView(createValueText().apply {
-                    text = SettingsUiText.QS_TILE_TEXT
-                    setTextColor(COLOR_TEXT_SECONDARY)
-                }, matchWrapParams())
-                addView(createButton(SettingsUiText.QS_TILE_HELP_BUTTON) { showQuickSettingsTileHelp() }, matchWrapParams(topMargin = rowGap))
+            addView(SettingsSection("Внешний вид") {
+                addView(SettingsRow(
+                    title = "Тема",
+                    description = "Выберите оформление приложения.",
+                    value = themeStatusText,
+                    onClick = { showThemeDialog() },
+                ), matchWrapParams())
             }, cardParams(topMargin = padding))
             addView(SettingsSection("Telegram") {
                 addView(createButton("Обновить подключение") { confirmResetSecret() }, matchWrapParams())
@@ -298,17 +323,11 @@ class MainActivity : Activity() {
                 addView(restartProxyButton, matchWrapParams())
                 addView(restartProxyHintText, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
-            addView(SettingsSection("Анонимная диагностика") {
-                addView(telemetryCheckBox, matchWrapParams())
-                addView(createValueText().apply {
-                    text = "Отправляется только тестовое событие с install_id и контекстом устройства. Secret, proxy link, raw logs, real IP, SSID/BSSID и аппаратные идентификаторы не отправляются."
-                    setTextColor(COLOR_TEXT_SECONDARY)
-                }, matchWrapParams(topMargin = rowGap))
-                addView(telemetryTestButton, matchWrapParams(topMargin = rowGap))
-            }, cardParams(topMargin = padding))
-            addView(SettingsSection("Дополнительно") {
+            addView(SettingsSection("Для разработчика") {
                 addView(developerModeCheckBox, matchWrapParams())
-            }, cardParams(topMargin = padding))
+                developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+                addView(developerSection, matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding, bottomMargin = padding))
 
         }
         return ScrollView(this).apply {
@@ -333,25 +352,33 @@ class MainActivity : Activity() {
         }, matchWrapParams())
     }
 
-    private fun createRouteModeButton(option: UserRouteModeOption): Button {
-        val button = createButton(
-            UserRouteModes.buttonText(option, option.routeMode == ProxyRuntimeConfig.appConfig(applicationContext).routeMode),
-        ) {
-            val store = AppConfigStore.from(applicationContext)
-            store.saveConfig(store.loadConfig().copy(routeMode = option.routeMode))
-            ProxyRuntimeConfig.initialize(applicationContext)
-            val running = ProxyForegroundService.State.running
-            pendingRestartRequired = PendingRestartModel.pendingAfterRouteModeChange(running)
-            val logMessage = if (pendingRestartRequired) {
-                "route mode changed to ${option.routeMode.configValue}; restart required"
-            } else {
-                "route mode changed to ${option.routeMode.configValue}; will apply on next proxy start"
-            }
-            ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
-            refreshState()
+    private fun setRouteMode(routeMode: NetworkRouteMode) {
+        val store = AppConfigStore.from(applicationContext)
+        store.saveConfig(store.loadConfig().copy(routeMode = routeMode))
+        ProxyRuntimeConfig.initialize(applicationContext)
+        val running = ProxyForegroundService.State.running
+        pendingRestartRequired = PendingRestartModel.pendingAfterRouteModeChange(running)
+        val logMessage = if (pendingRestartRequired) {
+            "route mode changed to ${routeMode.configValue}; restart required"
+        } else {
+            "route mode changed to ${routeMode.configValue}; will apply on next proxy start"
         }
-        routeModeButtons.add(option to button)
-        return button
+        ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
+        refreshState()
+    }
+
+    private fun showConnectionModeDialog() {
+        val options = UserRouteModes.normalOptions
+        val labels = options.map { it.title }.toTypedArray()
+        val current = ProxyRuntimeConfig.appConfig(applicationContext).routeMode
+        AlertDialog.Builder(this)
+            .setTitle("Режим подключения")
+            .setSingleChoiceItems(labels, options.indexOfFirst { it.routeMode == current }.coerceAtLeast(0)) { dialog, index ->
+                setRouteMode(options[index].routeMode)
+                dialog.dismiss()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun refreshState() {
@@ -403,11 +430,12 @@ class MainActivity : Activity() {
 
         if (::routeModeValueText.isInitialized) {
             val config = ProxyRuntimeConfig.appConfig(applicationContext)
-            routeModeButtons.forEach { (option, button) ->
-                button.text = UserRouteModes.buttonText(option, option.routeMode == config.routeMode)
-            }
             routeModeValueText.text = UserRouteModes.helperFor(config.routeMode)
-            batteryStatusText.text = SettingsUiText.batteryStatusLine(userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus))
+            notificationStatusText.text = if (notificationPermissionMissing()) "Выключены" else "Включены"
+            batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
+            autostartStatusText.text = if (config.autostart) "Включён" else "Не проверено"
+            telemetryStatusText.text = if (config.telemetryEnabled) "Включена" else "Выключена"
+            themeStatusText.text = appearanceLabel(config.appearance)
             developerModeCheckBox.isChecked = developerModeEnabled()
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
             restartProxyButton.isEnabled = PendingRestartModel.restartActionEnabled(running)
@@ -797,6 +825,47 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun openAutostartSettings() {
+        val config = AppConfigStore.from(applicationContext).loadConfig()
+        AppConfigStore.from(applicationContext).saveConfig(config.copy(autostart = true))
+        ProxyRuntimeConfig.initialize(applicationContext)
+        openBatterySettings()
+        Toast.makeText(this, "Проверьте автозапуск в настройках устройства", Toast.LENGTH_LONG).show()
+        refreshState()
+    }
+
+    private fun toggleTelemetry() {
+        val store = AppConfigStore.from(applicationContext)
+        val enabled = !store.loadConfig().telemetryEnabled
+        store.saveConfig(store.loadConfig().copy(telemetryEnabled = enabled))
+        ProxyRuntimeConfig.initialize(applicationContext)
+        ProxyForegroundService.State.addLog("telemetry_enabled changed to $enabled", LogSeverity.INFO, "ui")
+        Toast.makeText(this, if (enabled) "Анонимная диагностика включена" else "Анонимная диагностика выключена", Toast.LENGTH_SHORT).show()
+        refreshState()
+    }
+
+    private fun showThemeDialog() {
+        val options = Appearance.entries
+        val labels = options.map(::appearanceLabel).toTypedArray()
+        val current = ProxyRuntimeConfig.appConfig(applicationContext).appearance
+        AlertDialog.Builder(this)
+            .setTitle("Тема")
+            .setSingleChoiceItems(labels, options.indexOf(current).coerceAtLeast(0)) { dialog, index ->
+                val store = AppConfigStore.from(applicationContext)
+                store.saveConfig(store.loadConfig().copy(appearance = options[index]))
+                ProxyRuntimeConfig.initialize(applicationContext)
+                refreshState()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun appearanceLabel(appearance: Appearance): String = when (appearance) {
+        Appearance.AUTO -> "Авто"
+        Appearance.LIGHT -> "Светлая"
+        Appearance.DARK -> "Тёмная"
+    }
 
     private fun openNotificationSettingsFlow() {
         if (notificationPermissionMissing()) {
@@ -859,12 +928,12 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Сначала включите анонимную диагностику", Toast.LENGTH_SHORT).show()
             return
         }
-        Toast.makeText(this, "Отправка test telemetry...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Отправка тестовой телеметрии...", Toast.LENGTH_SHORT).show()
         thread(name = "test-telemetry", isDaemon = true) {
             val sent = Telemetry.sendTestEvent(applicationContext, config)
             ProxyForegroundService.State.addLog("test telemetry send result=$sent", if (sent) LogSeverity.INFO else LogSeverity.WARN, "ui")
             handler.post {
-                Toast.makeText(this, if (sent) "Test telemetry отправлена" else "Не удалось отправить test telemetry", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, if (sent) "Тестовая телеметрия отправлена" else "Не удалось отправить тестовую телеметрию", Toast.LENGTH_SHORT).show()
                 refreshState()
             }
         }
@@ -963,6 +1032,57 @@ class MainActivity : Activity() {
     }
 
     private fun SettingsRow(label: String, value: TextView): LinearLayout = createTextRow(label, value)
+
+    private fun SettingsRow(
+        title: String,
+        description: String,
+        value: TextView,
+        badge: TextView? = null,
+        onClick: ((View) -> Unit)? = null,
+    ): LinearLayout {
+        val density = resources.displayMetrics.density
+        val gap = (8 * density).toInt()
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            if (onClick != null) {
+                isClickable = true
+                isFocusable = true
+                foreground = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground)).use { attrs -> attrs.getDrawable(0) }
+                setOnClickListener(onClick)
+            }
+            val header = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(TextView(this@MainActivity).apply {
+                    text = title
+                    textSize = 15f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(COLOR_TEXT_PRIMARY)
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                if (badge != null) addView(badge, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            }
+            addView(header, matchWrapParams())
+            addView(value.apply {
+                textSize = 14f
+                setTextColor(COLOR_TEXT_PRIMARY)
+            }, matchWrapParams(topMargin = 2))
+            addView(createValueText().apply {
+                text = description
+                setTextColor(COLOR_TEXT_SECONDARY)
+            }, matchWrapParams(topMargin = gap / 2))
+        }
+    }
+
+    private fun ConnectionModeSelector(): LinearLayout {
+        val config = ProxyRuntimeConfig.appConfig(applicationContext)
+        val current = UserRouteModes.normalOptions.firstOrNull { it.routeMode == config.routeMode }
+            ?: UserRouteModes.normalOptions.first()
+        return SettingsRow(
+            title = "Режим подключения",
+            description = current.subtitle ?: "",
+            value = createValueText().apply { text = current.title },
+            onClick = { showConnectionModeDialog() },
+        )
+    }
 
     private fun StatusChip(text: String): TextView = Badge(text, COLOR_ACCENT, Color.WHITE)
 
