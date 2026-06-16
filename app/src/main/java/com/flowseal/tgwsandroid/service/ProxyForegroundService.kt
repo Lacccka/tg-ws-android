@@ -26,6 +26,7 @@ import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import com.flowseal.tgwsandroid.telemetry.Telemetry
 import com.flowseal.tgwsandroid.telemetry.TelemetryAggregator
+import com.flowseal.tgwsandroid.telemetry.BatteryRestrictionDiagnostics
 import java.io.File
 import java.time.Instant
 import java.time.LocalDateTime
@@ -461,7 +462,14 @@ class ProxyForegroundService : Service() {
             State.updateStats(stats)
             State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
             if (stats != null) {
-                telemetryAggregator.recordStats(stats, foregroundServiceActive = State.running, wakeLockActive = State.isWakeLockHeld())
+                telemetryAggregator.recordStats(
+                    stats,
+                    foregroundServiceActive = State.running,
+                    wakeLockActive = State.isWakeLockHeld(),
+                    batteryRestrictionDetected = BatteryRestrictionDiagnostics.collect(applicationContext).restrictionDetected,
+                    previousRunEndedUnexpectedly = State.previousRunEndedUnexpectedly(),
+                    unexpectedStopDetected = State.unexpectedStopDetected(),
+                )
                 sendQueuedTelemetrySnapshots()
             }
             State.markWatchdogHeartbeat()
@@ -768,6 +776,10 @@ class ProxyForegroundService : Service() {
         }
 
         fun isWakeLockHeld(): Boolean = wakeLockHeld
+
+        fun previousRunEndedUnexpectedly(): Boolean = previousRun?.wasUnexpected == true
+
+        fun unexpectedStopDetected(): Boolean = previousRunEndedUnexpectedly()
 
         fun updateStats(stats: ProxyServerStats?) {
             statsSnapshot = stats

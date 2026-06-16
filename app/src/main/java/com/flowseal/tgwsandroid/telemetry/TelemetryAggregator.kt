@@ -26,6 +26,7 @@ class TelemetryAggregator(
     private var directHealthState: String? = null
     private var lastRouteChangeReason: String? = null
     private var activeSessions: Int? = null
+    private var lastUnsupportedDc: Long? = null
 
     @Synchronized fun recordCounter(name: String, delta: Long = 1L) {
         if (!telemetryEnabled()) return
@@ -38,7 +39,14 @@ class TelemetryAggregator(
         flags[name] = (flags[name] == true) || value
     }
 
-    @Synchronized fun recordStats(stats: ProxyServerStats, foregroundServiceActive: Boolean, wakeLockActive: Boolean) {
+    @Synchronized fun recordStats(
+        stats: ProxyServerStats,
+        foregroundServiceActive: Boolean,
+        wakeLockActive: Boolean,
+        batteryRestrictionDetected: Boolean = false,
+        previousRunEndedUnexpectedly: Boolean = false,
+        unexpectedStopDetected: Boolean = false,
+    ) {
         if (!telemetryEnabled()) return
         routeMode = stats.routeMode.uppercase()
         effectiveRoute = stats.effectiveRouteMode
@@ -48,6 +56,9 @@ class TelemetryAggregator(
         activeSessions = stats.connectionsActive
         recordFlag("foreground_service_active", foregroundServiceActive)
         recordFlag("wake_lock_active_at_last_marker", wakeLockActive)
+        if (batteryRestrictionDetected) recordFlag("battery_restriction_detected")
+        if (previousRunEndedUnexpectedly) recordFlag("previous_run_ended_unexpectedly")
+        if (unexpectedStopDetected || previousRunEndedUnexpectedly) recordFlag("unexpected_stop_detected")
 
         val previous = lastStats
         if (previous != null) {
@@ -64,7 +75,12 @@ class TelemetryAggregator(
             recordDelta("no_route", previous.networkNoneEvents, stats.networkNoneEvents)
             recordDelta("handshake_accepted", previous.connectionsTotal, stats.connectionsTotal)
             recordDelta("session_unexpected_error", previous.sessionUnexpectedErrors, stats.sessionUnexpectedErrors)
+            recordDelta("unsupported_dc", previous.unsupportedDc, stats.unsupportedDc)
         }
+        deriveInferredDiagnostics(stats)
+        val previousUnsupported = lastUnsupportedDc
+        if (previous == null && previousUnsupported != null) recordCounter("unsupported_dc", (stats.unsupportedDc - previousUnsupported).coerceAtLeast(0L))
+        lastUnsupportedDc = stats.unsupportedDc
         lastStats = stats
         maybeFlush()
     }
@@ -92,6 +108,33 @@ class TelemetryAggregator(
     @Synchronized fun currentDroppedSnapshotsCount(): Long = droppedSnapshotsCount
 
     private fun recordDelta(name: String, previous: Long, current: Long) = recordCounter(name, (current - previous).coerceAtLeast(0L))
+
+    private fun deriveInferredDiagnostics(stats: ProxyServerStats) {
+        val cfQueueDegraded = (counters["cf_queue_failure"] ?: 0L) > 0L ||
+            (counters["cf_429"] ?: 0L) > 0L ||
+            stats.clientExperience.recentCfQueueControlledFailures > 0L ||
+            stats.clientExperience.recentCfConnectQueueTimeouts > 0L ||
+            stats.cfPressureReasonByDc.values.any { it.contains("degraded", ignoreCase = true) || it.contains("queue", ignoreCase = true) }
+        if (cfQueueDegraded) recordFlag("cf_queue_degraded")
+
+        val handshakeAccepted = counters["handshake_accepted"] ?: 0L
+        val clientClosed = counters["client_closed"] ?: 0L
+        val veryShortSession = counters["very_short_session"] ?: 0L
+        val connectionReset = counters["connection_reset"] ?: 0L
+        val routeChanged = counters["route_changed"] ?: 0L
+        val heuristicReconnectBurst = handshakeAccepted >= 10L &&
+            (clientClosed >= 5L || veryShortSession >= 3L || connectionReset >= 3L || routeChanged >= 2L)
+        if (stats.clientExperience.likelyReconnectBurst || heuristicReconnectBurst) recordFlag("reconnect_burst_detected")
+
+        val noFullProxyFailure = foregroundServiceActive() && stats.connectionsActive <= 1 && stats.sessionUnexpectedErrors == 0L
+        val conservativeTelegramDisabled = noFullProxyFailure && handshakeAccepted > 0L &&
+            (veryShortSession >= 3L || clientClosed >= 5L) && stats.connectionsActive <= 1
+        if (stats.clientExperience.likelyTelegramDisabledProxy || conservativeTelegramDisabled) {
+            recordFlag("telegram_likely_disabled_proxy")
+        }
+    }
+
+    private fun foregroundServiceActive(): Boolean = flags["foreground_service_active"] == true
 
     private fun flushLocked(now: Long): JSONObject? {
         if (counters.isEmpty() && flags.isEmpty()) return null
@@ -121,10 +164,7 @@ class TelemetryAggregator(
     }
 
     companion object {
-        // TODO: wire flags that do not yet have safe existing diagnostics sources: reconnect_burst_detected,
-        // telegram_likely_disabled_proxy, cf_queue_degraded, battery_restriction_detected,
-        // unexpected_stop_detected, previous_run_ended_unexpectedly.
-        // TODO: wire unsupported_dc counter when a safe existing source is available.
+        // TODO: refine unexpected_stop_detected when Android lifecycle exposes a current-session non-user stop signal beyond previous-run marker.
         const val DEFAULT_WINDOW_MS = 15 * 60 * 1000L
         const val DEFAULT_FORCE_FLUSH_MIN_INTERVAL_MS = 60 * 1000L
         const val DEFAULT_MAX_QUEUE_SIZE = 100

@@ -95,4 +95,18 @@ class ProxyRunMarkerTest {
         assertEquals("2026-06-04T02:45:30Z", previous.stoppedAt)
     }
 
+    @Test
+    fun cleanStopDoesNotSetPreviousRunUnexpected() {
+        val file = createTempFile()
+        ProxyRunMarker(file, fixedClock) { "run-1" }.apply {
+            markStarted()
+            markStopped("ui")
+        }
+
+        val previous = ProxyRunMarker(file, fixedClock) { "run-2" }.inspectPreviousRun()
+
+        assertFalse(previous.wasUnexpected)
+        assertEquals("ui", previous.lastStopReason)
+    }
+
 }
