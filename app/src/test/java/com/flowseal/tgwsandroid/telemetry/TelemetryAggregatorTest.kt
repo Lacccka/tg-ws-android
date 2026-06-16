@@ -303,6 +303,69 @@ class TelemetryAggregatorTest {
         assertEquals(0, agg.queueSize())
     }
 
+
+    @Test fun diagnosticsSnapshotKeepsLegacyFieldsAndAddsNewSections() {
+        val agg = aggregator()
+        agg.recordStats(stats(total = 1), true, false)
+        val payload = agg.pollSnapshot()!!.getJSONObject("payload")
+        assertTrue(payload.has("network_type"))
+        assertTrue(payload.has("effective_route"))
+        assertTrue(payload.has("counters"))
+        assertTrue(payload.has("flags"))
+        listOf("diagnostic_episodes", "safe_breadcrumbs", "client_quality", "route_quality", "pool_readiness", "cf_quality", "network_transition", "telemetry_delivery").forEach {
+            assertTrue("missing $it in $payload", payload.has(it))
+        }
+    }
+
+    @Test fun cfPressureDegradationEpisodeIsIncluded() {
+        val agg = aggregator()
+        agg.recordStats(stats(cf429 = 0), true, false)
+        agg.pollSnapshot()
+        agg.recordStats(stats(cf429 = 1).apply {
+            cfPressureLevelByDc = mapOf(2 to "high")
+            cfPressureReasonByDc = mapOf(2 to "queue_degraded")
+        }, true, false)
+        val episodes = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONArray("diagnostic_episodes")
+        assertTrue((0 until episodes.length()).any { episodes.getJSONObject(it).getString("episode_type") == "cf_pressure_degradation" })
+    }
+
+    @Test fun reconnectBurstEpisodeIsIncluded() {
+        val agg = aggregator()
+        agg.recordStats(stats(total = 0, clientClosed = 0), true, false)
+        agg.pollSnapshot()
+        agg.recordStats(stats(total = 10, clientClosed = 5), true, false)
+        val episodes = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONArray("diagnostic_episodes")
+        assertTrue((0 until episodes.length()).any { episodes.getJSONObject(it).getString("episode_type") == "reconnect_burst" })
+    }
+
+    @Test fun redactorRemovesForbiddenDataFromNewSections() {
+        val original = org.json.JSONObject().apply {
+            put("payload", org.json.JSONObject().apply {
+                put("safe_breadcrumbs", org.json.JSONArray().put(org.json.JSONObject().put("ssid", "wifi").put("type", "network_changed")))
+                put("telemetry_delivery", org.json.JSONObject().put("endpoint", "https://example.test/path").put("token", "secret-token"))
+                put("client_quality", org.json.JSONObject().put("phone_number", "+123").put("recent_accepted", 1))
+            })
+        }
+        val payload = TelemetryRedactor.redact(original).getJSONObject("payload")
+        assertFalse(payload.getJSONArray("safe_breadcrumbs").getJSONObject(0).has("ssid"))
+        assertFalse(payload.getJSONObject("telemetry_delivery").has("endpoint"))
+        assertFalse(payload.getJSONObject("telemetry_delivery").has("token"))
+        assertFalse(payload.getJSONObject("client_quality").has("phone_number"))
+        assertEquals(1, payload.getJSONObject("client_quality").getInt("recent_accepted"))
+    }
+
+    @Test fun telemetryDeliveryDoesNotLeakEndpointUrlOrToken() {
+        val agg = aggregator()
+        agg.recordCounter("direct_timeout")
+        agg.recordTelemetryDelivery(false)
+        val delivery = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONObject("telemetry_delivery")
+        assertTrue(delivery.has("telemetry_endpoint_configured"))
+        assertTrue(delivery.has("telemetry_token_present"))
+        assertFalse(delivery.toString().contains("https://"))
+        assertFalse(delivery.has("telemetry_token"))
+        assertFalse(delivery.has("telemetry_endpoint"))
+    }
+
     private fun stats(
         total: Long = 0,
         active: Int = 0,

@@ -490,7 +490,11 @@ class ProxyForegroundService : Service() {
         while (true) {
             val event = telemetryAggregator.pollSnapshot() ?: return
             runCatching { Telemetry.sendEvents(applicationContext, JSONArray().put(event)) }
-                .onFailure { error -> State.addLog("diagnostics telemetry send failed: ${error.message ?: error::class.java.simpleName}", LogSeverity.WARN, "telemetry") }
+                .onSuccess { sent -> telemetryAggregator.recordTelemetryDelivery(sent) }
+                .onFailure { error ->
+                    telemetryAggregator.recordTelemetryDelivery(false)
+                    State.addLog("diagnostics telemetry send failed: ${error::class.java.simpleName}", LogSeverity.WARN, "telemetry")
+                }
         }
     }
 

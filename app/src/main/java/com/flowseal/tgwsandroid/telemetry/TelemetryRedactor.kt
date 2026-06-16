@@ -7,6 +7,8 @@ object TelemetryRedactor {
     private val blockedKeys = setOf(
         "secret", "proxy_link", "proxyLink", "proxy_url", "proxyUrl", "raw_logs", "rawLogs", "logs",
         "real_ip", "realIp", "ip", "ssid", "bssid", "android_id", "androidId", "imei", "serial", "mac", "mac_address", "macAddress",
+        "phone", "phone_number", "phoneNumber", "username", "telegram_username", "carrier", "operator", "operator_name", "carrier_name",
+        "iccid", "imsi", "subscriptionId", "subscription_id", "domain", "url", "endpoint", "token", "exception_message", "message",
     )
 
     fun redact(value: JSONObject): JSONObject = redactObject(value)
