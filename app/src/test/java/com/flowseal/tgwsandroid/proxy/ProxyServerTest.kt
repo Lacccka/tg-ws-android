@@ -1249,20 +1249,20 @@ class ProxyServerTest {
 
     @Test
     fun aggregateCountersRemainBackwardCompatible() {
-        val stats = ProxyServerStats(
-            connectionsTotal = 0,
-            connectionsActive = 0,
-            connectionsBad = 0,
-            wsConnectErrors = 0,
-            cfProxyConnections = 0,
-            cfProxyErrors = 0,
-            bytesUp = 0,
-            bytesDown = 0,
-            poolHits = 1,
-            poolMisses = 2,
-            poolRefillErrors = 3,
-            poolStale = 4,
-        )
+        val stats = ProxyServerStats().apply {
+            connectionsTotal = 0
+            connectionsActive = 0
+            connectionsBad = 0
+            wsConnectErrors = 0
+            cfProxyConnections = 0
+            cfProxyErrors = 0
+            bytesUp = 0
+            bytesDown = 0
+            poolHits = 1
+            poolMisses = 2
+            poolRefillErrors = 3
+            poolStale = 4
+        }
         assertEquals(1L, stats.poolHits)
         assertEquals(2L, stats.poolMisses)
         assertEquals(3L, stats.poolRefillErrors)

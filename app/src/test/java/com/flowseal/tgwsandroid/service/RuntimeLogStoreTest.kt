@@ -225,19 +225,19 @@ class RuntimeLogStoreTest {
     fun exportTextIncludesHeaderStatusEndpointAndLogs() {
         val store = RuntimeLogStore(clock = fixedClock)
         store.append("ProxyServer listening", LogSeverity.INFO, "proxy")
-        val stats = ProxyServerStats(
-            connectionsTotal = 7,
-            connectionsActive = 0,
-            connectionsBad = 0,
-            wsConnectErrors = 2,
-            cfProxyConnections = 3,
-            cfProxyErrors = 4,
-            bytesUp = 5,
-            bytesDown = 6,
-            poolHits = 8,
-            poolMisses = 9,
-            poolRefillErrors = 10,
-            poolStale = 11,
+        val stats = ProxyServerStats().apply {
+            connectionsTotal = 7
+            connectionsActive = 0
+            connectionsBad = 0
+            wsConnectErrors = 2
+            cfProxyConnections = 3
+            cfProxyErrors = 4
+            bytesUp = 5
+            bytesDown = 6
+            poolHits = 8
+            poolMisses = 9
+            poolRefillErrors = 10
+            poolStale = 11
             sessionEndDiagnostics = ProxySessionEndDiagnostics(
                 connectionReset = ConnectionSocketEndDiagnostics(
                     count = 2,
@@ -253,58 +253,58 @@ class RuntimeLogStoreTest {
                     lastDc = 4,
                     lastMedia = true,
                 ),
-            ),
-            cfHealthEnabled = true,
-            cfDomainsTotal = 2,
-            cfDomainsInCooldown = 1,
-            cfLastSelectedDomain = "kws2.one.example",
-            cfLastSelectedReason = "last_good",
-            cfLastConnectLatencyMs = 123,
-            cfBestDomainByDc = mapOf(2 to "kws2.one.example"),
-            cf429Count = 12,
-            cf503Count = 13,
-            cfUnknownHostCount = 14,
-            cfTimeoutCount = 15,
-            cfCooldownSkips = 16,
-            cfAllDomainsInCooldownFallbacks = 17,
-            cfInflightSkips = 18,
-            cfInflightWaits = 19,
-            cfMaxInflightPerDomainReached = 20,
-            cfActiveConnectsByDc = mapOf(2 to 1),
-            cfConnectQueueWaits = 21,
-            cfConnectQueueTimeouts = 22,
-            cfQueueControlledFailures = 23,
-            cfQueueWaitMs = 250,
-            cfMaxConcurrentConnectsByDc = mapOf(2 to 2),
-            cf429BackoffCount = 24,
-            cfAllCooldownWaits = 25,
-            cfAllCooldownWaitMs = 250,
-            cfAllCooldownCircuitOpenCount = 26,
-            cfAllCooldownAttemptsAllowed = 27,
-            cfAllCooldownAttemptsSuppressed = 28,
-            cfAllCooldownControlledFailures = 29,
-            cfAllCooldownCircuitOpenByDc = mapOf(2 to 123_456L),
-            cfAllCooldownSingleAttempts = 30,
-            cfAllCooldownSingleAttemptFailures = 31,
-            cfAllCooldownStoppedCycles = 32,
-            cfPressureLevelByDc = mapOf(2 to "degraded"),
-            cfPressureScoreByDc = mapOf(2 to 42),
-            cfPressureRecentSuccessByDc = mapOf(2 to 1),
-            cfPressureRecent429ByDc = mapOf(2 to 4),
-            cfPressureRecentTimeoutByDc = mapOf(2 to 2),
-            cfPressureRecentQueueFailureByDc = mapOf(2 to 3),
-            cfPressureRecentAllCooldownSuppressedByDc = mapOf(2 to 1),
-            cfPressureProbeAllowed = 5,
-            cfPressureProbeSuppressed = 6,
-            cfPressureControlledFailures = 7,
-            cfPressureLimitedAttempts = 8,
-            cfPressureLevelChanges = 9,
-            cfPressureNextProbeAtByDc = mapOf(2 to 654_321L),
-            recentInvalidHandshakeCount = 120,
-            recentAcceptedHandshakeCount = 0,
-            lastInvalidHandshakeTimeMs = 1_717_469_129_000,
-            lastAcceptedHandshakeTimeMs = 0,
-            lastSuccessfulRouteTimeMs = 0,
+            )
+            cfHealthEnabled = true
+            cfDomainsTotal = 2
+            cfDomainsInCooldown = 1
+            cfLastSelectedDomain = "kws2.one.example"
+            cfLastSelectedReason = "last_good"
+            cfLastConnectLatencyMs = 123
+            cfBestDomainByDc = mapOf(2 to "kws2.one.example")
+            cf429Count = 12
+            cf503Count = 13
+            cfUnknownHostCount = 14
+            cfTimeoutCount = 15
+            cfCooldownSkips = 16
+            cfAllDomainsInCooldownFallbacks = 17
+            cfInflightSkips = 18
+            cfInflightWaits = 19
+            cfMaxInflightPerDomainReached = 20
+            cfActiveConnectsByDc = mapOf(2 to 1)
+            cfConnectQueueWaits = 21
+            cfConnectQueueTimeouts = 22
+            cfQueueControlledFailures = 23
+            cfQueueWaitMs = 250
+            cfMaxConcurrentConnectsByDc = mapOf(2 to 2)
+            cf429BackoffCount = 24
+            cfAllCooldownWaits = 25
+            cfAllCooldownWaitMs = 250
+            cfAllCooldownCircuitOpenCount = 26
+            cfAllCooldownAttemptsAllowed = 27
+            cfAllCooldownAttemptsSuppressed = 28
+            cfAllCooldownControlledFailures = 29
+            cfAllCooldownCircuitOpenByDc = mapOf(2 to 123_456L)
+            cfAllCooldownSingleAttempts = 30
+            cfAllCooldownSingleAttemptFailures = 31
+            cfAllCooldownStoppedCycles = 32
+            cfPressureLevelByDc = mapOf(2 to "degraded")
+            cfPressureScoreByDc = mapOf(2 to 42)
+            cfPressureRecentSuccessByDc = mapOf(2 to 1)
+            cfPressureRecent429ByDc = mapOf(2 to 4)
+            cfPressureRecentTimeoutByDc = mapOf(2 to 2)
+            cfPressureRecentQueueFailureByDc = mapOf(2 to 3)
+            cfPressureRecentAllCooldownSuppressedByDc = mapOf(2 to 1)
+            cfPressureProbeAllowed = 5
+            cfPressureProbeSuppressed = 6
+            cfPressureControlledFailures = 7
+            cfPressureLimitedAttempts = 8
+            cfPressureLevelChanges = 9
+            cfPressureNextProbeAtByDc = mapOf(2 to 654_321L)
+            recentInvalidHandshakeCount = 120
+            recentAcceptedHandshakeCount = 0
+            lastInvalidHandshakeTimeMs = 1_717_469_129_000
+            lastAcceptedHandshakeTimeMs = 0
+            lastSuccessfulRouteTimeMs = 0
             cfHealthDomains = listOf(
                 CfDomainSnapshot(
                     dcId = 2,
@@ -328,8 +328,8 @@ class RuntimeLogStoreTest {
                     totalTimeouts = 15,
                     successfulStreak = 2,
                 ),
-            ),
-        )
+            )
+        }
 
         val report = DiagnosticReportFormatter.format(
             DiagnosticReportFormatter.snapshot(
@@ -385,27 +385,27 @@ class RuntimeLogStoreTest {
     @Test
     fun diagnosticReportIncludesTesterBundleAndKeepsSecretMasked() {
         val rawSecret = "0123456789abcdeffedcba9876543210"
-        val stats = ProxyServerStats(
-            connectionsTotal = 2,
-            connectionsActive = 1,
-            connectionsBad = 0,
-            wsConnectErrors = 0,
-            cfProxyConnections = 1,
-            cfProxyErrors = 0,
-            bytesUp = 10,
-            bytesDown = 20,
-            poolHits = 1,
-            poolMisses = 1,
-            poolRefillErrors = 0,
-            sessionRemoteEof = 1,
-            effectiveRouteMode = "direct_first",
-            lastRouteUsed = "cf-proxy",
-            cfHealthEnabled = true,
-            cfDomainsTotal = 1,
-            networkGeneration = 3,
-            lastNetworkAvailableAtMs = 1_000L,
-            lastNetworkLostAtMs = 2_000L,
-        )
+        val stats = ProxyServerStats().apply {
+            connectionsTotal = 2
+            connectionsActive = 1
+            connectionsBad = 0
+            wsConnectErrors = 0
+            cfProxyConnections = 1
+            cfProxyErrors = 0
+            bytesUp = 10
+            bytesDown = 20
+            poolHits = 1
+            poolMisses = 1
+            poolRefillErrors = 0
+            sessionRemoteEof = 1
+            effectiveRouteMode = "direct_first"
+            lastRouteUsed = "cf-proxy"
+            cfHealthEnabled = true
+            cfDomainsTotal = 1
+            networkGeneration = 3
+            lastNetworkAvailableAtMs = 1_000L
+            lastNetworkLostAtMs = 2_000L
+        }
 
         val report = DiagnosticReportFormatter.format(
             DiagnosticReportFormatter.snapshot(
@@ -730,26 +730,26 @@ class RuntimeLogStoreTest {
     fun diagnosticReportShowsSnapshotTimingAndStatsAfterIncludedLogTail() {
         val store = RuntimeLogStore(clock = fixedClock)
         store.append("effective route changed: cf_first -> direct_first because direct health probe success", LogSeverity.INFO, "proxy")
-        val stats = ProxyServerStats(
-            connectionsTotal = 1,
-            connectionsActive = 0,
-            connectionsBad = 0,
-            wsConnectErrors = 0,
-            cfProxyConnections = 0,
-            cfProxyErrors = 0,
-            bytesUp = 0,
-            bytesDown = 0,
-            poolHits = 0,
-            poolMisses = 0,
-            poolRefillErrors = 0,
-            effectiveRouteMode = "direct_first",
-            previousEffectiveRouteMode = "cf_first",
-            lastRouteUsed = "direct-cold",
-            statsSnapshotTimeMs = 1_800L,
-            lastEffectiveRouteModeUpdateTimeMs = 1_700L,
-            lastRouteUsedUpdateTimeMs = 1_750L,
-            wifiDirectRecoveryAttempts = 1,
-            wifiDirectRecoverySuccesses = 1,
+        val stats = ProxyServerStats().apply {
+            connectionsTotal = 1
+            connectionsActive = 0
+            connectionsBad = 0
+            wsConnectErrors = 0
+            cfProxyConnections = 0
+            cfProxyErrors = 0
+            bytesUp = 0
+            bytesDown = 0
+            poolHits = 0
+            poolMisses = 0
+            poolRefillErrors = 0
+            effectiveRouteMode = "direct_first"
+            previousEffectiveRouteMode = "cf_first"
+            lastRouteUsed = "direct-cold"
+            statsSnapshotTimeMs = 1_800L
+            lastEffectiveRouteModeUpdateTimeMs = 1_700L
+            lastRouteUsedUpdateTimeMs = 1_750L
+            wifiDirectRecoveryAttempts = 1
+            wifiDirectRecoverySuccesses = 1
             recoveryDiagnostics = ProxyRecoveryDiagnostics(
                 cfFirst = CfFirstRecoveryDiagnostics(
                     wifiAttempts = 2,
@@ -760,8 +760,8 @@ class RuntimeLogStoreTest {
                     suppressed = 1,
                     lastReason = "direct cooldown",
                 ),
-            ),
-        )
+            )
+        }
 
         val report = DiagnosticReportFormatter.format(
             DiagnosticReportFormatter.snapshot(

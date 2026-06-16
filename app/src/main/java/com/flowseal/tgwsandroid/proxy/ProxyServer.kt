@@ -87,6 +87,50 @@ data class HandshakeDiagnostic(
 
 /** Immutable snapshot of lightweight local proxy counters. */
 
+data class SessionStats(
+    val acceptedHandshakes: Long = 0,
+    val clientClosedSessions: Long = 0,
+    val veryShortSessions: Long = 0,
+    val connectionResets: Long = 0,
+    val sessionUnexpectedErrors: Long = 0,
+)
+
+data class PoolStats(
+    val poolHits: Long = 0,
+    val poolMisses: Long = 0,
+    val poolStale: Long = 0,
+    val poolRefillErrors: Long = 0,
+)
+
+data class CfStats(
+    val cf429: Long = 0,
+    val cfQueueFailures: Long = 0,
+    val recentCfQueueFailures: Long = 0,
+    val recentCfTimeouts: Long = 0,
+    val cfPressureReason: String? = null,
+)
+
+data class RouteStats(
+    val routeChanged: Long = 0,
+    val noRoute: Long = 0,
+    val unsupportedDc: Long = 0,
+    val effectiveRoute: String? = null,
+    val routeMode: String? = null,
+    val lastRouteChangeReason: String? = null,
+)
+
+data class ClientExperienceStats(
+    val likelyReconnectBurst: Boolean = false,
+    val likelyTelegramDisabledProxy: Boolean = false,
+)
+
+data class TelemetryDiagnosticStats(
+    val foregroundServiceActive: Boolean = false,
+    val wakeLockActiveAtLastMarker: Boolean = false,
+    val previousRunEndedUnexpectedly: Boolean = false,
+    val unexpectedStopDetected: Boolean = false,
+    val batteryRestrictionDetected: Boolean = false,
+)
 
 data class ClientExperienceDiagnostics(
     val likelyReconnectBurst: Boolean = false,
@@ -180,159 +224,204 @@ data class DirectPoolDiagnosticsSnapshot(
     val lastMissTimeMsByKey: Map<String, Long> = emptyMap(),
 )
 
-data class ProxyServerStats(
-    val connectionsTotal: Long,
-    val connectionsActive: Int,
-    val connectionsBad: Long,
-    val wsConnectErrors: Long,
-    val cfProxyConnections: Long,
-    val cfProxyErrors: Long,
-    val bytesUp: Long,
-    val bytesDown: Long,
-    val poolHits: Long,
-    val poolMisses: Long,
-    val poolRefillErrors: Long,
-    val poolStale: Long = 0,
-    val directPoolDiagnostics: DirectPoolDiagnosticsSnapshot = DirectPoolDiagnosticsSnapshot(),
-    val sessionTimeouts: Long = 0,
-    val sessionEof: Long = 0,
-    val sessionClientClosed: Long = 0,
-    val sessionSocketClosed: Long = 0,
-    val sessionUnexpectedErrors: Long = 0,
-    val sessionEndDiagnostics: ProxySessionEndDiagnostics = ProxySessionEndDiagnostics(),
-    val sessionRemoteEof: Long = 0,
-    val sessionRemoteIdleEof: Long = 0,
-    val sessionRemoteEofShort: Long = 0,
-    val lastRemoteEofTimeMs: Long = 0,
-    val lastRemoteEofDurationMs: Long = 0,
-    val lastRemoteEofRoute: String? = null,
-    val lastRemoteEofDc: Int? = null,
-    val lastRemoteEofMedia: Boolean? = null,
-    val routeMode: String = NetworkRouteMode.AUTO.configValue,
-    val effectiveRouteMode: String = NetworkRouteMode.DIRECT_FIRST.configValue,
-    val previousEffectiveRouteMode: String? = null,
-    val lastRouteChangeReason: String = "initial",
-    val lastRouteChangeSource: String = "initial",
-    val lastRouteChangeTimeMs: Long? = null,
-    val networkAtLastRouteChange: String = "unknown",
-    val lastRouteEvaluationReason: String = "initial",
-    val lastRouteEvaluationSource: String = "initial",
-    val lastRouteEvaluationTimeMs: Long? = null,
-    val networkAtLastRouteEvaluation: String = "unknown",
-    val routeEvaluations: Long = 0,
-    val routeNoopEvaluations: Long = 0,
-    val lastRouteUsed: String? = null,
-    val statsSnapshotTimeMs: Long = 0,
-    val lastEffectiveRouteModeUpdateTimeMs: Long? = null,
-    val lastRouteUsedUpdateTimeMs: Long? = null,
-    val directTimeouts: Long = 0,
-    val lastCfDomain: String? = null,
-    val directAttempts: Long = 0,
-    val directAttemptsSkippedBecauseRoute: Long = 0,
-    val poolRefillsCancelled: Long = 0,
-    val poolResultsDiscardedAfterRouteChange: Long = 0,
-    val routeChangesImmediate: Long = 0,
-    val networkNoneEvents: Long = 0,
-    val directHealthState: String = DirectHealthState.UNKNOWN.configValue,
-    val directHealthSuccesses: Long = 0,
-    val directHealthFailures: Long = 0,
-    val directDowngrades: Long = 0,
-    val directPromotions: Long = 0,
-    val directCooldownUntil: Long = 0,
-    val routeSettlingUntil: Long = 0,
-    val directProbeLastError: String? = null,
-    val directProbeLastSuccessTime: Long? = null,
-    val directProbeSkippedBecauseAlreadyHealthy: Long = 0,
-    val wifiCapabilityEventsIgnored: Long = 0,
-    val routeChurnAvoided: Long = 0,
-    val directProbeThrottleUntil: Long = 0,
-    val mobileDirectRescueAttempts: Long = 0,
-    val mobileDirectRescueSuccesses: Long = 0,
-    val mobileDirectRescueFailures: Long = 0,
-    val mobileDirectRescueSuppressed: Long = 0,
-    val mobileRescueSkippedBecauseNetworkChanged: Long = 0,
-    val wifiDirectRecoveryAttempts: Long = 0,
-    val wifiDirectRecoverySuccesses: Long = 0,
-    val wifiDirectRecoveryFailures: Long = 0,
-    val recoveryDiagnostics: ProxyRecoveryDiagnostics = ProxyRecoveryDiagnostics(),
-    val lastNetworkTypeAtRouteAttempt: String = "unknown",
-    val routeAttemptNetworkGeneration: Long = 0,
-    val routeAttemptNetworkChangedBeforeSelection: Long = 0,
-    val mobileDirectRescueCooldownUntil: Map<Int, Long> = emptyMap(),
-    val mobileDirectRescueLastError: Map<Int, String> = emptyMap(),
-    val mobileDirectRescueLastSuccessTime: Map<Int, Long> = emptyMap(),
-    val cfHealthEnabled: Boolean = false,
-    val cfDomainsTotal: Int = 0,
-    val cfDomainsInCooldown: Int = 0,
-    val cfLastSelectedDomain: String? = null,
-    val cfLastSelectedReason: String? = null,
-    val cfLastConnectLatencyMs: Long? = null,
-    val cfBestDomainByDc: Map<Int, String> = emptyMap(),
-    val cf429Count: Long = 0,
-    val cf503Count: Long = 0,
-    val cfUnknownHostCount: Long = 0,
-    val cfTimeoutCount: Long = 0,
-    val cfCooldownSkips: Long = 0,
-    val cfAllDomainsInCooldownFallbacks: Long = 0,
-    val cfInflightSkips: Long = 0,
-    val cfInflightWaits: Long = 0,
-    val cfMaxInflightPerDomainReached: Long = 0,
-    val cfActiveConnectsByDc: Map<Int, Int> = emptyMap(),
-    val cfConnectQueueWaits: Long = 0,
-    val cfConnectQueueTimeouts: Long = 0,
-    val cfQueueControlledFailures: Long = 0,
-    val cfQueueWaitMs: Long = 0,
-    val cfMaxConcurrentConnectsByDc: Map<Int, Int> = emptyMap(),
-    val cf429BackoffCount: Long = 0,
-    val cfAllCooldownWaits: Long = 0,
-    val cfAllCooldownWaitMs: Long = 0,
-    val cfAllCooldownCircuitOpenCount: Long = 0,
-    val cfAllCooldownAttemptsAllowed: Long = 0,
-    val cfAllCooldownAttemptsSuppressed: Long = 0,
-    val cfAllCooldownControlledFailures: Long = 0,
-    val cfAllCooldownCircuitOpenByDc: Map<Int, Long> = emptyMap(),
-    val cfAllCooldownSingleAttempts: Long = 0,
-    val cfAllCooldownSingleAttemptFailures: Long = 0,
-    val cfAllCooldownStoppedCycles: Long = 0,
-    val cfPressureLevelByDc: Map<Int, String> = emptyMap(),
-    val cfPressureScoreByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureRecentSuccessByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureRecent429ByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureRecentTimeoutByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureRecentUnknownHostByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureRecentQueueFailureByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureRecentAllCooldownSuppressedByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureRecentMaxInflightByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureRecentRouteFailureAfterCfByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureAllDomainsCooldownByDc: Map<Int, Long> = emptyMap(),
-    val cfPressureReasonByDc: Map<Int, String> = emptyMap(),
-    val cfPressureProbeAllowed: Long = 0,
-    val cfPressureProbeSuppressed: Long = 0,
-    val cfPressureControlledFailures: Long = 0,
-    val cfPressureLimitedAttempts: Long = 0,
-    val cfPressureLevelChanges: Long = 0,
-    val cfPressureNextProbeAtByDc: Map<Int, Long> = emptyMap(),
-    val cfTransientNetworkFailures: Long = 0,
-    val cfFailuresIgnoredBecauseNetworkChanged: Long = 0,
-    val cfCooldownsSkippedBecauseNetworkSettling: Long = 0,
-    val cfTransientCooldownsClearedOnNetworkAvailable: Long = 0,
-    val networkSettlingWaits: Long = 0,
-    val networkSettlingWaitMs: Long = 0,
-    val networkSettlingResumedAfterAvailable: Long = 0,
-    val networkSettlingControlledFailures: Long = 0,
-    val networkSettlingStaleAttemptsIgnored: Long = 0,
-    val networkSettlingUntilMs: Long = 0,
-    val lastNetworkLostAtMs: Long = 0,
-    val lastNetworkAvailableAtMs: Long = 0,
-    val cfHealthDomains: List<CfDomainSnapshot> = emptyList(),
-    val recentInvalidHandshakeCount: Long = 0,
-    val recentAcceptedHandshakeCount: Long = 0,
-    val lastInvalidHandshakeTimeMs: Long = 0,
-    val lastAcceptedHandshakeTimeMs: Long = 0,
-    val lastSuccessfulRouteTimeMs: Long = 0,
-    val networkGeneration: Long = 0,
-    val clientExperience: ClientExperienceDiagnostics = ClientExperienceDiagnostics(),
-) {
+class ProxyServerStats {
+    var connectionsTotal: Long = 0
+    var connectionsActive: Int = 0
+    var connectionsBad: Long = 0
+    var wsConnectErrors: Long = 0
+    var cfProxyConnections: Long = 0
+    var cfProxyErrors: Long = 0
+    var bytesUp: Long = 0
+    var bytesDown: Long = 0
+    var poolHits: Long = 0
+    var poolMisses: Long = 0
+    var poolRefillErrors: Long = 0
+    var poolStale: Long = 0
+    var directPoolDiagnostics: DirectPoolDiagnosticsSnapshot = DirectPoolDiagnosticsSnapshot()
+    var sessionTimeouts: Long = 0
+    var sessionEof: Long = 0
+    var sessionClientClosed: Long = 0
+    var sessionSocketClosed: Long = 0
+    var sessionUnexpectedErrors: Long = 0
+    var sessionEndDiagnostics: ProxySessionEndDiagnostics = ProxySessionEndDiagnostics()
+    var sessionRemoteEof: Long = 0
+    var sessionRemoteIdleEof: Long = 0
+    var sessionRemoteEofShort: Long = 0
+    var lastRemoteEofTimeMs: Long = 0
+    var lastRemoteEofDurationMs: Long = 0
+    var lastRemoteEofRoute: String? = null
+    var lastRemoteEofDc: Int? = null
+    var lastRemoteEofMedia: Boolean? = null
+    var routeMode: String = NetworkRouteMode.AUTO.configValue
+    var effectiveRouteMode: String = NetworkRouteMode.DIRECT_FIRST.configValue
+    var previousEffectiveRouteMode: String? = null
+    var lastRouteChangeReason: String = "initial"
+    var lastRouteChangeSource: String = "initial"
+    var lastRouteChangeTimeMs: Long? = null
+    var networkAtLastRouteChange: String = "unknown"
+    var lastRouteEvaluationReason: String = "initial"
+    var lastRouteEvaluationSource: String = "initial"
+    var lastRouteEvaluationTimeMs: Long? = null
+    var networkAtLastRouteEvaluation: String = "unknown"
+    var routeEvaluations: Long = 0
+    var routeNoopEvaluations: Long = 0
+    var lastRouteUsed: String? = null
+    var statsSnapshotTimeMs: Long = 0
+    var lastEffectiveRouteModeUpdateTimeMs: Long? = null
+    var lastRouteUsedUpdateTimeMs: Long? = null
+    var directTimeouts: Long = 0
+    var lastCfDomain: String? = null
+    var directAttempts: Long = 0
+    var directAttemptsSkippedBecauseRoute: Long = 0
+    var poolRefillsCancelled: Long = 0
+    var poolResultsDiscardedAfterRouteChange: Long = 0
+    var routeChangesImmediate: Long = 0
+    var networkNoneEvents: Long = 0
+    var directHealthState: String = DirectHealthState.UNKNOWN.configValue
+    var directHealthSuccesses: Long = 0
+    var directHealthFailures: Long = 0
+    var directDowngrades: Long = 0
+    var directPromotions: Long = 0
+    var directCooldownUntil: Long = 0
+    var routeSettlingUntil: Long = 0
+    var directProbeLastError: String? = null
+    var directProbeLastSuccessTime: Long? = null
+    var directProbeSkippedBecauseAlreadyHealthy: Long = 0
+    var wifiCapabilityEventsIgnored: Long = 0
+    var routeChurnAvoided: Long = 0
+    var directProbeThrottleUntil: Long = 0
+    var mobileDirectRescueAttempts: Long = 0
+    var mobileDirectRescueSuccesses: Long = 0
+    var mobileDirectRescueFailures: Long = 0
+    var mobileDirectRescueSuppressed: Long = 0
+    var mobileRescueSkippedBecauseNetworkChanged: Long = 0
+    var wifiDirectRecoveryAttempts: Long = 0
+    var wifiDirectRecoverySuccesses: Long = 0
+    var wifiDirectRecoveryFailures: Long = 0
+    var recoveryDiagnostics: ProxyRecoveryDiagnostics = ProxyRecoveryDiagnostics()
+    var lastNetworkTypeAtRouteAttempt: String = "unknown"
+    var routeAttemptNetworkGeneration: Long = 0
+    var routeAttemptNetworkChangedBeforeSelection: Long = 0
+    var mobileDirectRescueCooldownUntil: Map<Int, Long> = emptyMap()
+    var mobileDirectRescueLastError: Map<Int, String> = emptyMap()
+    var mobileDirectRescueLastSuccessTime: Map<Int, Long> = emptyMap()
+    var cfHealthEnabled: Boolean = false
+    var cfDomainsTotal: Int = 0
+    var cfDomainsInCooldown: Int = 0
+    var cfLastSelectedDomain: String? = null
+    var cfLastSelectedReason: String? = null
+    var cfLastConnectLatencyMs: Long? = null
+    var cfBestDomainByDc: Map<Int, String> = emptyMap()
+    var cf429Count: Long = 0
+    var cf503Count: Long = 0
+    var cfUnknownHostCount: Long = 0
+    var cfTimeoutCount: Long = 0
+    var cfCooldownSkips: Long = 0
+    var cfAllDomainsInCooldownFallbacks: Long = 0
+    var cfInflightSkips: Long = 0
+    var cfInflightWaits: Long = 0
+    var cfMaxInflightPerDomainReached: Long = 0
+    var cfActiveConnectsByDc: Map<Int, Int> = emptyMap()
+    var cfConnectQueueWaits: Long = 0
+    var cfConnectQueueTimeouts: Long = 0
+    var cfQueueControlledFailures: Long = 0
+    var cfQueueWaitMs: Long = 0
+    var cfMaxConcurrentConnectsByDc: Map<Int, Int> = emptyMap()
+    var cf429BackoffCount: Long = 0
+    var cfAllCooldownWaits: Long = 0
+    var cfAllCooldownWaitMs: Long = 0
+    var cfAllCooldownCircuitOpenCount: Long = 0
+    var cfAllCooldownAttemptsAllowed: Long = 0
+    var cfAllCooldownAttemptsSuppressed: Long = 0
+    var cfAllCooldownControlledFailures: Long = 0
+    var cfAllCooldownCircuitOpenByDc: Map<Int, Long> = emptyMap()
+    var cfAllCooldownSingleAttempts: Long = 0
+    var cfAllCooldownSingleAttemptFailures: Long = 0
+    var cfAllCooldownStoppedCycles: Long = 0
+    var cfPressureLevelByDc: Map<Int, String> = emptyMap()
+    var cfPressureScoreByDc: Map<Int, Long> = emptyMap()
+    var cfPressureRecentSuccessByDc: Map<Int, Long> = emptyMap()
+    var cfPressureRecent429ByDc: Map<Int, Long> = emptyMap()
+    var cfPressureRecentTimeoutByDc: Map<Int, Long> = emptyMap()
+    var cfPressureRecentUnknownHostByDc: Map<Int, Long> = emptyMap()
+    var cfPressureRecentQueueFailureByDc: Map<Int, Long> = emptyMap()
+    var cfPressureRecentAllCooldownSuppressedByDc: Map<Int, Long> = emptyMap()
+    var cfPressureRecentMaxInflightByDc: Map<Int, Long> = emptyMap()
+    var cfPressureRecentRouteFailureAfterCfByDc: Map<Int, Long> = emptyMap()
+    var cfPressureAllDomainsCooldownByDc: Map<Int, Long> = emptyMap()
+    var cfPressureReasonByDc: Map<Int, String> = emptyMap()
+    var cfPressureProbeAllowed: Long = 0
+    var cfPressureProbeSuppressed: Long = 0
+    var cfPressureControlledFailures: Long = 0
+    var cfPressureLimitedAttempts: Long = 0
+    var cfPressureLevelChanges: Long = 0
+    var cfPressureNextProbeAtByDc: Map<Int, Long> = emptyMap()
+    var cfTransientNetworkFailures: Long = 0
+    var cfFailuresIgnoredBecauseNetworkChanged: Long = 0
+    var cfCooldownsSkippedBecauseNetworkSettling: Long = 0
+    var cfTransientCooldownsClearedOnNetworkAvailable: Long = 0
+    var networkSettlingWaits: Long = 0
+    var networkSettlingWaitMs: Long = 0
+    var networkSettlingResumedAfterAvailable: Long = 0
+    var networkSettlingControlledFailures: Long = 0
+    var networkSettlingStaleAttemptsIgnored: Long = 0
+    var networkSettlingUntilMs: Long = 0
+    var lastNetworkLostAtMs: Long = 0
+    var lastNetworkAvailableAtMs: Long = 0
+    var cfHealthDomains: List<CfDomainSnapshot> = emptyList()
+    var recentInvalidHandshakeCount: Long = 0
+    var recentAcceptedHandshakeCount: Long = 0
+    var lastInvalidHandshakeTimeMs: Long = 0
+    var lastAcceptedHandshakeTimeMs: Long = 0
+    var lastSuccessfulRouteTimeMs: Long = 0
+    var networkGeneration: Long = 0
+    var clientExperience: ClientExperienceDiagnostics = ClientExperienceDiagnostics()
+    var unsupportedDc: Long = 0
+
+    val sessions: SessionStats
+        get() = SessionStats(
+            acceptedHandshakes = connectionsTotal,
+            clientClosedSessions = sessionClientClosed,
+            veryShortSessions = sessionRemoteEofShort,
+            connectionResets = sessionEndDiagnostics.connectionReset.count,
+            sessionUnexpectedErrors = sessionUnexpectedErrors,
+        )
+
+    val pool: PoolStats
+        get() = PoolStats(
+            poolHits = poolHits,
+            poolMisses = poolMisses,
+            poolStale = poolStale,
+            poolRefillErrors = poolRefillErrors,
+        )
+
+    val cf: CfStats
+        get() = CfStats(
+            cf429 = cf429Count,
+            cfQueueFailures = cfQueueControlledFailures,
+            recentCfQueueFailures = clientExperience.recentCfQueueControlledFailures,
+            recentCfTimeouts = clientExperience.recentCfConnectQueueTimeouts,
+            cfPressureReason = cfPressureReasonByDc.values.firstOrNull(),
+        )
+
+    val routes: RouteStats
+        get() = RouteStats(
+            routeChanged = routeChangesImmediate,
+            noRoute = networkNoneEvents,
+            unsupportedDc = unsupportedDc,
+            effectiveRoute = effectiveRouteMode,
+            routeMode = routeMode,
+            lastRouteChangeReason = lastRouteChangeReason,
+        )
+
+    val clientExperienceStats: ClientExperienceStats
+        get() = ClientExperienceStats(
+            likelyReconnectBurst = clientExperience.likelyReconnectBurst,
+            likelyTelegramDisabledProxy = clientExperience.likelyTelegramDisabledProxy,
+        )
+
+    val telemetryDiagnostics: TelemetryDiagnosticStats = TelemetryDiagnosticStats()
+
     val badHandshakeRatio: Double
         get() = if (connectionsTotal > 0L) connectionsBad.toDouble() / connectionsTotal.toDouble() else 0.0
 
@@ -646,6 +735,7 @@ class ProxyServer(
     private val recentCfConnectQueueTimeoutTimes = ConcurrentLinkedDeque<Long>()
     private val recentUnsupportedDcTimes = ConcurrentHashMap<Int, ConcurrentLinkedDeque<Long>>()
     private val recentNoRouteTimes = ConcurrentHashMap<Int, ConcurrentLinkedDeque<Long>>()
+    private val unsupportedDc = AtomicLong(0)
     private val currentIdleWaveStartMs = AtomicLong(0)
     private val lastTimeToFirstSuccessfulRouteAfterIdleMs = AtomicLong(-1)
     private val lastInvalidHandshakeTimeMs = AtomicLong(0)
@@ -846,21 +936,21 @@ class ProxyServer(
         val routeSnapshot = routeState.snapshot()
         val directHealthSnapshot = directRouteHealth.snapshot()
         val cfHealthSnapshot = cfDomainHealth.snapshot()
-        return ProxyServerStats(
-            connectionsTotal = connectionsTotal.get(),
-            connectionsActive = connectionsActive.get(),
-            connectionsBad = connectionsBad.get(),
-            wsConnectErrors = wsConnectErrors.get(),
-            cfProxyConnections = cfProxyConnections.get(),
-            cfProxyErrors = cfProxyErrors.get(),
-            bytesUp = bytesUp.get(),
-            bytesDown = bytesDown.get(),
-            sessionTimeouts = sessionTimeouts.get(),
-            sessionEof = sessionEof.get(),
-            sessionClientClosed = sessionClientClosed.get(),
-            sessionSocketClosed = sessionSocketClosed.get(),
-            sessionUnexpectedErrors = sessionUnexpectedErrors.get(),
-            sessionEndDiagnostics = ProxySessionEndDiagnostics(
+        val snapshot = ProxyServerStats()
+                    snapshot.connectionsTotal = connectionsTotal.get()
+            snapshot.connectionsActive = connectionsActive.get()
+            snapshot.connectionsBad = connectionsBad.get()
+            snapshot.wsConnectErrors = wsConnectErrors.get()
+            snapshot.cfProxyConnections = cfProxyConnections.get()
+            snapshot.cfProxyErrors = cfProxyErrors.get()
+            snapshot.bytesUp = bytesUp.get()
+            snapshot.bytesDown = bytesDown.get()
+            snapshot.sessionTimeouts = sessionTimeouts.get()
+            snapshot.sessionEof = sessionEof.get()
+            snapshot.sessionClientClosed = sessionClientClosed.get()
+            snapshot.sessionSocketClosed = sessionSocketClosed.get()
+            snapshot.sessionUnexpectedErrors = sessionUnexpectedErrors.get()
+            snapshot.sessionEndDiagnostics = ProxySessionEndDiagnostics(
                 connectionReset = ConnectionSocketEndDiagnostics(
                     count = sessionConnectionReset.get(),
                     lastTimeMs = lastConnectionResetTimeMs.get(),
@@ -875,20 +965,20 @@ class ProxyServer(
                     lastDc = lastConnectionTimedOutDc.get(),
                     lastMedia = lastConnectionTimedOutMedia.get(),
                 ),
-            ),
-            sessionRemoteEof = sessionRemoteEof.get(),
-            sessionRemoteIdleEof = sessionRemoteIdleEof.get(),
-            sessionRemoteEofShort = sessionRemoteEofShort.get(),
-            lastRemoteEofTimeMs = lastRemoteEofTimeMs.get(),
-            lastRemoteEofDurationMs = lastRemoteEofDurationMs.get(),
-            lastRemoteEofRoute = lastRemoteEofRoute.get(),
-            lastRemoteEofDc = lastRemoteEofDc.get(),
-            lastRemoteEofMedia = lastRemoteEofMedia.get(),
-            poolHits = poolHits.get(),
-            poolMisses = poolMisses.get(),
-            poolRefillErrors = poolRefillErrors.get(),
-            poolStale = poolStale.get(),
-            directPoolDiagnostics = DirectPoolDiagnosticsSnapshot(
+            )
+            snapshot.sessionRemoteEof = sessionRemoteEof.get()
+            snapshot.sessionRemoteIdleEof = sessionRemoteIdleEof.get()
+            snapshot.sessionRemoteEofShort = sessionRemoteEofShort.get()
+            snapshot.lastRemoteEofTimeMs = lastRemoteEofTimeMs.get()
+            snapshot.lastRemoteEofDurationMs = lastRemoteEofDurationMs.get()
+            snapshot.lastRemoteEofRoute = lastRemoteEofRoute.get()
+            snapshot.lastRemoteEofDc = lastRemoteEofDc.get()
+            snapshot.lastRemoteEofMedia = lastRemoteEofMedia.get()
+            snapshot.poolHits = poolHits.get()
+            snapshot.poolMisses = poolMisses.get()
+            snapshot.poolRefillErrors = poolRefillErrors.get()
+            snapshot.poolStale = poolStale.get()
+            snapshot.directPoolDiagnostics = DirectPoolDiagnosticsSnapshot(
                 readyByKey = webSocketPool.readySnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap(),
                 inFlightRefillsByKey = webSocketPool.pendingRefillsSnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap(),
                 hitsByKey = snapshotPoolLongMap(poolHitsByKey),
@@ -901,54 +991,54 @@ class ProxyServer(
                 lastRefillTimeMsByKey = snapshotPoolLongMap(poolLastRefillTimeMsByKey),
                 lastHitTimeMsByKey = snapshotPoolLongMap(poolLastHitTimeMsByKey),
                 lastMissTimeMsByKey = snapshotPoolLongMap(poolLastMissTimeMsByKey),
-            ),
-            routeMode = routeSnapshot.configuredRouteMode.configValue,
-            effectiveRouteMode = routeSnapshot.effectiveRouteMode.configValue,
-            previousEffectiveRouteMode = routeSnapshot.previousEffectiveRouteMode?.configValue,
-            lastRouteChangeReason = routeSnapshot.lastRouteChangeReason,
-            lastRouteChangeSource = routeSnapshot.lastRouteChangeSource,
-            lastRouteChangeTimeMs = routeSnapshot.lastRouteChangeTimeMs,
-            networkAtLastRouteChange = routeSnapshot.networkAtLastRouteChange,
-            lastRouteEvaluationReason = routeSnapshot.lastRouteEvaluationReason,
-            lastRouteEvaluationSource = routeSnapshot.lastRouteEvaluationSource,
-            lastRouteEvaluationTimeMs = routeSnapshot.lastRouteEvaluationTimeMs,
-            networkAtLastRouteEvaluation = routeSnapshot.networkAtLastRouteEvaluation,
-            routeEvaluations = routeSnapshot.routeEvaluations,
-            routeNoopEvaluations = routeSnapshot.routeNoopEvaluations,
-            lastRouteUsed = lastRouteUsed,
-            statsSnapshotTimeMs = snapshotTimeMs,
-            lastEffectiveRouteModeUpdateTimeMs = routeSnapshot.lastRouteChangeTimeMs,
-            lastRouteUsedUpdateTimeMs = lastRouteUsedUpdateTimeMs.get().takeIf { it > 0L },
-            directTimeouts = directTimeouts.get(),
-            lastCfDomain = lastCfDomain,
-            directAttempts = directAttempts.get(),
-            directAttemptsSkippedBecauseRoute = directAttemptsSkippedBecauseRoute.get(),
-            poolRefillsCancelled = poolRefillsCancelled.get(),
-            poolResultsDiscardedAfterRouteChange = poolResultsDiscardedAfterRouteChange.get(),
-            routeChangesImmediate = routeChangesImmediate.get(),
-            networkNoneEvents = networkNoneEvents.get(),
-            directHealthState = directHealthSnapshot.state.configValue,
-            directHealthSuccesses = directHealthSnapshot.successes,
-            directHealthFailures = directHealthSnapshot.failures,
-            directDowngrades = directHealthSnapshot.downgrades,
-            directPromotions = directHealthSnapshot.promotions,
-            directCooldownUntil = directHealthSnapshot.cooldownUntilMs,
-            routeSettlingUntil = directHealthSnapshot.settlingUntilMs,
-            directProbeLastError = directHealthSnapshot.lastError,
-            directProbeLastSuccessTime = directHealthSnapshot.lastSuccessTimeMs,
-            directProbeSkippedBecauseAlreadyHealthy = directProbeSkippedBecauseAlreadyHealthy.get(),
-            wifiCapabilityEventsIgnored = wifiCapabilityEventsIgnored.get(),
-            routeChurnAvoided = routeChurnAvoided.get(),
-            directProbeThrottleUntil = directHealthSnapshot.probeThrottleUntilMs,
-            mobileDirectRescueAttempts = mobileDirectRescueAttempts.get(),
-            mobileDirectRescueSuccesses = mobileDirectRescueSuccesses.get(),
-            mobileDirectRescueFailures = mobileDirectRescueFailures.get(),
-            mobileDirectRescueSuppressed = mobileDirectRescueSuppressed.get(),
-            mobileRescueSkippedBecauseNetworkChanged = mobileRescueSkippedBecauseNetworkChanged.get(),
-            wifiDirectRecoveryAttempts = wifiDirectRecoveryAttempts.get(),
-            wifiDirectRecoverySuccesses = wifiDirectRecoverySuccesses.get(),
-            wifiDirectRecoveryFailures = wifiDirectRecoveryFailures.get(),
-            recoveryDiagnostics = ProxyRecoveryDiagnostics(
+            )
+            snapshot.routeMode = routeSnapshot.configuredRouteMode.configValue
+            snapshot.effectiveRouteMode = routeSnapshot.effectiveRouteMode.configValue
+            snapshot.previousEffectiveRouteMode = routeSnapshot.previousEffectiveRouteMode?.configValue
+            snapshot.lastRouteChangeReason = routeSnapshot.lastRouteChangeReason
+            snapshot.lastRouteChangeSource = routeSnapshot.lastRouteChangeSource
+            snapshot.lastRouteChangeTimeMs = routeSnapshot.lastRouteChangeTimeMs
+            snapshot.networkAtLastRouteChange = routeSnapshot.networkAtLastRouteChange
+            snapshot.lastRouteEvaluationReason = routeSnapshot.lastRouteEvaluationReason
+            snapshot.lastRouteEvaluationSource = routeSnapshot.lastRouteEvaluationSource
+            snapshot.lastRouteEvaluationTimeMs = routeSnapshot.lastRouteEvaluationTimeMs
+            snapshot.networkAtLastRouteEvaluation = routeSnapshot.networkAtLastRouteEvaluation
+            snapshot.routeEvaluations = routeSnapshot.routeEvaluations
+            snapshot.routeNoopEvaluations = routeSnapshot.routeNoopEvaluations
+            snapshot.lastRouteUsed = lastRouteUsed
+            snapshot.statsSnapshotTimeMs = snapshotTimeMs
+            snapshot.lastEffectiveRouteModeUpdateTimeMs = routeSnapshot.lastRouteChangeTimeMs
+            snapshot.lastRouteUsedUpdateTimeMs = lastRouteUsedUpdateTimeMs.get().takeIf { it > 0L }
+            snapshot.directTimeouts = directTimeouts.get()
+            snapshot.lastCfDomain = lastCfDomain
+            snapshot.directAttempts = directAttempts.get()
+            snapshot.directAttemptsSkippedBecauseRoute = directAttemptsSkippedBecauseRoute.get()
+            snapshot.poolRefillsCancelled = poolRefillsCancelled.get()
+            snapshot.poolResultsDiscardedAfterRouteChange = poolResultsDiscardedAfterRouteChange.get()
+            snapshot.routeChangesImmediate = routeChangesImmediate.get()
+            snapshot.networkNoneEvents = networkNoneEvents.get()
+            snapshot.directHealthState = directHealthSnapshot.state.configValue
+            snapshot.directHealthSuccesses = directHealthSnapshot.successes
+            snapshot.directHealthFailures = directHealthSnapshot.failures
+            snapshot.directDowngrades = directHealthSnapshot.downgrades
+            snapshot.directPromotions = directHealthSnapshot.promotions
+            snapshot.directCooldownUntil = directHealthSnapshot.cooldownUntilMs
+            snapshot.routeSettlingUntil = directHealthSnapshot.settlingUntilMs
+            snapshot.directProbeLastError = directHealthSnapshot.lastError
+            snapshot.directProbeLastSuccessTime = directHealthSnapshot.lastSuccessTimeMs
+            snapshot.directProbeSkippedBecauseAlreadyHealthy = directProbeSkippedBecauseAlreadyHealthy.get()
+            snapshot.wifiCapabilityEventsIgnored = wifiCapabilityEventsIgnored.get()
+            snapshot.routeChurnAvoided = routeChurnAvoided.get()
+            snapshot.directProbeThrottleUntil = directHealthSnapshot.probeThrottleUntilMs
+            snapshot.mobileDirectRescueAttempts = mobileDirectRescueAttempts.get()
+            snapshot.mobileDirectRescueSuccesses = mobileDirectRescueSuccesses.get()
+            snapshot.mobileDirectRescueFailures = mobileDirectRescueFailures.get()
+            snapshot.mobileDirectRescueSuppressed = mobileDirectRescueSuppressed.get()
+            snapshot.mobileRescueSkippedBecauseNetworkChanged = mobileRescueSkippedBecauseNetworkChanged.get()
+            snapshot.wifiDirectRecoveryAttempts = wifiDirectRecoveryAttempts.get()
+            snapshot.wifiDirectRecoverySuccesses = wifiDirectRecoverySuccesses.get()
+            snapshot.wifiDirectRecoveryFailures = wifiDirectRecoveryFailures.get()
+            snapshot.recoveryDiagnostics = ProxyRecoveryDiagnostics(
                 cfFirst = CfFirstRecoveryDiagnostics(
                     wifiAttempts = wifiCfFirstRecoveryAttempts.get(),
                     wifiSuccesses = wifiCfFirstRecoverySuccesses.get(),
@@ -967,85 +1057,87 @@ class ProxyServer(
                     suppressed = emergencyDirectFallbackSuppressed.get(),
                     lastReason = lastEmergencyDirectFallbackReason.get(),
                 ),
-            ),
-            lastNetworkTypeAtRouteAttempt = lastNetworkTypeAtRouteAttempt,
-            routeAttemptNetworkGeneration = routeAttemptNetworkGeneration,
-            routeAttemptNetworkChangedBeforeSelection = routeAttemptNetworkChangedBeforeSelection.get(),
-            mobileDirectRescueCooldownUntil = mobileDirectRescueByDc.mapValues { (_, state) -> state.cooldownUntilMs }.filterValues { it > 0L }.toSortedMap(),
-            mobileDirectRescueLastError = mobileDirectRescueByDc.mapNotNull { (dc, state) -> state.lastError?.let { dc to it } }.toMap().toSortedMap(),
-            mobileDirectRescueLastSuccessTime = mobileDirectRescueByDc.mapValues { (_, state) -> state.lastSuccessTimeMs }.filterValues { it > 0L }.toSortedMap(),
-            cfHealthEnabled = cfHealthSnapshot.enabled,
-            cfDomainsTotal = cfHealthSnapshot.domainsTotal,
-            cfDomainsInCooldown = cfHealthSnapshot.domainsInCooldown,
-            cfLastSelectedDomain = cfHealthSnapshot.lastSelectedDomain,
-            cfLastSelectedReason = cfHealthSnapshot.lastSelectedReason,
-            cfLastConnectLatencyMs = cfHealthSnapshot.lastConnectLatencyMs,
-            cfBestDomainByDc = cfHealthSnapshot.bestDomainByDc,
-            cf429Count = cfHealthSnapshot.total429,
-            cf503Count = cfHealthSnapshot.total503,
-            cfUnknownHostCount = cfHealthSnapshot.totalUnknownHost,
-            cfTimeoutCount = cfHealthSnapshot.totalTimeouts,
-            cfCooldownSkips = cfHealthSnapshot.cooldownSkips,
-            cfAllDomainsInCooldownFallbacks = cfHealthSnapshot.allDomainsInCooldownFallbacks,
-            cfInflightSkips = cfHealthSnapshot.inflightSkips,
-            cfInflightWaits = cfHealthSnapshot.inflightWaits,
-            cfMaxInflightPerDomainReached = cfHealthSnapshot.maxInflightPerDomainReached,
-            cfActiveConnectsByDc = cfHealthSnapshot.activeConnectsByDc,
-            cfConnectQueueWaits = cfHealthSnapshot.connectQueueWaits,
-            cfConnectQueueTimeouts = cfHealthSnapshot.connectQueueTimeouts,
-            cfQueueControlledFailures = cfHealthSnapshot.queueControlledFailures,
-            cfQueueWaitMs = cfHealthSnapshot.queueWaitMs,
-            cfMaxConcurrentConnectsByDc = cfHealthSnapshot.maxConcurrentConnectsByDc,
-            cf429BackoffCount = cfHealthSnapshot.backoffCount,
-            cfAllCooldownWaits = cfHealthSnapshot.allCooldownWaits,
-            cfAllCooldownWaitMs = cfHealthSnapshot.allCooldownWaitMs,
-            cfAllCooldownCircuitOpenCount = cfHealthSnapshot.allCooldownCircuitOpenCount,
-            cfAllCooldownAttemptsAllowed = cfHealthSnapshot.allCooldownAttemptsAllowed,
-            cfAllCooldownAttemptsSuppressed = cfHealthSnapshot.allCooldownAttemptsSuppressed,
-            cfAllCooldownControlledFailures = cfHealthSnapshot.allCooldownControlledFailures,
-            cfAllCooldownCircuitOpenByDc = cfHealthSnapshot.allCooldownCircuitOpenByDc,
-            cfAllCooldownSingleAttempts = cfHealthSnapshot.allCooldownSingleAttempts,
-            cfAllCooldownSingleAttemptFailures = cfHealthSnapshot.allCooldownSingleAttemptFailures,
-            cfAllCooldownStoppedCycles = cfHealthSnapshot.allCooldownStoppedCycles,
-            cfPressureLevelByDc = cfHealthSnapshot.pressure.levelByDc,
-            cfPressureScoreByDc = cfHealthSnapshot.pressure.scoreByDc,
-            cfPressureRecentSuccessByDc = cfHealthSnapshot.pressure.recentSuccessByDc,
-            cfPressureRecent429ByDc = cfHealthSnapshot.pressure.recent429ByDc,
-            cfPressureRecentTimeoutByDc = cfHealthSnapshot.pressure.recentTimeoutByDc,
-            cfPressureRecentUnknownHostByDc = cfHealthSnapshot.pressure.recentUnknownHostByDc,
-            cfPressureRecentQueueFailureByDc = cfHealthSnapshot.pressure.recentQueueFailureByDc,
-            cfPressureRecentAllCooldownSuppressedByDc = cfHealthSnapshot.pressure.recentAllCooldownSuppressedByDc,
-            cfPressureRecentMaxInflightByDc = cfHealthSnapshot.pressure.recentMaxInflightByDc,
-            cfPressureRecentRouteFailureAfterCfByDc = cfHealthSnapshot.pressure.recentRouteFailureAfterCfByDc,
-            cfPressureAllDomainsCooldownByDc = cfHealthSnapshot.pressure.allDomainsCooldownByDc,
-            cfPressureReasonByDc = cfHealthSnapshot.pressure.reasonByDc,
-            cfPressureProbeAllowed = cfHealthSnapshot.pressure.probeAllowed,
-            cfPressureProbeSuppressed = cfHealthSnapshot.pressure.probeSuppressed,
-            cfPressureControlledFailures = cfHealthSnapshot.pressure.controlledFailures,
-            cfPressureLimitedAttempts = cfHealthSnapshot.pressure.limitedAttempts,
-            cfPressureLevelChanges = cfHealthSnapshot.pressure.levelChanges,
-            cfPressureNextProbeAtByDc = cfHealthSnapshot.pressure.nextProbeAtByDc,
-            cfTransientNetworkFailures = cfHealthSnapshot.transientNetworkFailures,
-            cfFailuresIgnoredBecauseNetworkChanged = cfHealthSnapshot.failuresIgnoredBecauseNetworkChanged,
-            cfCooldownsSkippedBecauseNetworkSettling = cfHealthSnapshot.cooldownsSkippedBecauseNetworkSettling,
-            cfTransientCooldownsClearedOnNetworkAvailable = cfHealthSnapshot.transientCooldownsClearedOnNetworkAvailable,
-            networkSettlingWaits = networkSettlingWaits.get(),
-            networkSettlingWaitMs = networkSettlingWaitMs.get(),
-            networkSettlingResumedAfterAvailable = networkSettlingResumedAfterAvailable.get(),
-            networkSettlingControlledFailures = networkSettlingControlledFailures.get(),
-            networkSettlingStaleAttemptsIgnored = networkSettlingStaleAttemptsIgnored.get(),
-            networkSettlingUntilMs = networkSettlingUntilMs.get(),
-            lastNetworkLostAtMs = lastNetworkLostAtMs.get(),
-            lastNetworkAvailableAtMs = lastNetworkAvailableAtMs.get(),
-            cfHealthDomains = cfHealthSnapshot.domains,
-            recentInvalidHandshakeCount = recentInvalidHandshakeTimes.size.toLong(),
-            recentAcceptedHandshakeCount = recentAcceptedHandshakeTimes.size.toLong(),
-            lastInvalidHandshakeTimeMs = lastInvalidHandshakeTimeMs.get(),
-            lastAcceptedHandshakeTimeMs = lastAcceptedHandshakeTimeMs.get(),
-            lastSuccessfulRouteTimeMs = lastSuccessfulRouteTimeMs.get(),
-            networkGeneration = routeGeneration.get(),
-            clientExperience = buildClientExperienceDiagnostics(snapshotTimeMs),
-        )
+            )
+            snapshot.lastNetworkTypeAtRouteAttempt = lastNetworkTypeAtRouteAttempt
+            snapshot.routeAttemptNetworkGeneration = routeAttemptNetworkGeneration
+            snapshot.routeAttemptNetworkChangedBeforeSelection = routeAttemptNetworkChangedBeforeSelection.get()
+            snapshot.mobileDirectRescueCooldownUntil = mobileDirectRescueByDc.mapValues { (_, state) -> state.cooldownUntilMs }.filterValues { it > 0L }.toSortedMap()
+            snapshot.mobileDirectRescueLastError = mobileDirectRescueByDc.mapNotNull { (dc, state) -> state.lastError?.let { dc to it } }.toMap().toSortedMap()
+            snapshot.mobileDirectRescueLastSuccessTime = mobileDirectRescueByDc.mapValues { (_, state) -> state.lastSuccessTimeMs }.filterValues { it > 0L }.toSortedMap()
+            snapshot.cfHealthEnabled = cfHealthSnapshot.enabled
+            snapshot.cfDomainsTotal = cfHealthSnapshot.domainsTotal
+            snapshot.cfDomainsInCooldown = cfHealthSnapshot.domainsInCooldown
+            snapshot.cfLastSelectedDomain = cfHealthSnapshot.lastSelectedDomain
+            snapshot.cfLastSelectedReason = cfHealthSnapshot.lastSelectedReason
+            snapshot.cfLastConnectLatencyMs = cfHealthSnapshot.lastConnectLatencyMs
+            snapshot.cfBestDomainByDc = cfHealthSnapshot.bestDomainByDc
+            snapshot.cf429Count = cfHealthSnapshot.total429
+            snapshot.cf503Count = cfHealthSnapshot.total503
+            snapshot.cfUnknownHostCount = cfHealthSnapshot.totalUnknownHost
+            snapshot.cfTimeoutCount = cfHealthSnapshot.totalTimeouts
+            snapshot.cfCooldownSkips = cfHealthSnapshot.cooldownSkips
+            snapshot.cfAllDomainsInCooldownFallbacks = cfHealthSnapshot.allDomainsInCooldownFallbacks
+            snapshot.cfInflightSkips = cfHealthSnapshot.inflightSkips
+            snapshot.cfInflightWaits = cfHealthSnapshot.inflightWaits
+            snapshot.cfMaxInflightPerDomainReached = cfHealthSnapshot.maxInflightPerDomainReached
+            snapshot.cfActiveConnectsByDc = cfHealthSnapshot.activeConnectsByDc
+            snapshot.cfConnectQueueWaits = cfHealthSnapshot.connectQueueWaits
+            snapshot.cfConnectQueueTimeouts = cfHealthSnapshot.connectQueueTimeouts
+            snapshot.cfQueueControlledFailures = cfHealthSnapshot.queueControlledFailures
+            snapshot.cfQueueWaitMs = cfHealthSnapshot.queueWaitMs
+            snapshot.cfMaxConcurrentConnectsByDc = cfHealthSnapshot.maxConcurrentConnectsByDc
+            snapshot.cf429BackoffCount = cfHealthSnapshot.backoffCount
+            snapshot.cfAllCooldownWaits = cfHealthSnapshot.allCooldownWaits
+            snapshot.cfAllCooldownWaitMs = cfHealthSnapshot.allCooldownWaitMs
+            snapshot.cfAllCooldownCircuitOpenCount = cfHealthSnapshot.allCooldownCircuitOpenCount
+            snapshot.cfAllCooldownAttemptsAllowed = cfHealthSnapshot.allCooldownAttemptsAllowed
+            snapshot.cfAllCooldownAttemptsSuppressed = cfHealthSnapshot.allCooldownAttemptsSuppressed
+            snapshot.cfAllCooldownControlledFailures = cfHealthSnapshot.allCooldownControlledFailures
+            snapshot.cfAllCooldownCircuitOpenByDc = cfHealthSnapshot.allCooldownCircuitOpenByDc
+            snapshot.cfAllCooldownSingleAttempts = cfHealthSnapshot.allCooldownSingleAttempts
+            snapshot.cfAllCooldownSingleAttemptFailures = cfHealthSnapshot.allCooldownSingleAttemptFailures
+            snapshot.cfAllCooldownStoppedCycles = cfHealthSnapshot.allCooldownStoppedCycles
+            snapshot.cfPressureLevelByDc = cfHealthSnapshot.pressure.levelByDc
+            snapshot.cfPressureScoreByDc = cfHealthSnapshot.pressure.scoreByDc
+            snapshot.cfPressureRecentSuccessByDc = cfHealthSnapshot.pressure.recentSuccessByDc
+            snapshot.cfPressureRecent429ByDc = cfHealthSnapshot.pressure.recent429ByDc
+            snapshot.cfPressureRecentTimeoutByDc = cfHealthSnapshot.pressure.recentTimeoutByDc
+            snapshot.cfPressureRecentUnknownHostByDc = cfHealthSnapshot.pressure.recentUnknownHostByDc
+            snapshot.cfPressureRecentQueueFailureByDc = cfHealthSnapshot.pressure.recentQueueFailureByDc
+            snapshot.cfPressureRecentAllCooldownSuppressedByDc = cfHealthSnapshot.pressure.recentAllCooldownSuppressedByDc
+            snapshot.cfPressureRecentMaxInflightByDc = cfHealthSnapshot.pressure.recentMaxInflightByDc
+            snapshot.cfPressureRecentRouteFailureAfterCfByDc = cfHealthSnapshot.pressure.recentRouteFailureAfterCfByDc
+            snapshot.cfPressureAllDomainsCooldownByDc = cfHealthSnapshot.pressure.allDomainsCooldownByDc
+            snapshot.cfPressureReasonByDc = cfHealthSnapshot.pressure.reasonByDc
+            snapshot.cfPressureProbeAllowed = cfHealthSnapshot.pressure.probeAllowed
+            snapshot.cfPressureProbeSuppressed = cfHealthSnapshot.pressure.probeSuppressed
+            snapshot.cfPressureControlledFailures = cfHealthSnapshot.pressure.controlledFailures
+            snapshot.cfPressureLimitedAttempts = cfHealthSnapshot.pressure.limitedAttempts
+            snapshot.cfPressureLevelChanges = cfHealthSnapshot.pressure.levelChanges
+            snapshot.cfPressureNextProbeAtByDc = cfHealthSnapshot.pressure.nextProbeAtByDc
+            snapshot.cfTransientNetworkFailures = cfHealthSnapshot.transientNetworkFailures
+            snapshot.cfFailuresIgnoredBecauseNetworkChanged = cfHealthSnapshot.failuresIgnoredBecauseNetworkChanged
+            snapshot.cfCooldownsSkippedBecauseNetworkSettling = cfHealthSnapshot.cooldownsSkippedBecauseNetworkSettling
+            snapshot.cfTransientCooldownsClearedOnNetworkAvailable = cfHealthSnapshot.transientCooldownsClearedOnNetworkAvailable
+            snapshot.networkSettlingWaits = networkSettlingWaits.get()
+            snapshot.networkSettlingWaitMs = networkSettlingWaitMs.get()
+            snapshot.networkSettlingResumedAfterAvailable = networkSettlingResumedAfterAvailable.get()
+            snapshot.networkSettlingControlledFailures = networkSettlingControlledFailures.get()
+            snapshot.networkSettlingStaleAttemptsIgnored = networkSettlingStaleAttemptsIgnored.get()
+            snapshot.networkSettlingUntilMs = networkSettlingUntilMs.get()
+            snapshot.lastNetworkLostAtMs = lastNetworkLostAtMs.get()
+            snapshot.lastNetworkAvailableAtMs = lastNetworkAvailableAtMs.get()
+            snapshot.cfHealthDomains = cfHealthSnapshot.domains
+            snapshot.recentInvalidHandshakeCount = recentInvalidHandshakeTimes.size.toLong()
+            snapshot.recentAcceptedHandshakeCount = recentAcceptedHandshakeTimes.size.toLong()
+            snapshot.lastInvalidHandshakeTimeMs = lastInvalidHandshakeTimeMs.get()
+            snapshot.lastAcceptedHandshakeTimeMs = lastAcceptedHandshakeTimeMs.get()
+            snapshot.lastSuccessfulRouteTimeMs = lastSuccessfulRouteTimeMs.get()
+            snapshot.networkGeneration = routeGeneration.get()
+            snapshot.clientExperience = buildClientExperienceDiagnostics(snapshotTimeMs)
+            snapshot.unsupportedDc = unsupportedDc.get()
+
+        return snapshot
     }
 
     fun applyNetworkRoute(networkStatus: String): RouteChangeResult =
@@ -2184,6 +2276,7 @@ class ProxyServer(
     }
 
     private fun recordUnsupportedDc(dcId: Int, now: Long = System.currentTimeMillis()) {
+        unsupportedDc.incrementAndGet()
         recordRecentEvent(recentUnsupportedDcTimes.getOrPut(dcId) { ConcurrentLinkedDeque() }, now)
     }
 

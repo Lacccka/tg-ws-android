@@ -595,30 +595,33 @@ class MainUiModelTest {
         recentAcceptedHandshakeCount: Long = 0,
         lastAcceptedHandshakeTimeMs: Long = 0,
         lastSuccessfulRouteTimeMs: Long = 0,
-    ): ProxyServerStats = ProxyServerStats(
-        connectionsTotal = connectionsTotal,
-        connectionsActive = connectionsActive,
-        connectionsBad = connectionsBad,
-        wsConnectErrors = wsConnectErrors,
-        cfProxyConnections = cfProxyConnections,
-        cfProxyErrors = cfProxyErrors,
-        bytesUp = bytesUp,
-        bytesDown = bytesDown,
-        poolHits = 0,
-        poolMisses = 0,
-        poolRefillErrors = 0,
-        effectiveRouteMode = effectiveRouteMode,
-        sessionTimeouts = sessionTimeouts,
-        sessionUnexpectedErrors = sessionUnexpectedErrors,
-        networkNoneEvents = networkNoneEvents,
-        directHealthState = directHealthState,
-        directHealthSuccesses = directHealthSuccesses,
-        lastRouteUsed = lastRouteUsed,
-        cf429Count = cf429Count,
-        cfCooldownSkips = cfCooldownSkips,
-        recentInvalidHandshakeCount = recentInvalidHandshakeCount,
-        recentAcceptedHandshakeCount = recentAcceptedHandshakeCount,
-        lastAcceptedHandshakeTimeMs = lastAcceptedHandshakeTimeMs,
-        lastSuccessfulRouteTimeMs = lastSuccessfulRouteTimeMs,
-    )
+    ): ProxyServerStats {
+        val snapshot = ProxyServerStats()
+        snapshot.connectionsTotal = connectionsTotal
+        snapshot.connectionsActive = connectionsActive
+        snapshot.connectionsBad = connectionsBad
+        snapshot.wsConnectErrors = wsConnectErrors
+        snapshot.cfProxyConnections = cfProxyConnections
+        snapshot.cfProxyErrors = cfProxyErrors
+        snapshot.bytesUp = bytesUp
+        snapshot.bytesDown = bytesDown
+        snapshot.poolHits = 0
+        snapshot.poolMisses = 0
+        snapshot.poolRefillErrors = 0
+        snapshot.effectiveRouteMode = effectiveRouteMode
+        snapshot.sessionTimeouts = sessionTimeouts
+        snapshot.sessionUnexpectedErrors = sessionUnexpectedErrors
+        snapshot.networkNoneEvents = networkNoneEvents
+        snapshot.directHealthState = directHealthState
+        snapshot.directHealthSuccesses = directHealthSuccesses
+        snapshot.lastRouteUsed = lastRouteUsed
+        snapshot.cf429Count = cf429Count
+        snapshot.cfCooldownSkips = cfCooldownSkips
+        snapshot.recentInvalidHandshakeCount = recentInvalidHandshakeCount
+        snapshot.recentAcceptedHandshakeCount = recentAcceptedHandshakeCount
+        snapshot.lastAcceptedHandshakeTimeMs = lastAcceptedHandshakeTimeMs
+        snapshot.lastSuccessfulRouteTimeMs = lastSuccessfulRouteTimeMs
+
+        return snapshot
+    }
 }
