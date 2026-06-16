@@ -26,6 +26,7 @@ data class AppConfig(
     val cfproxyWorkerDomain: List<String> = emptyList(),
     val appearance: Appearance = Appearance.AUTO,
     val routeMode: NetworkRouteMode = NetworkRouteMode.AUTO,
+    val telemetryEnabled: Boolean = false,
 ) {
     companion object {
         const val DEFAULT_HOST = "127.0.0.1"
@@ -54,6 +55,7 @@ data class AppConfig(
                 routeMode = NetworkRouteMode.fromConfigValue(
                     json.optString("route_mode", json.optString("routeMode", NetworkRouteMode.AUTO.configValue)),
                 ),
+                telemetryEnabled = json.optBoolean("telemetry_enabled", false),
             )
     }
 }

@@ -133,6 +133,17 @@ class AppConfigStoreTest {
     }
 
     @Test
+    fun `telemetry is disabled by default and persisted when enabled`() {
+        val store = testStore()
+
+        assertEquals(false, store.loadConfig().telemetryEnabled)
+
+        store.saveConfig(store.loadConfig().copy(telemetryEnabled = true))
+
+        assertEquals(true, store.loadConfig().telemetryEnabled)
+    }
+
+    @Test
     fun `Telegram secret remains dd plus saved 32 hex secret`() {
         val savedSecret = "0123456789abcdef0123456789abcdef"
 

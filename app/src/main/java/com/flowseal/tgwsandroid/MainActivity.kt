@@ -39,6 +39,8 @@ import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.service.LogSeverity
 import com.flowseal.tgwsandroid.service.ProxyForegroundService
 import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
+import com.flowseal.tgwsandroid.telemetry.Telemetry
+import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
@@ -64,6 +66,8 @@ class MainActivity : Activity() {
     private lateinit var secretStateText: TextView
     private lateinit var restartProxyButton: Button
     private lateinit var restartProxyHintText: TextView
+    private lateinit var telemetryCheckBox: CheckBox
+    private lateinit var telemetryTestButton: Button
     private lateinit var developerModeCheckBox: CheckBox
     private lateinit var developerSection: LinearLayout
     private lateinit var logsText: TextView
@@ -214,6 +218,20 @@ class MainActivity : Activity() {
         secretStateText = createValueText().apply { setTextColor(COLOR_SUCCESS) }
         restartProxyHintText = createValueText().apply { setTextColor(COLOR_TEXT_SECONDARY) }
         restartProxyButton = createButton("Перезагрузить прокси") { restartProxyService() }
+        telemetryCheckBox = CheckBox(this).apply {
+            text = "Отправлять анонимную диагностику"
+            isAllCaps = false
+            setTextColor(COLOR_TEXT_PRIMARY)
+            setOnCheckedChangeListener { _, enabled ->
+                val store = AppConfigStore.from(applicationContext)
+                store.saveConfig(store.loadConfig().copy(telemetryEnabled = enabled))
+                ProxyRuntimeConfig.initialize(applicationContext)
+                ProxyForegroundService.State.addLog("telemetry_enabled changed to $enabled", LogSeverity.INFO, "ui")
+                refreshState()
+                if (enabled) sendTestTelemetry()
+            }
+        }
+        telemetryTestButton = createButton("Send test telemetry") { sendTestTelemetry() }
         developerModeCheckBox = CheckBox(this).apply {
             text = "Режим разработчика"
             isAllCaps = false
@@ -284,6 +302,14 @@ class MainActivity : Activity() {
             addView(createCard("Прокси") {
                 addView(restartProxyButton, matchWrapParams())
                 addView(restartProxyHintText, matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding))
+            addView(createCard("Анонимная диагностика") {
+                addView(telemetryCheckBox, matchWrapParams())
+                addView(createValueText().apply {
+                    text = "Отправляется только тестовое событие с install_id и контекстом устройства. Secret, proxy link, raw logs, real IP, SSID/BSSID и аппаратные идентификаторы не отправляются."
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                }, matchWrapParams(topMargin = rowGap))
+                addView(telemetryTestButton, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
             addView(createCard("Дополнительно") {
                 addView(developerModeCheckBox, matchWrapParams())
@@ -384,6 +410,8 @@ class MainActivity : Activity() {
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
             restartProxyButton.isEnabled = PendingRestartModel.restartActionEnabled(running)
             restartProxyHintText.text = if (running) "" else PendingRestartModel.RESTART_DISABLED_HINT
+            telemetryCheckBox.isChecked = config.telemetryEnabled
+            telemetryTestButton.isEnabled = config.telemetryEnabled
             rawRouteDetailsText.text = routeDetailsLine()
             cfDetailsText.text = cfDetailsLine()
             directDetailsText.text = directDetailsLine()
@@ -631,6 +659,23 @@ class MainActivity : Activity() {
             .setMessage(SettingsUiText.QS_TILE_HELP_MESSAGE)
             .setPositiveButton("Понятно", null)
             .show()
+    }
+
+    private fun sendTestTelemetry() {
+        val config = AppConfigStore.from(applicationContext).loadConfig()
+        if (!config.telemetryEnabled) {
+            Toast.makeText(this, "Сначала включите анонимную диагностику", Toast.LENGTH_SHORT).show()
+            return
+        }
+        Toast.makeText(this, "Отправка test telemetry...", Toast.LENGTH_SHORT).show()
+        thread(name = "test-telemetry", isDaemon = true) {
+            val sent = Telemetry.sendTestEvent(applicationContext, config)
+            ProxyForegroundService.State.addLog("test telemetry send result=$sent", if (sent) LogSeverity.INFO else LogSeverity.WARN, "ui")
+            handler.post {
+                Toast.makeText(this, if (sent) "Test telemetry отправлена" else "Не удалось отправить test telemetry", Toast.LENGTH_SHORT).show()
+                refreshState()
+            }
+        }
     }
 
     private fun refreshLocalDiagnostics() {

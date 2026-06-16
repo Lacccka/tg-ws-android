@@ -29,6 +29,8 @@ android {
         buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
         buildConfigField("String", "GIT_COMMIT_SHA", "\"${gitCommitSha()}\"")
         buildConfigField("String", "BUILD_FLAVOR_NAME", "\"none\"")
+        buildConfigField("String", "TELEMETRY_ENDPOINT", "\"https://d5dqfsreu76tk91ifakc.xxg4zr82.apigw.yandexcloud.net/telemetry\"")
+        buildConfigField("String", "TELEMETRY_TOKEN", "\"${providers.gradleProperty("TELEMETRY_TOKEN").orNull ?: ""}\"")
     }
 
     buildTypes {

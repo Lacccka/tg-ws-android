@@ -135,6 +135,7 @@ fun AppConfig.toJson(): JSONObject = JSONObject().apply {
     put("appearance", appearance.configValue)
     put("route_mode", routeMode.configValue)
     put("routeMode", routeMode.configValue)
+    put("telemetry_enabled", telemetryEnabled)
 }
 
 private fun generateSecretHex(): String {
