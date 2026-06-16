@@ -228,7 +228,6 @@ class MainActivity : Activity() {
                 ProxyRuntimeConfig.initialize(applicationContext)
                 ProxyForegroundService.State.addLog("telemetry_enabled changed to $enabled", LogSeverity.INFO, "ui")
                 refreshState()
-                if (enabled) sendTestTelemetry()
             }
         }
         telemetryTestButton = createButton("Send test telemetry") { sendTestTelemetry() }

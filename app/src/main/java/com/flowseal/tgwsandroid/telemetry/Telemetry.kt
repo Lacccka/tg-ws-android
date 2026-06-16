@@ -20,5 +20,14 @@ object Telemetry {
         }))
     }
 
+    fun batch(context: Context, events: JSONArray, nowMs: Long = System.currentTimeMillis()): JSONObject = JSONObject().apply {
+        put("install_id", InstallIdStore.from(context).getOrCreateInstallId())
+        put("sent_at_ms", nowMs)
+        put("device", DeviceContext.collect(context).toJson())
+        put("events", events)
+    }
+
     fun sendTestEvent(context: Context, config: AppConfig): Boolean = TelemetryClient().postJson(testEvent(context, config))
+
+    fun sendEvents(context: Context, events: JSONArray): Boolean = TelemetryClient().postJson(batch(context, events))
 }

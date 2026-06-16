@@ -24,6 +24,8 @@ import com.flowseal.tgwsandroid.proxy.ProxyLogger
 import com.flowseal.tgwsandroid.proxy.ProxyServer
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
+import com.flowseal.tgwsandroid.telemetry.Telemetry
+import com.flowseal.tgwsandroid.telemetry.TelemetryAggregator
 import java.io.File
 import java.time.Instant
 import java.time.LocalDateTime
@@ -33,6 +35,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import org.json.JSONArray
 
 class ProxyForegroundService : Service() {
     private val lock = Any()
@@ -49,6 +52,7 @@ class ProxyForegroundService : Service() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var watchdogFuture: ScheduledFuture<*>? = null
     private var wakeLock: PowerManager.WakeLock? = null
+    private val telemetryAggregator = TelemetryAggregator(telemetryEnabled = { runCatching { ProxyRuntimeConfig.appConfig(applicationContext).telemetryEnabled }.getOrDefault(false) })
     @Volatile
     private var lastDuplicateNetworkCallbackLogAtMs: Long = 0L
 
@@ -214,6 +218,8 @@ class ProxyForegroundService : Service() {
                 State.addLog("Proxy stop failed: ${error.message ?: error::class.java.simpleName}", LogSeverity.WARN, "service")
             }
         }
+        telemetryAggregator.flushOnStop()
+        sendQueuedTelemetrySnapshots()
         releaseWakeLock()
         unregisterNetworkCallback()
         State.setRunning(false, "Proxy stopped")
@@ -454,6 +460,10 @@ class ProxyForegroundService : Service() {
             }
             State.updateStats(stats)
             State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
+            if (stats != null) {
+                telemetryAggregator.recordStats(stats, foregroundServiceActive = State.running, wakeLockActive = State.isWakeLockHeld())
+                sendQueuedTelemetrySnapshots()
+            }
             State.markWatchdogHeartbeat()
             val line = "watchdog: running=${server?.isRunning == true} ${compactStats(stats)} " +
                 "network=${State.networkStatus} route=${stats?.effectiveRouteMode ?: "unknown"} battery=${State.batteryOptimizationStatus}"
@@ -464,6 +474,16 @@ class ProxyForegroundService : Service() {
     private fun stopWatchdog() {
         watchdogFuture?.cancel(false)
         watchdogFuture = null
+    }
+
+
+    private fun sendQueuedTelemetrySnapshots() {
+        if (!runCatching { ProxyRuntimeConfig.appConfig(applicationContext).telemetryEnabled }.getOrDefault(false)) return
+        while (true) {
+            val event = telemetryAggregator.pollSnapshot() ?: return
+            runCatching { Telemetry.sendEvents(applicationContext, JSONArray().put(event)) }
+                .onFailure { error -> State.addLog("diagnostics telemetry send failed: ${error.message ?: error::class.java.simpleName}", LogSeverity.WARN, "telemetry") }
+        }
     }
 
     private fun compactStats(stats: ProxyServerStats?): String = if (stats == null) {
@@ -746,6 +766,8 @@ class ProxyForegroundService : Service() {
         fun setWakeLockHeld(isHeld: Boolean) {
             wakeLockHeld = isHeld
         }
+
+        fun isWakeLockHeld(): Boolean = wakeLockHeld
 
         fun updateStats(stats: ProxyServerStats?) {
             statsSnapshot = stats
