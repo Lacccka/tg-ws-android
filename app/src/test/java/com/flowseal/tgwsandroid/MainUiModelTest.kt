@@ -101,6 +101,25 @@ class MainUiModelTest {
         assertTrue(SettingsUiText.QS_TILE_TEXT.contains("быстрые настройки Android"))
     }
 
+
+    @Test
+    fun recommendationCardsUseShortActionableText() {
+        assertEquals("Позже", RecommendationUiText.DISMISS_ACTION)
+        assertEquals("Включить уведомления", RecommendationUiText.cards.getValue("notifications").first)
+        assertEquals("Так будет проще видеть состояние подключения", RecommendationUiText.cards.getValue("notifications").second)
+        assertEquals("Разрешить работу в фоне", RecommendationUiText.cards.getValue("battery").first)
+        assertEquals("Помогает сохранять подключение после блокировки экрана", RecommendationUiText.cards.getValue("battery").second)
+        assertEquals("Добавить кнопку в шторку", RecommendationUiText.cards.getValue("quick_settings").first)
+        assertFalse(RecommendationUiText.cards.values.any { (title, subtitle) ->
+            listOf(title, subtitle).any { text ->
+                text.contains("Cloudflare", ignoreCase = true) ||
+                    text.contains("OEM", ignoreCase = true) ||
+                    text.contains("провайдер", ignoreCase = true) ||
+                    text.contains("винов", ignoreCase = true)
+            }
+        })
+    }
+
     @Test
     fun stoppedProxyTelegramStatusSaysProxyStopped() {
         assertEquals("Прокси остановлен", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = stats()))

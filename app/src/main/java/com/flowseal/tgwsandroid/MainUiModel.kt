@@ -201,6 +201,21 @@ object HomeRouteLabelMapper {
         startsWith("cf-", ignoreCase = true)
 }
 
+object RecommendationUiText {
+    const val DISMISS_ACTION = "Позже"
+    const val OPEN_ACTION = "Открыть"
+    const val ENABLE_ACTION = "Включить"
+    const val ADD_ACTION = "Добавить"
+
+    val cards: Map<String, Pair<String, String>> = mapOf(
+        "notifications" to ("Включить уведомления" to "Так будет проще видеть состояние подключения"),
+        "battery" to ("Разрешить работу в фоне" to "Помогает сохранять подключение после блокировки экрана"),
+        "autostart" to ("Включить автозапуск" to "Прокси сможет запускаться после перезагрузки"),
+        "quick_settings" to ("Добавить кнопку в шторку" to "Быстрый запуск и остановка прокси"),
+        "telemetry" to ("Включить анонимную диагностику" to "Помогает улучшать стабильность без личных данных"),
+    )
+}
+
 
 object SecretUpdatedMessageModel {
     const val MESSAGE = "Секрет обновлён. Отключите proxy в Telegram, закройте Telegram и подключитесь заново по новой ссылке."

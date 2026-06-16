@@ -3,19 +3,23 @@ package com.flowseal.tgwsandroid
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.StatusBarManager
 import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.Icon
 import android.graphics.drawable.GradientDrawable
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
+import android.provider.Settings
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -32,6 +36,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.res.use
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -41,6 +46,7 @@ import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.service.LogSeverity
 import com.flowseal.tgwsandroid.service.ProxyForegroundService
 import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
+import com.flowseal.tgwsandroid.service.ProxyQuickSettingsTileService
 import com.flowseal.tgwsandroid.telemetry.Telemetry
 import kotlin.concurrent.thread
 
@@ -467,54 +473,89 @@ class MainActivity : Activity() {
 
     private fun refreshHints() {
         hintsContainer.removeAllViews()
-        val candidates = buildList {
-            if (!prefs.getBoolean(PREF_HINT_FIRST_START_DISMISSED, false) && !prefs.getBoolean(PREF_PROXY_EVER_STARTED, false)) {
-                add(HintCard("Начните с запуска прокси", "Нажмите «Запустить», затем «Подключить Telegram».", "Понятно", onPrimary = {
-                    prefs.edit().putBoolean(PREF_HINT_FIRST_START_DISMISSED, true).apply()
-                    refreshHints()
-                }))
+        recommendationCards()
+            .take(MAX_HINTS)
+            .forEach { recommendation ->
+                hintsContainer.addView(
+                    RecommendationCard(recommendation),
+                    cardParams(bottomMargin = (8 * resources.displayMetrics.density).toInt()),
+                )
             }
-            if (!prefs.getBoolean(PREF_HINT_BATTERY_DISMISSED, false) && detectBatteryOptimizationStatus() != "unrestricted") {
-                add(HintCard("Разрешите работу в фоне", "Чтобы прокси не останавливался, отключите ограничения батареи для приложения.", "Открыть настройки", {
-                    openBatterySettings()
-                    prefs.edit().putBoolean(PREF_HINT_BATTERY_DISMISSED, true).apply()
-                    refreshHints()
-                }, "Позже") {
-                    prefs.edit().putBoolean(PREF_HINT_BATTERY_DISMISSED, true).apply()
-                    refreshHints()
-                })
-            }
-            if (!prefs.getBoolean(PREF_HINT_NOTIFICATION_DISMISSED, false) && notificationPermissionMissing()) {
-                add(HintCard("Разрешите уведомление", "Уведомление нужно, чтобы прокси стабильно работал в фоне и им можно было управлять из шторки.", "Разрешить", {
-                    requestNotificationPermissionIfNeeded()
-                    prefs.edit().putBoolean(PREF_HINT_NOTIFICATION_DISMISSED, true).apply()
-                    refreshHints()
-                }, "Позже") {
-                    prefs.edit().putBoolean(PREF_HINT_NOTIFICATION_DISMISSED, true).apply()
-                    refreshHints()
-                })
-            }
-            if (!prefs.getBoolean(PREF_HINT_MOBILE_DISMISSED, false) && ProxyForegroundService.State.networkStatus.equals("mobile", ignoreCase = true)) {
-                add(HintCard("Мобильная сеть", "На мобильной сети используется совместимый маршрут. Ping может быть выше, чем на Wi-Fi.", "Понятно", onPrimary = {
-                    prefs.edit().putBoolean(PREF_HINT_MOBILE_DISMISSED, true).apply()
-                    refreshHints()
-                }))
-            }
-        }.take(MAX_HINTS)
-        candidates.forEach { hintsContainer.addView(createHintCard(it), cardParams(bottomMargin = (8 * resources.displayMetrics.density).toInt())) }
     }
 
-    private fun createHintCard(hint: HintCard): LinearLayout = SettingsSection(hint.title) {
-        addView(createValueText().apply {
-            text = hint.text
-            setTextColor(COLOR_TEXT_SECONDARY)
-        }, matchWrapParams())
-        addView(createButton(hint.primaryAction, hint.onPrimary), matchWrapParams(topMargin = (8 * resources.displayMetrics.density).toInt()))
-        if (hint.secondaryAction != null && hint.onSecondary != null) {
-            addView(createButton(hint.secondaryAction, hint.onSecondary), matchWrapParams(topMargin = (6 * resources.displayMetrics.density).toInt()))
+    private fun recommendationCards(): List<RecommendationCardModel> {
+        val config = ProxyRuntimeConfig.appConfig(applicationContext)
+        return buildList {
+            if (notificationPermissionMissing() && !recommendationInCooldown(RECOMMENDATION_NOTIFICATIONS)) {
+                add(recommendation(RECOMMENDATION_NOTIFICATIONS, RecommendationUiText.ENABLE_ACTION) {
+                    openNotificationSettingsFlow()
+                    coolDownRecommendation(RECOMMENDATION_NOTIFICATIONS)
+                })
+            }
+            if (detectBatteryOptimizationStatus() != "unrestricted" && !recommendationInCooldown(RECOMMENDATION_BATTERY)) {
+                add(recommendation(RECOMMENDATION_BATTERY, RecommendationUiText.OPEN_ACTION) {
+                    openBatterySettings()
+                    coolDownRecommendation(RECOMMENDATION_BATTERY)
+                })
+            }
+            if (!config.autostart && !recommendationInCooldown(RECOMMENDATION_AUTOSTART)) {
+                add(recommendation(RECOMMENDATION_AUTOSTART, RecommendationUiText.OPEN_ACTION) {
+                    openBatterySettings()
+                    coolDownRecommendation(RECOMMENDATION_AUTOSTART)
+                })
+            }
+            if (!prefs.getBoolean(PREF_RECOMMENDATION_QS_DONE, false) && !recommendationInCooldown(RECOMMENDATION_QS)) {
+                add(recommendation(RECOMMENDATION_QS, RecommendationUiText.ADD_ACTION) {
+                    requestQuickSettingsTile()
+                    coolDownRecommendation(RECOMMENDATION_QS)
+                })
+            }
+            if (!config.telemetryEnabled && !recommendationInCooldown(RECOMMENDATION_TELEMETRY)) {
+                add(recommendation(RECOMMENDATION_TELEMETRY, RecommendationUiText.ENABLE_ACTION) {
+                    enableTelemetryFromRecommendation()
+                    coolDownRecommendation(RECOMMENDATION_TELEMETRY)
+                })
+            }
         }
     }
 
+    private fun recommendation(id: String, action: String, onClick: (View) -> Unit): RecommendationCardModel {
+        val copy = RecommendationUiText.cards.getValue(id)
+        return RecommendationCardModel(id, copy.first, copy.second, action, onClick)
+    }
+
+    private fun recommendationInCooldown(id: String): Boolean = prefs.getLong(recommendationCooldownKey(id), 0L) > System.currentTimeMillis()
+
+    private fun coolDownRecommendation(id: String) {
+        prefs.edit().putLong(recommendationCooldownKey(id), System.currentTimeMillis() + RECOMMENDATION_COOLDOWN_MS).apply()
+    }
+
+    private fun recommendationCooldownKey(id: String): String = "recommendation_${id}_cooldown_until"
+
+    private fun RecommendationCard(model: RecommendationCardModel): LinearLayout {
+        val density = resources.displayMetrics.density
+        val gap = (8 * density).toInt()
+        val card = SettingsSection(model.title) {
+            addView(createValueText().apply {
+                text = model.subtitle
+                setTextColor(COLOR_TEXT_SECONDARY)
+            }, matchWrapParams())
+            val actions = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(createOutlinedButton(RecommendationUiText.DISMISS_ACTION) {
+                    coolDownRecommendation(model.id)
+                    refreshHints()
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = gap })
+                addView(createFilledButton(model.actionLabel, model.onClick), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            }
+            addView(actions, matchWrapParams(topMargin = gap))
+        }
+        card.isClickable = true
+        card.isFocusable = true
+        card.foreground = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground)).use { attrs -> attrs.getDrawable(0) }
+        card.setOnClickListener(model.onClick)
+        return card
+    }
 
     private fun handleHeroPrimaryAction() {
         when (primaryControlButton.text.toString()) {
@@ -756,6 +797,54 @@ class MainActivity : Activity() {
         }
     }
 
+
+    private fun openNotificationSettingsFlow() {
+        if (notificationPermissionMissing()) {
+            requestNotificationPermissionIfNeeded()
+            return
+        }
+        val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        } else {
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))
+        }
+        if (!tryStartActivity(intent)) {
+            Toast.makeText(this, "Не удалось открыть настройки уведомлений", Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun requestQuickSettingsTile() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val statusBarManager = getSystemService(StatusBarManager::class.java)
+            val component = ComponentName(this, ProxyQuickSettingsTileService::class.java)
+            statusBarManager.requestAddTileService(
+                component,
+                "TG Proxy",
+                Icon.createWithResource(this, R.drawable.ic_qs_tg_proxy),
+                mainExecutor,
+            ) { result ->
+                if (result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ||
+                    result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED
+                ) {
+                    prefs.edit().putBoolean(PREF_RECOMMENDATION_QS_DONE, true).apply()
+                }
+                refreshState()
+            }
+        } else {
+            showQuickSettingsTileHelp()
+            prefs.edit().putBoolean(PREF_RECOMMENDATION_QS_DONE, true).apply()
+        }
+    }
+
+    private fun enableTelemetryFromRecommendation() {
+        val store = AppConfigStore.from(applicationContext)
+        store.saveConfig(store.loadConfig().copy(telemetryEnabled = true))
+        ProxyRuntimeConfig.initialize(applicationContext)
+        ProxyForegroundService.State.addLog("telemetry_enabled changed to true", LogSeverity.INFO, "ui")
+        Toast.makeText(this, "Анонимная диагностика включена", Toast.LENGTH_SHORT).show()
+        refreshState()
+    }
+
     private fun showQuickSettingsTileHelp() {
         AlertDialog.Builder(this)
             .setTitle(SettingsUiText.QS_TILE_HELP_TITLE)
@@ -949,13 +1038,12 @@ class MainActivity : Activity() {
         val secondaryAction: String?,
     )
 
-    private data class HintCard(
+    private data class RecommendationCardModel(
+        val id: String,
         val title: String,
-        val text: String,
-        val primaryAction: String,
-        val onPrimary: (View) -> Unit,
-        val secondaryAction: String? = null,
-        val onSecondary: ((View) -> Unit)? = null,
+        val subtitle: String,
+        val actionLabel: String,
+        val onClick: (View) -> Unit,
     )
 
     companion object {
@@ -967,10 +1055,13 @@ class MainActivity : Activity() {
         private const val PREFS_NAME = "main_ui"
         private const val PREF_DEVELOPER_MODE = "developer_mode"
         private const val PREF_PROXY_EVER_STARTED = "proxy_ever_started"
-        private const val PREF_HINT_FIRST_START_DISMISSED = "hint_first_start_dismissed"
-        private const val PREF_HINT_BATTERY_DISMISSED = "hint_battery_dismissed"
-        private const val PREF_HINT_NOTIFICATION_DISMISSED = "hint_notification_dismissed"
-        private const val PREF_HINT_MOBILE_DISMISSED = "hint_mobile_dismissed"
+        private const val PREF_RECOMMENDATION_QS_DONE = "recommendation_quick_settings_done"
+        private const val RECOMMENDATION_NOTIFICATIONS = "notifications"
+        private const val RECOMMENDATION_BATTERY = "battery"
+        private const val RECOMMENDATION_AUTOSTART = "autostart"
+        private const val RECOMMENDATION_QS = "quick_settings"
+        private const val RECOMMENDATION_TELEMETRY = "telemetry"
+        private const val RECOMMENDATION_COOLDOWN_MS = 7L * 24L * 60L * 60L * 1000L
         private const val MAX_HINTS = 2
         private const val MAX_VISIBLE_LOG_LINES = 12
         private const val COLOR_BACKGROUND = 0xFFF6F7FB.toInt()
