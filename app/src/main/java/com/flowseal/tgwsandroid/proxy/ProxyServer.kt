@@ -178,6 +178,18 @@ data class ProxyServerStats(
     val poolMisses: Long,
     val poolRefillErrors: Long,
     val poolStale: Long = 0,
+    val poolHitsByKey: Map<String, Long> = emptyMap(),
+    val poolMissesByKey: Map<String, Long> = emptyMap(),
+    val poolRefillAttemptsByKey: Map<String, Long> = emptyMap(),
+    val poolRefillSuccessesByKey: Map<String, Long> = emptyMap(),
+    val poolRefillErrorsByKey: Map<String, Long> = emptyMap(),
+    val poolStaleByKey: Map<String, Long> = emptyMap(),
+    val poolReadyByKey: Map<String, Int> = emptyMap(),
+    val poolInFlightRefillsByKey: Map<String, Int> = emptyMap(),
+    val poolLastRefillErrorByKey: Map<String, String> = emptyMap(),
+    val poolLastRefillTimeMsByKey: Map<String, Long> = emptyMap(),
+    val poolLastHitTimeMsByKey: Map<String, Long> = emptyMap(),
+    val poolLastMissTimeMsByKey: Map<String, Long> = emptyMap(),
     val sessionTimeouts: Long = 0,
     val sessionEof: Long = 0,
     val sessionClientClosed: Long = 0,
@@ -688,6 +700,16 @@ class ProxyServer(
     private val poolMisses = AtomicLong(0)
     private val poolRefillErrors = AtomicLong(0)
     private val poolStale = AtomicLong(0)
+    private val poolHitsByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val poolMissesByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val poolRefillAttemptsByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val poolRefillSuccessesByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val poolRefillErrorsByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val poolStaleByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val poolLastRefillErrorByKey = ConcurrentHashMap<String, String>()
+    private val poolLastRefillTimeMsByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val poolLastHitTimeMsByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val poolLastMissTimeMsByKey = ConcurrentHashMap<String, AtomicLong>()
     private val directTimeouts = AtomicLong(0)
     private val directAttempts = AtomicLong(0)
     private val directAttemptsSkippedBecauseRoute = AtomicLong(0)
@@ -749,8 +771,22 @@ class ProxyServer(
         poolSize = config.poolSize,
         connector = webSocketConnector,
         logger = logger,
-        onRefillError = { poolRefillErrors.incrementAndGet(); recordRecentEvent(recentPoolRefillErrorTimes) },
-        onRefillAttempt = { directAttempts.incrementAndGet() },
+        onRefillError = { key, source, error ->
+            poolRefillErrors.incrementAndGet()
+            incrementPoolCounter(poolRefillErrorsByKey, key, source)
+            poolLastRefillErrorByKey[poolDiagnosticKey(key, source)] = failureDetail(error)
+            poolLastRefillTimeMsByKey.getOrPut(poolDiagnosticKey(key, source)) { AtomicLong(0) }.set(System.currentTimeMillis())
+            recordRecentEvent(recentPoolRefillErrorTimes)
+        },
+        onRefillAttempt = { key, source ->
+            directAttempts.incrementAndGet()
+            incrementPoolCounter(poolRefillAttemptsByKey, key, source)
+            poolLastRefillTimeMsByKey.getOrPut(poolDiagnosticKey(key, source)) { AtomicLong(0) }.set(System.currentTimeMillis())
+        },
+        onRefillSuccess = { key, source ->
+            incrementPoolCounter(poolRefillSuccessesByKey, key, source)
+            poolLastRefillTimeMsByKey.getOrPut(poolDiagnosticKey(key, source)) { AtomicLong(0) }.set(System.currentTimeMillis())
+        },
         onRefillCancelled = { count -> poolRefillsCancelled.addAndGet(count.toLong()) },
         onResultDiscardedAfterRouteChange = { poolResultsDiscardedAfterRouteChange.incrementAndGet() },
     )
@@ -848,6 +884,18 @@ class ProxyServer(
             poolMisses = poolMisses.get(),
             poolRefillErrors = poolRefillErrors.get(),
             poolStale = poolStale.get(),
+            poolHitsByKey = snapshotPoolLongMap(poolHitsByKey),
+            poolMissesByKey = snapshotPoolLongMap(poolMissesByKey),
+            poolRefillAttemptsByKey = snapshotPoolLongMap(poolRefillAttemptsByKey),
+            poolRefillSuccessesByKey = snapshotPoolLongMap(poolRefillSuccessesByKey),
+            poolRefillErrorsByKey = snapshotPoolLongMap(poolRefillErrorsByKey),
+            poolStaleByKey = snapshotPoolLongMap(poolStaleByKey),
+            poolReadyByKey = webSocketPool.readySnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap(),
+            poolInFlightRefillsByKey = webSocketPool.pendingRefillsSnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap(),
+            poolLastRefillErrorByKey = poolLastRefillErrorByKey.toSortedMap(),
+            poolLastRefillTimeMsByKey = snapshotPoolLongMap(poolLastRefillTimeMsByKey),
+            poolLastHitTimeMsByKey = snapshotPoolLongMap(poolLastHitTimeMsByKey),
+            poolLastMissTimeMsByKey = snapshotPoolLongMap(poolLastMissTimeMsByKey),
             routeMode = routeSnapshot.configuredRouteMode.configValue,
             effectiveRouteMode = routeSnapshot.effectiveRouteMode.configValue,
             previousEffectiveRouteMode = routeSnapshot.previousEffectiveRouteMode?.configValue,
@@ -1539,6 +1587,22 @@ class ProxyServer(
         mobileDirectRescueFailures.incrementAndGet()
     }
 
+    private fun incrementPoolCounter(
+        counters: ConcurrentHashMap<String, AtomicLong>,
+        key: WebSocketPool.Key,
+        source: String? = null,
+    ) {
+        counters.getOrPut(poolDiagnosticKey(key, source)) { AtomicLong(0) }.incrementAndGet()
+    }
+
+    private fun snapshotPoolLongMap(counters: ConcurrentHashMap<String, AtomicLong>): Map<String, Long> =
+        counters.mapValues { it.value.get() }.toSortedMap()
+
+    private fun poolDiagnosticKey(key: WebSocketPool.Key, source: String? = null): String {
+        val base = "DC${key.dc}.${if (key.isMedia) "media" else "normal"}"
+        return if (source.isNullOrBlank()) base else "$base.$source"
+    }
+
     private fun finishMobileDirectRescueSkippedBecauseNetworkChanged(dcId: Int) {
         val state = mobileDirectRescueByDc.getOrPut(dcId) { MobileDirectRescueState() }
         synchronized(state) {
@@ -1577,10 +1641,16 @@ class ProxyServer(
                 val pooled = webSocketPool.get(parsed.dcId, parsed.isMedia, targetHost, wsDomains(parsed.dcId, parsed.isMedia))
                 if (pooled != null) {
                     poolHits.incrementAndGet()
+                    val poolKey = WebSocketPool.Key(parsed.dcId, parsed.isMedia)
+                    incrementPoolCounter(poolHitsByKey, poolKey)
+                    poolLastHitTimeMsByKey.getOrPut(poolDiagnosticKey(poolKey)) { AtomicLong(0) }.set(System.currentTimeMillis())
                     logger.log("DC${parsed.dcId} direct WS pool hit")
                     return WebSocketRoute(pooled, "direct-pool")
                 }
                 poolMisses.incrementAndGet()
+                val poolKey = WebSocketPool.Key(parsed.dcId, parsed.isMedia)
+                incrementPoolCounter(poolMissesByKey, poolKey)
+                poolLastMissTimeMsByKey.getOrPut(poolDiagnosticKey(poolKey)) { AtomicLong(0) }.set(System.currentTimeMillis())
                 recordRecentEvent(recentPoolMissTimes)
                 logger.log("DC${parsed.dcId} direct WS pool miss")
             }
@@ -1943,6 +2013,7 @@ class ProxyServer(
         val retryableStalePooled = stalePooled && isRetrySafeStalePooledRoute(counters, failedBeforeBridge)
         if (stalePooled) {
             poolStale.incrementAndGet()
+            incrementPoolCounter(poolStaleByKey, WebSocketPool.Key(parsed.dcId, parsed.isMedia))
             recordRecentEvent(recentPoolStaleTimes)
             recordDirectPoolStaleForHealth()
             logger.log(

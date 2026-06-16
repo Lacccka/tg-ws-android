@@ -363,6 +363,7 @@ object DiagnosticReportFormatter {
         appendLine("Last effective route mode update time ms: ${snapshot.lastEffectiveRouteModeUpdateTimeMs?.toString() ?: "unknown"}")
         appendLine("Last route used update time ms: ${snapshot.lastRouteUsedUpdateTimeMs?.toString() ?: "unknown"}")
         appendClientExperienceDiagnostics(snapshot.stats)
+        appendDirectPoolReadiness(snapshot.stats)
         appendLine("Stats: ${formatStats(snapshot.stats)}")
         appendCfHealth(snapshot.stats)
         appendLine("---")
@@ -553,6 +554,11 @@ object DiagnosticReportFormatter {
             "directTimeouts=${stats.directTimeouts}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, poolHits=${stats.poolHits}, " +
             "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}, " +
+            "directPoolReadyByKey=${formatCompactMap(stats.poolReadyByKey)}, " +
+            "directPoolHitsByKey=${formatCompactMap(stats.poolHitsByKey)}, " +
+            "directPoolMissesByKey=${formatCompactMap(stats.poolMissesByKey)}, " +
+            "directPoolRefillErrorsByKey=${formatCompactMap(stats.poolRefillErrorsByKey)}, " +
+            "directPoolStaleByKey=${formatCompactMap(stats.poolStaleByKey)}, " +
             "poolRefillsCancelled=${stats.poolRefillsCancelled}, " +
             "poolResultsDiscardedAfterRouteChange=${stats.poolResultsDiscardedAfterRouteChange}, " +
             "routeChangesImmediate=${stats.routeChangesImmediate}, networkNoneEvents=${stats.networkNoneEvents}, " +
@@ -643,6 +649,25 @@ object DiagnosticReportFormatter {
             "networkSettlingUntilMs=${stats.networkSettlingUntilMs}, lastNetworkLostAtMs=${stats.lastNetworkLostAtMs}, " +
             "lastNetworkAvailableAtMs=${stats.lastNetworkAvailableAtMs}, networkGeneration=${stats.networkGeneration}"
     }
+
+    private fun StringBuilder.appendDirectPoolReadiness(stats: ProxyServerStats?) {
+        appendLine("Direct pool readiness:")
+        appendLine("  readyByKey: ${stats?.poolReadyByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  inFlightRefillsByKey: ${stats?.poolInFlightRefillsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  hitsByKey: ${stats?.poolHitsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  missesByKey: ${stats?.poolMissesByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  refillAttemptsByKey: ${stats?.poolRefillAttemptsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  refillSuccessesByKey: ${stats?.poolRefillSuccessesByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  refillErrorsByKey: ${stats?.poolRefillErrorsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  staleByKey: ${stats?.poolStaleByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  lastRefillErrorByKey: ${stats?.poolLastRefillErrorByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  lastRefillTimeMsByKey: ${stats?.poolLastRefillTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  lastHitTimeMsByKey: ${stats?.poolLastHitTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  lastMissTimeMsByKey: ${stats?.poolLastMissTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
+    }
+
+    private fun formatCompactMap(values: Map<*, *>): String =
+        if (values.isEmpty()) "none" else values.entries.joinToString(";") { "${it.key}=${it.value}" }
 
     private fun StringBuilder.appendClientExperienceDiagnostics(stats: ProxyServerStats?) {
         val experience = stats?.clientExperience

@@ -1129,6 +1129,149 @@ class ProxyServerTest {
     }
 
     @Test
+    fun directPoolHitIncrementsPerKeyHitCounter() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val warmSocket = FakeWebSocketBinaryStream()
+        val attempts = AtomicInteger(0)
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, domain, _, _ ->
+                if (attempts.incrementAndGet() == 1 && domain == "kws2.web.telegram.org") warmSocket else throw IOException("blocked")
+            },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> },
+            logger = ProxyLogger { logs.add(it) },
+        )
+        proxy.start()
+        waitUntil { logs.any { it.contains("WS pool refilled DC2: 1 ready") } }
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+        assertEquals(1L, proxy.stats().poolHits)
+        assertEquals(1L, proxy.stats().poolHitsByKey["DC2.normal"])
+        assertTrue((proxy.stats().poolLastHitTimeMsByKey["DC2.normal"] ?: 0L) > 0L)
+    }
+
+    @Test
+    fun directPoolMissIncrementsPerKeyMissCounter() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, domain, _, _ ->
+                if (Thread.currentThread().name.startsWith("ProxyServer-client") && domain == "kws2.web.telegram.org") FakeWebSocketBinaryStream() else throw IOException("blocked")
+            },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> },
+            logger = ProxyLogger { logs.add(it) },
+        )
+        proxy.start()
+        waitUntil { logs.count { it.contains("direct WS pool refill failed") } >= 4 }
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+        assertEquals(1L, proxy.stats().poolMisses)
+        assertEquals(1L, proxy.stats().poolMissesByKey["DC2.normal"])
+        assertTrue((proxy.stats().poolLastMissTimeMsByKey["DC2.normal"] ?: 0L) > 0L)
+    }
+
+    @Test
+    fun directPoolRefillErrorIncrementsPerKeyErrorCounter() {
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = FakeTcpServerTransport(),
+            connector = RawWebSocketConnector { _, _, _, _ -> throw IOException("refill timeout") },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
+            logger = ProxyLogger { logs.add(it) },
+        )
+        proxy.start()
+        waitUntil { logs.any { it.contains("DC2 direct WS pool refill failed") } }
+        proxy.stop()
+        val stats = proxy.stats()
+        assertTrue(stats.poolRefillErrors > 0L)
+        assertTrue((stats.poolRefillErrorsByKey["DC2.normal.normal"] ?: 0L) > 0L)
+        assertTrue(stats.poolLastRefillErrorByKey["DC2.normal.normal"]?.contains("refill timeout") == true)
+    }
+
+    @Test
+    fun staleDirectPoolEntryIncrementsPerKeyStaleCounter() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val attempts = AtomicInteger(0)
+        val proxy = newProxy(
+            server = server,
+            connector = RawWebSocketConnector { _, domain, _, _ ->
+                if (attempts.incrementAndGet() == 1 && domain == "kws2.web.telegram.org") FakeWebSocketBinaryStream(sendError = SocketException("Broken pipe")) else FakeWebSocketBinaryStream()
+            },
+            config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> },
+            logger = ProxyLogger { logs.add(it) },
+        )
+        proxy.start()
+        waitUntil { logs.any { it.contains("WS pool refilled DC2: 1 ready") } }
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+        assertEquals(1L, proxy.stats().poolStale)
+        assertEquals(1L, proxy.stats().poolStaleByKey["DC2.normal"])
+    }
+
+    @Test
+    fun idleMaintenanceCountersAreAttributedToMaintenanceSource() {
+        val attempts = CopyOnWriteArrayList<String>()
+        val pool = WebSocketPool(
+            poolSize = 1,
+            connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
+            onRefillAttempt = { key, source -> attempts.add("DC${key.dc}.${if (key.isMedia) "media" else "normal"}.$source") },
+        )
+        pool.ensureMinReadyForDc(2, "203.0.113.2", 1, ::wsDomains)
+        waitUntil { attempts.contains("DC2.normal.maintenance") && attempts.contains("DC2.media.maintenance") }
+        assertEquals(1, pool.readySnapshot()[WebSocketPool.Key(2, false)])
+        pool.closeAll()
+    }
+
+    @Test
+    fun wakeBurstPrewarmCountersAreAttributedToWakePrewarmSource() {
+        val attempts = CopyOnWriteArrayList<String>()
+        val pool = WebSocketPool(
+            poolSize = 1,
+            connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
+            onRefillAttempt = { key, source -> attempts.add("DC${key.dc}.${if (key.isMedia) "media" else "normal"}.$source") },
+        )
+        pool.prewarmDc(2, "203.0.113.2", ::wsDomains)
+        waitUntil { attempts.contains("DC2.normal.wake-prewarm") && attempts.contains("DC2.media.wake-prewarm") }
+        pool.closeAll()
+    }
+
+    @Test
+    fun aggregateCountersRemainBackwardCompatible() {
+        val stats = ProxyServerStats(
+            connectionsTotal = 0,
+            connectionsActive = 0,
+            connectionsBad = 0,
+            wsConnectErrors = 0,
+            cfProxyConnections = 0,
+            cfProxyErrors = 0,
+            bytesUp = 0,
+            bytesDown = 0,
+            poolHits = 1,
+            poolMisses = 2,
+            poolRefillErrors = 3,
+            poolStale = 4,
+        )
+        assertEquals(1L, stats.poolHits)
+        assertEquals(2L, stats.poolMisses)
+        assertEquals(3L, stats.poolRefillErrors)
+        assertEquals(4L, stats.poolStale)
+        assertTrue(stats.poolHitsByKey.isEmpty())
+    }
+
+
+    @Test
     fun stopClosesIdlePooledSockets() {
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()

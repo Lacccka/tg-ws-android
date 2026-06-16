@@ -31,8 +31,9 @@ class WebSocketPool(
         webSocketPoolThreadFactory(),
     ),
     private val ownsExecutor: Boolean = true,
-    private val onRefillError: () -> Unit = {},
-    private val onRefillAttempt: () -> Unit = {},
+    private val onRefillError: (Key, String, Throwable) -> Unit = { _, _, _ -> },
+    private val onRefillAttempt: (Key, String) -> Unit = { _, _ -> },
+    private val onRefillSuccess: (Key, String) -> Unit = { _, _ -> },
     private val onRefillCancelled: (Int) -> Unit = {},
     private val onResultDiscardedAfterRouteChange: () -> Unit = {},
 ) {
@@ -71,7 +72,7 @@ class WebSocketPool(
             if (queue != null && queue.isEmpty()) entries.remove(key)
         }
         expired.forEach { closeBestEffort(it) }
-        scheduleRefill(dc, isMedia, targetHost, domains)
+        scheduleRefill(dc, isMedia, targetHost, domains, source = REFILL_SOURCE_ON_MISS)
         return pooled
     }
 
@@ -84,8 +85,8 @@ class WebSocketPool(
         enabled.set(true)
         logger.log("WS pool warmup started for ${dcRedirects.size} DC(s)")
         for ((dc, targetHost) in dcRedirects) {
-            scheduleRefill(dc, isMedia = false, targetHost, wsDomainsProvider(dc, false))
-            scheduleRefill(dc, isMedia = true, targetHost, wsDomainsProvider(dc, true))
+            scheduleRefill(dc, isMedia = false, targetHost, wsDomainsProvider(dc, false), source = REFILL_SOURCE_NORMAL)
+            scheduleRefill(dc, isMedia = true, targetHost, wsDomainsProvider(dc, true), source = REFILL_SOURCE_NORMAL)
         }
     }
 
@@ -97,8 +98,8 @@ class WebSocketPool(
     ) {
         if (poolSize <= 0) return
         enabled.set(true)
-        scheduleRefill(dc, isMedia = false, targetHost, wsDomainsProvider(dc, false))
-        scheduleRefill(dc, isMedia = true, targetHost, wsDomainsProvider(dc, true))
+        scheduleRefill(dc, isMedia = false, targetHost, wsDomainsProvider(dc, false), source = REFILL_SOURCE_WAKE_PREWARM)
+        scheduleRefill(dc, isMedia = true, targetHost, wsDomainsProvider(dc, true), source = REFILL_SOURCE_WAKE_PREWARM)
     }
 
     /**
@@ -117,8 +118,8 @@ class WebSocketPool(
         if (poolSize <= 0 || minReady <= 0) return
         enabled.set(true)
         val desired = minOf(poolSize, minReady)
-        scheduleRefill(dc, isMedia = false, targetHost, wsDomainsProvider(dc, false), desiredSize = desired)
-        scheduleRefill(dc, isMedia = true, targetHost, wsDomainsProvider(dc, true), desiredSize = desired)
+        scheduleRefill(dc, isMedia = false, targetHost, wsDomainsProvider(dc, false), desiredSize = desired, source = REFILL_SOURCE_MAINTENANCE)
+        scheduleRefill(dc, isMedia = true, targetHost, wsDomainsProvider(dc, true), desiredSize = desired, source = REFILL_SOURCE_MAINTENANCE)
     }
 
     /** Disables future pool use and closes all currently idle sockets without shutting down the refill executor. */
@@ -176,6 +177,10 @@ class WebSocketPool(
         isMedia: Boolean,
     ): Int = synchronized(lock) { entries[Key(dc, isMedia)]?.size ?: 0 }
 
+    fun readySnapshot(): Map<Key, Int> = synchronized(lock) { entries.mapValues { it.value.size } }
+
+    fun pendingRefillsSnapshot(): Map<Key, Int> = synchronized(lock) { pendingRefills.toMap() }
+
     fun isEnabled(): Boolean = enabled.get()
 
     private fun scheduleRefill(
@@ -184,6 +189,7 @@ class WebSocketPool(
         targetHost: String,
         domains: List<String>,
         desiredSize: Int = poolSize,
+        source: String = REFILL_SOURCE_NORMAL,
     ) {
         if (poolSize <= 0 || domains.isEmpty() || !enabled.get()) return
         val targetSize = desiredSize.coerceIn(0, poolSize)
@@ -202,7 +208,7 @@ class WebSocketPool(
         expired.forEach { closeBestEffort(it) }
         repeat(reservations) {
             try {
-                executor.execute { refillOne(key, targetHost, domains, refillGeneration) }
+                executor.execute { refillOne(key, targetHost, domains, refillGeneration, source) }
             } catch (_: RejectedExecutionException) {
                 synchronized(lock) {
                     val remaining = (pendingRefills[key] ?: 1) - 1
@@ -218,6 +224,7 @@ class WebSocketPool(
         targetHost: String,
         domains: List<String>,
         refillGeneration: Int,
+        source: String,
     ) {
         var connected: WebSocketBinaryStream? = null
         try {
@@ -225,11 +232,12 @@ class WebSocketPool(
             for (domain in domains) {
                 if (!enabled.get() || generation.get() != refillGeneration) break
                 try {
-                    onRefillAttempt()
+                    onRefillAttempt(key, source)
                     connected = connector.connect(targetHost, domain, path, RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)
+                    onRefillSuccess(key, source)
                     break
                 } catch (error: Throwable) {
-                    onRefillError()
+                    onRefillError(key, source, error)
                     logger.log("DC${key.dc} direct WS pool refill failed via $domain: ${failureDetail(error)}")
                 }
             }
@@ -286,6 +294,10 @@ class WebSocketPool(
     companion object {
         const val DEFAULT_MAX_AGE_MS: Long = 30_000L
         private const val DEFAULT_MAX_THREADS = 4
+        const val REFILL_SOURCE_NORMAL = "normal"
+        const val REFILL_SOURCE_ON_MISS = "on-miss"
+        const val REFILL_SOURCE_MAINTENANCE = "maintenance"
+        const val REFILL_SOURCE_WAKE_PREWARM = "wake-prewarm"
         private const val SHUTDOWN_WAIT_MS = 500L
         private fun failureDetail(error: Throwable): String =
             "${error::class.java.simpleName}: ${error.message ?: "no message"}"

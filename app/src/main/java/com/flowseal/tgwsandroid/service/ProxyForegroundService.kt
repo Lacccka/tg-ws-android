@@ -477,8 +477,16 @@ class ProxyForegroundService : Service() {
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors} connReset=${stats.sessionEndDiagnostics.connectionReset.count} " +
             "connTimedOut=${stats.sessionEndDiagnostics.connectionTimedOut.count} cf=${stats.cfProxyConnections}/${stats.cfProxyErrors} " +
             "pool=${stats.poolHits}/${stats.poolMisses}/${stats.poolRefillErrors} poolStale=${stats.poolStale} " +
+            "directPoolReadyByKey=${compactMap(stats.poolReadyByKey)} " +
+            "directPoolHitsByKey=${compactMap(stats.poolHitsByKey)} " +
+            "directPoolMissesByKey=${compactMap(stats.poolMissesByKey)} " +
+            "directPoolRefillErrorsByKey=${compactMap(stats.poolRefillErrorsByKey)} " +
+            "directPoolStaleByKey=${compactMap(stats.poolStaleByKey)} " +
             "directHealth=${stats.directHealthState} route=${stats.effectiveRouteMode} lastRoute=${stats.lastRouteUsed ?: "none"}"
     }
+
+    private fun compactMap(values: Map<*, *>): String =
+        if (values.isEmpty()) "none" else values.entries.joinToString(";") { "${it.key}=${it.value}" }
 
     companion object {
         const val ACTION_START = "com.flowseal.tgwsandroid.action.START_PROXY"
