@@ -9,6 +9,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
@@ -26,6 +27,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
 import com.google.android.material.bottomnavigation.BottomNavigationView
+import com.google.android.material.button.MaterialButton
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -49,6 +51,7 @@ class MainActivity : Activity() {
     private lateinit var navigationBar: BottomNavigationView
 
     private lateinit var statusText: TextView
+    private lateinit var heroSubtitleText: TextView
     private lateinit var networkText: TextView
     private lateinit var routeText: TextView
     private lateinit var qualityText: TextView
@@ -147,10 +150,12 @@ class MainActivity : Activity() {
         val density = resources.displayMetrics.density
         val padding = (16 * density).toInt()
         val rowGap = (8 * density).toInt()
-        statusText = createValueText(textSize = 22f, bold = true)
-        networkText = createValueText()
-        routeText = createValueText()
-        qualityText = createValueText()
+        val chipGap = (6 * density).toInt()
+        statusText = createValueText(textSize = 30f, bold = true)
+        heroSubtitleText = createValueText(textSize = 17f).apply { setTextColor(COLOR_TEXT_SECONDARY) }
+        networkText = Badge("Wi-Fi")
+        routeText = Badge("Авто")
+        qualityText = Badge("Проверка…")
         restartRequiredText = createValueText().apply {
             text = PendingRestartModel.RESTART_WARNING
             setTextColor(COLOR_WARNING)
@@ -160,37 +165,32 @@ class MainActivity : Activity() {
             text = ""
             setTextColor(COLOR_TEXT_SECONDARY)
         }
-        primaryControlButton = createButton("Запустить") {
-            if (ProxyForegroundService.State.running) {
-                transitionStatus = TransitionStatus.STOPPING
-                startService(ProxyForegroundService.stopIntent(this))
-            } else {
-                transitionStatus = TransitionStatus.STARTING
-                requestNotificationPermissionIfNeeded()
-                startProxyService()
-            }
-            refreshState()
-        }
-        connectTelegramButton = createButton("Подключить Telegram") { openTelegramProxyLink() }
-        restartPendingButton = createButton("Перезагрузить прокси") { restartProxyService() }
+        primaryControlButton = createFilledButton("Включить") { handleHeroPrimaryAction() }
+        connectTelegramButton = createOutlinedButton("Остановить") { confirmStopProxy() }
+        restartPendingButton = createOutlinedButton("Перезагрузить прокси") { restartProxyService() }
         hintsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val chipsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            addView(networkText, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { rightMargin = chipGap })
+            addView(routeText, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { rightMargin = chipGap })
+            addView(qualityText, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, padding)
             setBackgroundColor(COLOR_BACKGROUND)
             addHeader()
-            addView(hintsContainer, matchWrapParams(bottomMargin = rowGap))
-            addView(SettingsSection("Главная") {
-                addView(SettingsRow("Статус", statusText), matchWrapParams())
-                addView(SettingsRow("Текущая сеть", networkText), matchWrapParams(topMargin = rowGap))
-                addView(SettingsRow("Маршрут", routeText), matchWrapParams(topMargin = rowGap))
-                addView(SettingsRow("Telegram", qualityText), matchWrapParams(topMargin = rowGap))
+            addView(SettingsSection("") {
+                addView(statusText, matchWrapParams())
+                addView(heroSubtitleText, matchWrapParams(topMargin = rowGap))
+                addView(chipsRow, matchWrapParams(topMargin = padding))
                 addView(restartRequiredText, matchWrapParams(topMargin = rowGap))
                 addView(telegramCleanupHintText, matchWrapParams(topMargin = rowGap))
-                addView(primaryControlButton, matchWrapParams(topMargin = rowGap))
-                addView(restartPendingButton, matchWrapParams(topMargin = rowGap))
+                addView(primaryControlButton, matchWrapParams(topMargin = padding))
                 addView(connectTelegramButton, matchWrapParams(topMargin = rowGap))
+                addView(restartPendingButton, matchWrapParams(topMargin = rowGap))
             }, cardParams())
+            addView(hintsContainer, matchWrapParams(topMargin = padding))
         }
         return ScrollView(this).apply {
             setBackgroundColor(COLOR_BACKGROUND)
@@ -314,7 +314,7 @@ class MainActivity : Activity() {
     private fun LinearLayout.addHeader() {
         val smallPadding = (8 * resources.displayMetrics.density).toInt()
         addView(TextView(this@MainActivity).apply {
-            text = "TG WS Android"
+            text = "TG WS"
             textSize = 26f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(COLOR_TEXT_PRIMARY)
@@ -359,30 +359,37 @@ class MainActivity : Activity() {
             ProxyForegroundService.State.lastStatus.contains("error", ignoreCase = true)
 
         if (::statusText.isInitialized) {
-            statusText.text = when {
-                failed -> "Есть проблема"
-                transitionStatus == TransitionStatus.STARTING -> "Запускается..."
-                transitionStatus == TransitionStatus.STOPPING -> "Останавливается..."
-                running -> "Прокси работает"
-                else -> "Прокси остановлен"
-            }
-            val routeLabel = userRouteLabel()
-            networkText.text = userNetworkLabel(ProxyForegroundService.State.networkStatus)
-            routeText.text = routeLabel
             val stats = ProxyForegroundService.State.stats()
-            qualityText.text = ConnectionStatusMapper.status(
-                running = running,
-                networkStatus = ProxyForegroundService.State.networkStatus,
-                stats = stats,
-                checking = transitionStatus == TransitionStatus.STARTING,
-            )
-            primaryControlButton.text = if (running) "Остановить" else "Запустить"
-            connectTelegramButton.text = TelegramStatusUiText.actionText(stats)
+            val healthLabel = userHealthLabel(running, stats, transitionStatus == TransitionStatus.STARTING, failed)
+            val telegramConnected = telegramConnected(running, stats)
+            val unstable = failed || healthLabel == "Нестабильно" || TelegramStatusUiText.showTelegramReconnectWarning(stats)
+            val starting = transitionStatus == TransitionStatus.STARTING || (transitionStatus == TransitionStatus.STOPPING && running)
+
+            val hero = when {
+                starting -> HeroState("Подключаемся…", "Это займёт несколько секунд", null, null)
+                unstable -> HeroState("Подключение нестабильно", "Попробуйте переподключиться", "Переподключить", "Диагностика")
+                !running -> HeroState("Прокси выключен", "Включите подключение", "Включить", null)
+                !telegramConnected -> HeroState("Почти готово", "Осталось подключить Telegram", "Подключить Telegram", "Остановить")
+                else -> HeroState("Всё готово", "Telegram подключён", null, "Остановить")
+            }
+
+            statusText.text = hero.title
+            heroSubtitleText.text = hero.subtitle
+            networkText.text = userNetworkChipLabel(ProxyForegroundService.State.networkStatus)
+            routeText.text = userModeChipLabel()
+            qualityText.text = healthLabel
+
+            primaryControlButton.text = hero.primaryAction.orEmpty()
+            primaryControlButton.visibility = if (hero.primaryAction == null) View.GONE else View.VISIBLE
+            primaryControlButton.isEnabled = hero.primaryAction != null && !starting
+            connectTelegramButton.text = hero.secondaryAction.orEmpty()
+            connectTelegramButton.visibility = if (hero.secondaryAction == null) View.GONE else View.VISIBLE
+            connectTelegramButton.setOnClickListener { handleHeroSecondaryAction(hero.secondaryAction) }
+
             val showRestartWarning = pendingRestartRequired && running
             restartRequiredText.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
             restartPendingButton.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
-            val mobileRouteHelper = HomeRouteLabelMapper.mobileCompatibleHelper(ProxyForegroundService.State.networkStatus, routeLabel)
-            val telegramHelper = TelegramStatusUiText.helper(stats, mobileRouteHelper)
+            val telegramHelper = if (TelegramStatusUiText.showTelegramReconnectWarning(stats)) TelegramStatusUiText.RECONNECT_EXTRA_HELPER else null
             telegramCleanupHintText.text = telegramHelper.orEmpty()
             telegramCleanupHintText.visibility = if (telegramHelper == null) View.GONE else View.VISIBLE
             refreshHints()
@@ -507,6 +514,62 @@ class MainActivity : Activity() {
             addView(createButton(hint.secondaryAction, hint.onSecondary), matchWrapParams(topMargin = (6 * resources.displayMetrics.density).toInt()))
         }
     }
+
+
+    private fun handleHeroPrimaryAction() {
+        when (primaryControlButton.text.toString()) {
+            "Включить" -> {
+                transitionStatus = TransitionStatus.STARTING
+                requestNotificationPermissionIfNeeded()
+                startProxyService()
+            }
+            "Подключить Telegram" -> openTelegramProxyLink()
+            "Переподключить" -> restartProxyService()
+        }
+        refreshState()
+    }
+
+    private fun handleHeroSecondaryAction(action: String?) {
+        when (action) {
+            "Остановить" -> confirmStopProxy()
+            "Диагностика" -> showScreen(Screen.DIAGNOSTICS)
+        }
+    }
+
+    private fun confirmStopProxy() {
+        AlertDialog.Builder(this)
+            .setTitle("Остановить прокси?")
+            .setMessage("Telegram потеряет подключение через локальный прокси.")
+            .setPositiveButton("Остановить") { _, _ ->
+                transitionStatus = TransitionStatus.STOPPING
+                startService(ProxyForegroundService.stopIntent(this))
+                refreshState()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
+    }
+
+    private fun telegramConnected(running: Boolean, stats: com.flowseal.tgwsandroid.proxy.ProxyServerStats?): Boolean =
+        running && ConnectionStatusMapper.status(
+            running = true,
+            networkStatus = ProxyForegroundService.State.networkStatus,
+            stats = stats,
+        ) == "Подключён"
+
+    private fun userHealthLabel(running: Boolean, stats: com.flowseal.tgwsandroid.proxy.ProxyServerStats?, checking: Boolean, failed: Boolean): String {
+        if (checking || (running && stats == null)) return "Проверка…"
+        if (failed) return "Нестабильно"
+        val status = ConnectionStatusMapper.status(running, ProxyForegroundService.State.networkStatus, stats)
+        return if (status == "Нестабильное соединение" || TelegramStatusUiText.showTelegramReconnectWarning(stats)) "Нестабильно" else "Стабильно"
+    }
+
+    private fun userNetworkChipLabel(network: String): String = when {
+        network.equals("Wi-Fi", ignoreCase = true) || network.equals("wifi", ignoreCase = true) -> "Wi-Fi"
+        network.equals("mobile", ignoreCase = true) || network.equals("cellular", ignoreCase = true) -> "Мобильная сеть"
+        else -> "Нет сети"
+    }
+
+    private fun userModeChipLabel(): String = UserRouteModes.labelFor(ProxyRuntimeConfig.appConfig(applicationContext).routeMode)
 
     private fun userNetworkLabel(network: String): String = when {
         network.equals("Wi-Fi", ignoreCase = true) || network.equals("wifi", ignoreCase = true) -> "Wi-Fi"
@@ -764,7 +827,9 @@ class MainActivity : Activity() {
         }
         val innerPadding = (16 * resources.displayMetrics.density).toInt()
         setPadding(innerPadding, innerPadding, innerPadding, innerPadding)
-        addView(createSectionTitle(title), matchWrapParams(bottomMargin = (8 * resources.displayMetrics.density).toInt()))
+        if (title.isNotBlank()) {
+            addView(createSectionTitle(title), matchWrapParams(bottomMargin = (8 * resources.displayMetrics.density).toInt()))
+        }
         body()
     }
 
@@ -775,9 +840,23 @@ class MainActivity : Activity() {
         setTextColor(COLOR_TEXT_PRIMARY)
     }
 
-    private fun createButton(label: String, onClick: (View) -> Unit = {}): Button = Button(this).apply {
+    private fun createButton(label: String, onClick: (View) -> Unit = {}): Button = createFilledButton(label, onClick)
+
+    private fun createFilledButton(label: String, onClick: (View) -> Unit = {}): Button = MaterialButton(this).apply {
         text = label
         isAllCaps = false
+        backgroundTintList = ColorStateList.valueOf(COLOR_ACCENT)
+        setTextColor(Color.WHITE)
+        setOnClickListener(onClick)
+    }
+
+    private fun createOutlinedButton(label: String, onClick: (View) -> Unit = {}): Button = MaterialButton(this).apply {
+        text = label
+        isAllCaps = false
+        backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
+        strokeColor = ColorStateList.valueOf(COLOR_ACCENT)
+        strokeWidth = (1 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        setTextColor(COLOR_ACCENT)
         setOnClickListener(onClick)
     }
 
@@ -862,6 +941,13 @@ class MainActivity : Activity() {
         }
     }
     private enum class TransitionStatus { NONE, STARTING, STOPPING }
+
+    private data class HeroState(
+        val title: String,
+        val subtitle: String,
+        val primaryAction: String?,
+        val secondaryAction: String?,
+    )
 
     private data class HintCard(
         val title: String,
