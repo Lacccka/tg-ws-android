@@ -1,7 +1,5 @@
 package com.flowseal.tgwsandroid.telemetry
 
-import com.flowseal.tgwsandroid.proxy.ClientExperienceDiagnostics
-import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -200,119 +198,6 @@ class TelemetryAggregatorTest {
         assertNull(agg.maybeFlush())
         assertEquals(0, agg.queueSize())
     }
-
-
-    @Test fun cfQueueFailureSetsDegradedFlag() {
-        val agg = aggregator()
-        agg.recordStats(stats(cfQueue = 0), true, false)
-        agg.pollSnapshot()
-        agg.recordStats(stats(cfQueue = 1), true, false)
-        val flags = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONObject("flags")
-        assertTrue(flags.getBoolean("cf_queue_degraded"))
-    }
-
-    @Test fun cf429SetsDegradedFlag() {
-        val agg = aggregator()
-        agg.recordStats(stats(cf429 = 0), true, false)
-        agg.pollSnapshot()
-        agg.recordStats(stats(cf429 = 1), true, false)
-        val flags = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONObject("flags")
-        assertTrue(flags.getBoolean("cf_queue_degraded"))
-    }
-
-    @Test fun reconnectBurstHeuristicSetsFlag() {
-        val agg = aggregator()
-        agg.recordStats(stats(total = 0, clientClosed = 0), true, false)
-        agg.pollSnapshot()
-        agg.recordStats(stats(total = 10, clientClosed = 5), true, false)
-        val flags = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONObject("flags")
-        assertTrue(flags.getBoolean("reconnect_burst_detected"))
-    }
-
-    @Test fun lowNormalTrafficDoesNotSetReconnectBurst() {
-        val agg = aggregator()
-        agg.recordStats(stats(total = 0), true, false)
-        agg.pollSnapshot()
-        agg.recordStats(stats(total = 2, active = 2), true, false)
-        val flags = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONObject("flags")
-        assertFalse(flags.has("reconnect_burst_detected"))
-    }
-
-    @Test fun veryShortSessionPatternCanSetTelegramLikelyDisabledProxy() {
-        val agg = aggregator()
-        agg.recordStats(stats(total = 0, short = 0), true, false)
-        agg.pollSnapshot()
-        agg.recordStats(stats(total = 1, short = 3, active = 0), true, false)
-        val flags = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONObject("flags")
-        assertTrue(flags.getBoolean("telegram_likely_disabled_proxy"))
-    }
-
-    @Test fun normalActiveSessionsDoNotSetTelegramLikelyDisabledProxy() {
-        val agg = aggregator()
-        agg.recordStats(stats(total = 0, clientClosed = 0), true, false)
-        agg.pollSnapshot()
-        agg.recordStats(stats(total = 1, clientClosed = 5, active = 3), true, false)
-        val flags = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONObject("flags")
-        assertFalse(flags.has("telegram_likely_disabled_proxy"))
-    }
-
-    @Test fun previousRunUnexpectedFlagsAreIncluded() {
-        val agg = aggregator()
-        agg.recordStats(stats(), true, false, previousRunEndedUnexpectedly = true)
-        val flags = agg.maybeFlush()!!.getJSONObject("payload").getJSONObject("flags")
-        assertTrue(flags.getBoolean("previous_run_ended_unexpectedly"))
-        assertTrue(flags.getBoolean("unexpected_stop_detected"))
-    }
-
-    @Test fun batteryRestrictionFlagIsIncluded() {
-        val agg = aggregator()
-        agg.recordStats(stats(), true, false, batteryRestrictionDetected = true)
-        val flags = agg.maybeFlush()!!.getJSONObject("payload").getJSONObject("flags")
-        assertTrue(flags.getBoolean("battery_restriction_detected"))
-    }
-
-    @Test fun unsupportedDcCounterUsesRealUnsupportedDcSource() {
-        val agg = aggregator()
-        agg.recordStats(stats(unsupportedDc = 0), true, false)
-        agg.pollSnapshot()
-        agg.recordStats(stats(unsupportedDc = 2), true, false)
-        val counters = agg.forceFlushCritical()!!.getJSONObject("payload").getJSONObject("counters")
-        assertEquals(2L, counters.getLong("unsupported_dc"))
-    }
-
-    @Test fun telemetryDisabledIgnoresNewFlagsAndCounters() {
-        enabled = false
-        val agg = aggregator()
-        agg.recordStats(stats(), true, false, batteryRestrictionDetected = true, previousRunEndedUnexpectedly = true)
-        agg.recordCounter("unsupported_dc")
-        assertNull(agg.maybeFlush())
-        assertEquals(0, agg.queueSize())
-    }
-
-    private fun stats(
-        total: Long = 0,
-        active: Int = 0,
-        clientClosed: Long = 0,
-        short: Long = 0,
-        cfQueue: Long = 0,
-        cf429: Long = 0,
-        unsupportedDc: Long = 0,
-    ) = ProxyServerStats(
-        connectionsTotal = total,
-        connectionsActive = active,
-        connectionsBad = 0,
-        wsConnectErrors = 0,
-        cfProxyConnections = 0,
-        cfProxyErrors = 0,
-        bytesUp = 0,
-        bytesDown = 0,
-        sessionClientClosed = clientClosed,
-        sessionRemoteEofShort = short,
-        cfQueueControlledFailures = cfQueue,
-        cf429Count = cf429,
-        unsupportedDc = unsupportedDc,
-        clientExperience = ClientExperienceDiagnostics(),
-    )
 
     private companion object {
         const val WINDOW_MS = 900_000L

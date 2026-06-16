@@ -332,7 +332,6 @@ data class ProxyServerStats(
     val lastSuccessfulRouteTimeMs: Long = 0,
     val networkGeneration: Long = 0,
     val clientExperience: ClientExperienceDiagnostics = ClientExperienceDiagnostics(),
-    val unsupportedDc: Long = 0,
 ) {
     val badHandshakeRatio: Double
         get() = if (connectionsTotal > 0L) connectionsBad.toDouble() / connectionsTotal.toDouble() else 0.0
@@ -647,7 +646,6 @@ class ProxyServer(
     private val recentCfConnectQueueTimeoutTimes = ConcurrentLinkedDeque<Long>()
     private val recentUnsupportedDcTimes = ConcurrentHashMap<Int, ConcurrentLinkedDeque<Long>>()
     private val recentNoRouteTimes = ConcurrentHashMap<Int, ConcurrentLinkedDeque<Long>>()
-    private val unsupportedDc = AtomicLong(0)
     private val currentIdleWaveStartMs = AtomicLong(0)
     private val lastTimeToFirstSuccessfulRouteAfterIdleMs = AtomicLong(-1)
     private val lastInvalidHandshakeTimeMs = AtomicLong(0)
@@ -1047,7 +1045,6 @@ class ProxyServer(
             lastSuccessfulRouteTimeMs = lastSuccessfulRouteTimeMs.get(),
             networkGeneration = routeGeneration.get(),
             clientExperience = buildClientExperienceDiagnostics(snapshotTimeMs),
-            unsupportedDc = unsupportedDc.get(),
         )
     }
 
@@ -2187,7 +2184,6 @@ class ProxyServer(
     }
 
     private fun recordUnsupportedDc(dcId: Int, now: Long = System.currentTimeMillis()) {
-        unsupportedDc.incrementAndGet()
         recordRecentEvent(recentUnsupportedDcTimes.getOrPut(dcId) { ConcurrentLinkedDeque() }, now)
     }
 
