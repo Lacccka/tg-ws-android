@@ -554,11 +554,11 @@ object DiagnosticReportFormatter {
             "directTimeouts=${stats.directTimeouts}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, poolHits=${stats.poolHits}, " +
             "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}, " +
-            "directPoolReadyByKey=${formatCompactMap(stats.poolReadyByKey)}, " +
-            "directPoolHitsByKey=${formatCompactMap(stats.poolHitsByKey)}, " +
-            "directPoolMissesByKey=${formatCompactMap(stats.poolMissesByKey)}, " +
-            "directPoolRefillErrorsByKey=${formatCompactMap(stats.poolRefillErrorsByKey)}, " +
-            "directPoolStaleByKey=${formatCompactMap(stats.poolStaleByKey)}, " +
+            "directPoolReadyByKey=${formatCompactMap(stats.directPoolDiagnostics.readyByKey)}, " +
+            "directPoolHitsByKey=${formatCompactMap(stats.directPoolDiagnostics.hitsByKey)}, " +
+            "directPoolMissesByKey=${formatCompactMap(stats.directPoolDiagnostics.missesByKey)}, " +
+            "directPoolRefillErrorsByKey=${formatCompactMap(stats.directPoolDiagnostics.refillErrorsByKey)}, " +
+            "directPoolStaleByKey=${formatCompactMap(stats.directPoolDiagnostics.staleByKey)}, " +
             "poolRefillsCancelled=${stats.poolRefillsCancelled}, " +
             "poolResultsDiscardedAfterRouteChange=${stats.poolResultsDiscardedAfterRouteChange}, " +
             "routeChangesImmediate=${stats.routeChangesImmediate}, networkNoneEvents=${stats.networkNoneEvents}, " +
@@ -652,18 +652,18 @@ object DiagnosticReportFormatter {
 
     private fun StringBuilder.appendDirectPoolReadiness(stats: ProxyServerStats?) {
         appendLine("Direct pool readiness:")
-        appendLine("  readyByKey: ${stats?.poolReadyByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  inFlightRefillsByKey: ${stats?.poolInFlightRefillsByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  hitsByKey: ${stats?.poolHitsByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  missesByKey: ${stats?.poolMissesByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  refillAttemptsByKey: ${stats?.poolRefillAttemptsByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  refillSuccessesByKey: ${stats?.poolRefillSuccessesByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  refillErrorsByKey: ${stats?.poolRefillErrorsByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  staleByKey: ${stats?.poolStaleByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  lastRefillErrorByKey: ${stats?.poolLastRefillErrorByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  lastRefillTimeMsByKey: ${stats?.poolLastRefillTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  lastHitTimeMsByKey: ${stats?.poolLastHitTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
-        appendLine("  lastMissTimeMsByKey: ${stats?.poolLastMissTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  readyByKey: ${stats?.directPoolDiagnostics?.readyByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  inFlightRefillsByKey: ${stats?.directPoolDiagnostics?.inFlightRefillsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  hitsByKey: ${stats?.directPoolDiagnostics?.hitsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  missesByKey: ${stats?.directPoolDiagnostics?.missesByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  refillAttemptsByKey: ${stats?.directPoolDiagnostics?.refillAttemptsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  refillSuccessesByKey: ${stats?.directPoolDiagnostics?.refillSuccessesByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  refillErrorsByKey: ${stats?.directPoolDiagnostics?.refillErrorsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  staleByKey: ${stats?.directPoolDiagnostics?.staleByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  lastRefillErrorByKey: ${stats?.directPoolDiagnostics?.lastRefillErrorByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  lastRefillTimeMsByKey: ${stats?.directPoolDiagnostics?.lastRefillTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  lastHitTimeMsByKey: ${stats?.directPoolDiagnostics?.lastHitTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  lastMissTimeMsByKey: ${stats?.directPoolDiagnostics?.lastMissTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
     }
 
     private fun formatCompactMap(values: Map<*, *>): String =

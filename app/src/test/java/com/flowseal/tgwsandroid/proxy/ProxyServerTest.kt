@@ -1150,8 +1150,8 @@ class ProxyServerTest {
         waitUntil { client.closed }
         proxy.stop()
         assertEquals(1L, proxy.stats().poolHits)
-        assertEquals(1L, proxy.stats().poolHitsByKey["DC2.normal"])
-        assertTrue((proxy.stats().poolLastHitTimeMsByKey["DC2.normal"] ?: 0L) > 0L)
+        assertEquals(1L, proxy.stats().directPoolDiagnostics.hitsByKey["DC2.normal"])
+        assertTrue((proxy.stats().directPoolDiagnostics.lastHitTimeMsByKey["DC2.normal"] ?: 0L) > 0L)
     }
 
     @Test
@@ -1174,8 +1174,8 @@ class ProxyServerTest {
         waitUntil { client.closed }
         proxy.stop()
         assertEquals(1L, proxy.stats().poolMisses)
-        assertEquals(1L, proxy.stats().poolMissesByKey["DC2.normal"])
-        assertTrue((proxy.stats().poolLastMissTimeMsByKey["DC2.normal"] ?: 0L) > 0L)
+        assertEquals(1L, proxy.stats().directPoolDiagnostics.missesByKey["DC2.normal"])
+        assertTrue((proxy.stats().directPoolDiagnostics.lastMissTimeMsByKey["DC2.normal"] ?: 0L) > 0L)
     }
 
     @Test
@@ -1192,8 +1192,8 @@ class ProxyServerTest {
         proxy.stop()
         val stats = proxy.stats()
         assertTrue(stats.poolRefillErrors > 0L)
-        assertTrue((stats.poolRefillErrorsByKey["DC2.normal.normal"] ?: 0L) > 0L)
-        assertTrue(stats.poolLastRefillErrorByKey["DC2.normal.normal"]?.contains("refill timeout") == true)
+        assertTrue((stats.directPoolDiagnostics.refillErrorsByKey["DC2.normal.normal"] ?: 0L) > 0L)
+        assertTrue(stats.directPoolDiagnostics.lastRefillErrorByKey["DC2.normal.normal"]?.contains("refill timeout") == true)
     }
 
     @Test
@@ -1217,7 +1217,7 @@ class ProxyServerTest {
         waitUntil { client.closed }
         proxy.stop()
         assertEquals(1L, proxy.stats().poolStale)
-        assertEquals(1L, proxy.stats().poolStaleByKey["DC2.normal"])
+        assertEquals(1L, proxy.stats().directPoolDiagnostics.staleByKey["DC2.normal"])
     }
 
     @Test
@@ -1267,7 +1267,7 @@ class ProxyServerTest {
         assertEquals(2L, stats.poolMisses)
         assertEquals(3L, stats.poolRefillErrors)
         assertEquals(4L, stats.poolStale)
-        assertTrue(stats.poolHitsByKey.isEmpty())
+        assertTrue(stats.directPoolDiagnostics.hitsByKey.isEmpty())
     }
 
 

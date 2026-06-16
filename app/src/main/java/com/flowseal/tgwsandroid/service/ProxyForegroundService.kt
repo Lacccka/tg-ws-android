@@ -477,11 +477,11 @@ class ProxyForegroundService : Service() {
             "sessionUnexpectedErrors=${stats.sessionUnexpectedErrors} connReset=${stats.sessionEndDiagnostics.connectionReset.count} " +
             "connTimedOut=${stats.sessionEndDiagnostics.connectionTimedOut.count} cf=${stats.cfProxyConnections}/${stats.cfProxyErrors} " +
             "pool=${stats.poolHits}/${stats.poolMisses}/${stats.poolRefillErrors} poolStale=${stats.poolStale} " +
-            "directPoolReadyByKey=${compactMap(stats.poolReadyByKey)} " +
-            "directPoolHitsByKey=${compactMap(stats.poolHitsByKey)} " +
-            "directPoolMissesByKey=${compactMap(stats.poolMissesByKey)} " +
-            "directPoolRefillErrorsByKey=${compactMap(stats.poolRefillErrorsByKey)} " +
-            "directPoolStaleByKey=${compactMap(stats.poolStaleByKey)} " +
+            "directPoolReadyByKey=${compactMap(stats.directPoolDiagnostics.readyByKey)} " +
+            "directPoolHitsByKey=${compactMap(stats.directPoolDiagnostics.hitsByKey)} " +
+            "directPoolMissesByKey=${compactMap(stats.directPoolDiagnostics.missesByKey)} " +
+            "directPoolRefillErrorsByKey=${compactMap(stats.directPoolDiagnostics.refillErrorsByKey)} " +
+            "directPoolStaleByKey=${compactMap(stats.directPoolDiagnostics.staleByKey)} " +
             "directHealth=${stats.directHealthState} route=${stats.effectiveRouteMode} lastRoute=${stats.lastRouteUsed ?: "none"}"
     }
 
