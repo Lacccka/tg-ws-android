@@ -20,12 +20,12 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
-import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.FrameLayout
+import com.google.android.material.bottomnavigation.BottomNavigationView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -46,8 +46,7 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private lateinit var contentHost: FrameLayout
-    private lateinit var homeNavButton: Button
-    private lateinit var settingsNavButton: Button
+    private lateinit var navigationBar: BottomNavigationView
 
     private lateinit var statusText: TextView
     private lateinit var networkText: TextView
@@ -64,6 +63,7 @@ class MainActivity : Activity() {
     private lateinit var routeModeValueText: TextView
     private val routeModeButtons = mutableListOf<Pair<UserRouteModeOption, Button>>()
     private lateinit var secretStateText: TextView
+    private lateinit var diagnosticsSummaryText: TextView
     private lateinit var restartProxyButton: Button
     private lateinit var restartProxyHintText: TextView
     private lateinit var telemetryCheckBox: CheckBox
@@ -117,24 +117,14 @@ class MainActivity : Activity() {
     }
 
     private fun buildRootView(): LinearLayout {
-        val density = resources.displayMetrics.density
-        val padding = (16 * density).toInt()
         contentHost = FrameLayout(this).apply { setBackgroundColor(COLOR_BACKGROUND) }
-        homeNavButton = createNavButton("Главная") { showScreen(Screen.HOME) }
-        settingsNavButton = createNavButton("Настройки") { showScreen(Screen.SETTINGS) }
-        val nav = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setBackgroundColor(Color.WHITE)
-            setPadding(padding / 2, padding / 2, padding / 2, padding / 2)
-            addView(homeNavButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(settingsNavButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        }
+        navigationBar = createNavigationBar()
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(COLOR_BACKGROUND)
             applySystemInsetsPadding(basePadding = 0)
             addView(contentHost, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
-            addView(nav, matchWrapParams())
+            addView(navigationBar, matchWrapParams())
         }
     }
 
@@ -144,12 +134,12 @@ class MainActivity : Activity() {
         val view = when (screen) {
             Screen.HOME -> buildHomeScreen()
             Screen.SETTINGS -> buildSettingsScreen()
+            Screen.DIAGNOSTICS -> buildDiagnosticsScreen()
         }
         contentHost.addView(view, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        homeNavButton.isSelected = screen == Screen.HOME
-        settingsNavButton.isSelected = screen == Screen.SETTINGS
-        homeNavButton.setTextColor(if (screen == Screen.HOME) COLOR_ACCENT else COLOR_TEXT_PRIMARY)
-        settingsNavButton.setTextColor(if (screen == Screen.SETTINGS) COLOR_ACCENT else COLOR_TEXT_PRIMARY)
+        if (::navigationBar.isInitialized && navigationBar.selectedItemId != screen.itemId) {
+            navigationBar.selectedItemId = screen.itemId
+        }
         refreshState()
     }
 
@@ -190,11 +180,11 @@ class MainActivity : Activity() {
             setBackgroundColor(COLOR_BACKGROUND)
             addHeader()
             addView(hintsContainer, matchWrapParams(bottomMargin = rowGap))
-            addView(createCard("Главная") {
-                addView(createTextRow("Статус", statusText), matchWrapParams())
-                addView(createTextRow("Текущая сеть", networkText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Маршрут", routeText), matchWrapParams(topMargin = rowGap))
-                addView(createTextRow("Telegram", qualityText), matchWrapParams(topMargin = rowGap))
+            addView(SettingsSection("Главная") {
+                addView(SettingsRow("Статус", statusText), matchWrapParams())
+                addView(SettingsRow("Текущая сеть", networkText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow("Маршрут", routeText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow("Telegram", qualityText), matchWrapParams(topMargin = rowGap))
                 addView(restartRequiredText, matchWrapParams(topMargin = rowGap))
                 addView(telegramCleanupHintText, matchWrapParams(topMargin = rowGap))
                 addView(primaryControlButton, matchWrapParams(topMargin = rowGap))
@@ -246,7 +236,7 @@ class MainActivity : Activity() {
         rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
-        developerSection = createCard("Режим разработчика") {
+        developerSection = SettingsSection("Технические данные") {
             addView(createTextRow("Подробности маршрута", rawRouteDetailsText), matchWrapParams())
             addView(createTextRow("Состояние резервных доменов", cfDetailsText), matchWrapParams(topMargin = rowGap))
             addView(createTextRow("Состояние прямого маршрута", directDetailsText), matchWrapParams(topMargin = rowGap))
@@ -269,13 +259,13 @@ class MainActivity : Activity() {
             setPadding(padding, padding, padding, padding)
             setBackgroundColor(COLOR_BACKGROUND)
             addHeader()
-            addView(createCard("Режим подключения") {
+            addView(SettingsSection("Режим подключения") {
                 UserRouteModes.normalOptions.forEach { option ->
                     addView(createRouteModeButton(option), matchWrapParams(topMargin = rowGap))
                 }
                 addView(routeModeValueText, matchWrapParams(topMargin = rowGap))
             }, cardParams())
-            addView(createCard(SettingsUiText.BATTERY_BACKGROUND_TITLE) {
+            addView(SettingsSection(SettingsUiText.BATTERY_BACKGROUND_TITLE) {
                 addView(batteryStatusText, matchWrapParams())
                 addView(createButton("Открыть настройки батареи") { openBatterySettings() }, matchWrapParams(topMargin = rowGap))
                 addView(createValueText().apply {
@@ -287,22 +277,22 @@ class MainActivity : Activity() {
                     setTextColor(COLOR_TEXT_SECONDARY)
                 }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
-            addView(createCard(SettingsUiText.QS_TILE_TITLE) {
+            addView(SettingsSection(SettingsUiText.QS_TILE_TITLE) {
                 addView(createValueText().apply {
                     text = SettingsUiText.QS_TILE_TEXT
                     setTextColor(COLOR_TEXT_SECONDARY)
                 }, matchWrapParams())
                 addView(createButton(SettingsUiText.QS_TILE_HELP_BUTTON) { showQuickSettingsTileHelp() }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
-            addView(createCard("Telegram") {
-                addView(createButton("Обновить секрет") { confirmResetSecret() }, matchWrapParams())
+            addView(SettingsSection("Telegram") {
+                addView(createButton("Обновить подключение") { confirmResetSecret() }, matchWrapParams())
                 addView(secretStateText, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
-            addView(createCard("Прокси") {
+            addView(SettingsSection("Сервис") {
                 addView(restartProxyButton, matchWrapParams())
                 addView(restartProxyHintText, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
-            addView(createCard("Анонимная диагностика") {
+            addView(SettingsSection("Анонимная диагностика") {
                 addView(telemetryCheckBox, matchWrapParams())
                 addView(createValueText().apply {
                     text = "Отправляется только тестовое событие с install_id и контекстом устройства. Secret, proxy link, raw logs, real IP, SSID/BSSID и аппаратные идентификаторы не отправляются."
@@ -310,10 +300,10 @@ class MainActivity : Activity() {
                 }, matchWrapParams(topMargin = rowGap))
                 addView(telemetryTestButton, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
-            addView(createCard("Дополнительно") {
+            addView(SettingsSection("Дополнительно") {
                 addView(developerModeCheckBox, matchWrapParams())
             }, cardParams(topMargin = padding))
-            addView(developerSection, cardParams(topMargin = padding, bottomMargin = padding))
+
         }
         return ScrollView(this).apply {
             setBackgroundColor(COLOR_BACKGROUND)
@@ -411,15 +401,60 @@ class MainActivity : Activity() {
             restartProxyHintText.text = if (running) "" else PendingRestartModel.RESTART_DISABLED_HINT
             telemetryCheckBox.isChecked = config.telemetryEnabled
             telemetryTestButton.isEnabled = config.telemetryEnabled
+            secretStateText.text = "Telegram потребуется переподключить после обновления."
+        }
+
+        if (::diagnosticsSummaryText.isInitialized) {
+            diagnosticsSummaryText.text = diagnosticsSummaryLine()
             rawRouteDetailsText.text = routeDetailsLine()
             cfDetailsText.text = cfDetailsLine()
             directDetailsText.text = directDetailsLine()
-            secretStateText.text = secretStateLine()
+            developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+        }
+        if (::logsText.isInitialized) {
             logsText.text = ProxyForegroundService.State.recentLogs()
                 .takeLast(MAX_VISIBLE_LOG_LINES)
                 .takeIf { it.isNotEmpty() }
                 ?.joinToString("\n")
                 ?: "Логов пока нет"
+        }
+    }
+
+    private fun buildDiagnosticsScreen(): ScrollView {
+        val density = resources.displayMetrics.density
+        val padding = (16 * density).toInt()
+        val rowGap = (8 * density).toInt()
+        diagnosticsSummaryText = createValueText()
+        logsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        developerSection = SettingsSection("Технические данные") {
+            addView(SettingsRow("Подробности маршрута", rawRouteDetailsText), matchWrapParams())
+            addView(SettingsRow("Состояние резервных доменов", cfDetailsText), matchWrapParams(topMargin = rowGap))
+            addView(SettingsRow("Состояние прямого маршрута", directDetailsText), matchWrapParams(topMargin = rowGap))
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(padding, padding, padding, padding)
+            setBackgroundColor(COLOR_BACKGROUND)
+            addHeader()
+            addView(SettingsSection("Диагностика") {
+                addView(StatusChip("Сводка"), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+                addView(diagnosticsSummaryText, matchWrapParams(topMargin = rowGap))
+                addView(createButton("Копировать диагностику") { copyDiagnostics() }, matchWrapParams(topMargin = rowGap))
+                addView(createButton("Поделиться диагностикой") { shareDiagnostics() }, matchWrapParams(topMargin = rowGap))
+            }, cardParams())
+            addView(SettingsSection("Журнал") {
+                addView(Badge("Последние события"), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+                addView(logsText, matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding))
+            developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+            addView(developerSection, cardParams(topMargin = padding, bottomMargin = padding))
+        }
+        return ScrollView(this).apply {
+            setBackgroundColor(COLOR_BACKGROUND)
+            addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
     }
 
@@ -462,7 +497,7 @@ class MainActivity : Activity() {
         candidates.forEach { hintsContainer.addView(createHintCard(it), cardParams(bottomMargin = (8 * resources.displayMetrics.density).toInt())) }
     }
 
-    private fun createHintCard(hint: HintCard): LinearLayout = createCard(hint.title) {
+    private fun createHintCard(hint: HintCard): LinearLayout = SettingsSection(hint.title) {
         addView(createValueText().apply {
             text = hint.text
             setTextColor(COLOR_TEXT_SECONDARY)
@@ -501,6 +536,12 @@ class MainActivity : Activity() {
         "unrestricted" -> "Без ограничений"
         "optimized" -> "Может ограничиваться системой"
         else -> "Неизвестно"
+    }
+
+    private fun diagnosticsSummaryLine(): String {
+        val running = ProxyForegroundService.State.running
+        val logs = ProxyForegroundService.State.recentLogs().size
+        return "Сервис ${if (running) "работает" else "остановлен"}. Доступно записей диагностики: $logs."
     }
 
     private fun routeDetailsLine(): String {
@@ -713,7 +754,7 @@ class MainActivity : Activity() {
 
     private fun developerModeEnabled(): Boolean = prefs.getBoolean(PREF_DEVELOPER_MODE, false)
 
-    private fun createCard(title: String, body: LinearLayout.() -> Unit): LinearLayout = LinearLayout(this).apply {
+    private fun SettingsSection(title: String, body: LinearLayout.() -> Unit): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -740,7 +781,37 @@ class MainActivity : Activity() {
         setOnClickListener(onClick)
     }
 
-    private fun createNavButton(label: String, onClick: (View) -> Unit): Button = createButton(label, onClick)
+    private fun createNavigationBar(): BottomNavigationView = BottomNavigationView(this).apply {
+        setBackgroundColor(Color.WHITE)
+        labelVisibilityMode = com.google.android.material.navigation.NavigationBarView.LABEL_VISIBILITY_LABELED
+        menu.add(0, Screen.HOME.itemId, 0, "Главная")
+        menu.add(0, Screen.SETTINGS.itemId, 1, "Настройки")
+        menu.add(0, Screen.DIAGNOSTICS.itemId, 2, "Диагностика")
+        selectedItemId = currentScreen.itemId
+        setOnItemSelectedListener { item ->
+            Screen.fromItemId(item.itemId)?.let { showScreen(it) }
+            true
+        }
+    }
+
+    private fun SettingsRow(label: String, value: TextView): LinearLayout = createTextRow(label, value)
+
+    private fun StatusChip(text: String): TextView = Badge(text, COLOR_ACCENT, Color.WHITE)
+
+    private fun Badge(text: String, backgroundColor: Int = COLOR_BACKGROUND_ALT, textColor: Int = COLOR_TEXT_PRIMARY): TextView = TextView(this).apply {
+        this.text = text
+        textSize = 13f
+        typeface = Typeface.DEFAULT_BOLD
+        setTextColor(textColor)
+        val horizontal = (12 * resources.displayMetrics.density).toInt()
+        val vertical = (6 * resources.displayMetrics.density).toInt()
+        setPadding(horizontal, vertical, horizontal, vertical)
+        background = GradientDrawable().apply {
+            shape = GradientDrawable.RECTANGLE
+            cornerRadius = 999 * resources.displayMetrics.density
+            setColor(backgroundColor)
+        }
+    }
 
     private fun createTextRow(label: String, value: TextView): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
@@ -781,7 +852,15 @@ class MainActivity : Activity() {
         }
     }
 
-    private enum class Screen { HOME, SETTINGS }
+    private enum class Screen(val itemId: Int) {
+        HOME(1),
+        SETTINGS(2),
+        DIAGNOSTICS(3);
+
+        companion object {
+            fun fromItemId(itemId: Int): Screen? = entries.firstOrNull { it.itemId == itemId }
+        }
+    }
     private enum class TransitionStatus { NONE, STARTING, STOPPING }
 
     private data class HintCard(
@@ -809,6 +888,7 @@ class MainActivity : Activity() {
         private const val MAX_HINTS = 2
         private const val MAX_VISIBLE_LOG_LINES = 12
         private const val COLOR_BACKGROUND = 0xFFF6F7FB.toInt()
+        private const val COLOR_BACKGROUND_ALT = 0xFFEFF6FF.toInt()
         private const val COLOR_CARD_STROKE = 0xFFE5E7EB.toInt()
         private const val COLOR_TEXT_PRIMARY = 0xFF111827.toInt()
         private const val COLOR_TEXT_SECONDARY = 0xFF4B5563.toInt()
