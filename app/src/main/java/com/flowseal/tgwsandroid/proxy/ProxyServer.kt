@@ -299,9 +299,17 @@ class ProxyServerStats {
     var mobileToMobileRecoveryAttempts: Long = 0
     var mobileToMobileRecoverySuccesses: Long = 0
     var mobileToMobileRecoveryFailures: Long = 0
+    var noneToMobileRecoveryAttempts: Long = 0
+    var noneToMobileRecoverySuccesses: Long = 0
+    var noneToMobileRouteWaitStaleCount: Long = 0
+    var routeWaitResumedAfterMobileAvailable: Long = 0
+    var routeWaitRecheckedNetworkGeneration: Long = 0
     var mobileRecoveryCfPressureResetCount: Long = 0
     var mobileRecoveryDirectCooldownResetCount: Long = 0
     var mobileRecoveryFirstSuccessLatencyMs: Long? = null
+    var mobileRecoveryCfFirstSuccessLatencyMs: Long? = null
+    var mobileRecoveryDirectRescueTimeoutCount: Long = 0
+    var mobileRecoveryNoRouteDuringSettlingCount: Long = 0
     var lastMobileRecoveryReason: String? = null
     var lastMobileRecoveryNetworkGeneration: Long = 0
     var lastMobileRecoveryResult: String? = null
@@ -827,9 +835,17 @@ class ProxyServer(
     private val mobileToMobileRecoveryAttempts = AtomicLong(0)
     private val mobileToMobileRecoverySuccesses = AtomicLong(0)
     private val mobileToMobileRecoveryFailures = AtomicLong(0)
+    private val noneToMobileRecoveryAttempts = AtomicLong(0)
+    private val noneToMobileRecoverySuccesses = AtomicLong(0)
+    private val noneToMobileRouteWaitStaleCount = AtomicLong(0)
+    private val routeWaitResumedAfterMobileAvailable = AtomicLong(0)
+    private val routeWaitRecheckedNetworkGeneration = AtomicLong(0)
     private val mobileRecoveryCfPressureResetCount = AtomicLong(0)
     private val mobileRecoveryDirectCooldownResetCount = AtomicLong(0)
     private val mobileRecoveryFirstSuccessLatencyMs = AtomicLong(0)
+    private val mobileRecoveryCfFirstSuccessLatencyMs = AtomicLong(0)
+    private val mobileRecoveryDirectRescueTimeoutCount = AtomicLong(0)
+    private val mobileRecoveryNoRouteDuringSettlingCount = AtomicLong(0)
     private val lastMobileRecoveryReason = AtomicReference<String?>(null)
     private val lastMobileRecoveryNetworkGeneration = AtomicLong(0)
     private val lastMobileRecoveryResult = AtomicReference<String?>(null)
@@ -1059,9 +1075,17 @@ class ProxyServer(
             snapshot.mobileToMobileRecoveryAttempts = mobileToMobileRecoveryAttempts.get()
             snapshot.mobileToMobileRecoverySuccesses = mobileToMobileRecoverySuccesses.get()
             snapshot.mobileToMobileRecoveryFailures = mobileToMobileRecoveryFailures.get()
+            snapshot.noneToMobileRecoveryAttempts = noneToMobileRecoveryAttempts.get()
+            snapshot.noneToMobileRecoverySuccesses = noneToMobileRecoverySuccesses.get()
+            snapshot.noneToMobileRouteWaitStaleCount = noneToMobileRouteWaitStaleCount.get()
+            snapshot.routeWaitResumedAfterMobileAvailable = routeWaitResumedAfterMobileAvailable.get()
+            snapshot.routeWaitRecheckedNetworkGeneration = routeWaitRecheckedNetworkGeneration.get()
             snapshot.mobileRecoveryCfPressureResetCount = mobileRecoveryCfPressureResetCount.get()
             snapshot.mobileRecoveryDirectCooldownResetCount = mobileRecoveryDirectCooldownResetCount.get()
             snapshot.mobileRecoveryFirstSuccessLatencyMs = mobileRecoveryFirstSuccessLatencyMs.get().takeIf { it > 0L }
+            snapshot.mobileRecoveryCfFirstSuccessLatencyMs = mobileRecoveryCfFirstSuccessLatencyMs.get().takeIf { it > 0L }
+            snapshot.mobileRecoveryDirectRescueTimeoutCount = mobileRecoveryDirectRescueTimeoutCount.get()
+            snapshot.mobileRecoveryNoRouteDuringSettlingCount = mobileRecoveryNoRouteDuringSettlingCount.get()
             snapshot.lastMobileRecoveryReason = lastMobileRecoveryReason.get()
             snapshot.lastMobileRecoveryNetworkGeneration = lastMobileRecoveryNetworkGeneration.get()
             snapshot.lastMobileRecoveryResult = lastMobileRecoveryResult.get()
@@ -1246,6 +1270,9 @@ class ProxyServer(
     private fun prepareMobileNetworkGenerationRecovery(previousNetworkStatus: String, networkStatus: String, newGeneration: Long) {
         mobileNetworkGenerationChanges.incrementAndGet()
         mobileToMobileRecoveryAttempts.incrementAndGet()
+        if (previousNetworkStatus.equals("none", ignoreCase = true) && isMobile(networkStatus)) {
+            noneToMobileRecoveryAttempts.incrementAndGet()
+        }
         lastMobileRecoveryReason.set("$previousNetworkStatus->$networkStatus")
         lastMobileRecoveryNetworkGeneration.set(newGeneration)
         lastMobileRecoveryResult.set("prepared")
@@ -1262,6 +1289,9 @@ class ProxyServer(
             }
         }
         val pressureReset = cfDomainHealth.resetPressureForMobileNetworkGenerationChange()
+        if (previousNetworkStatus.equals("none", ignoreCase = true) && isMobile(networkStatus)) {
+            cfDomainHealth.startMobileRecoveryProbeWindow(newGeneration)
+        }
         mobileRecoveryDirectCooldownResetCount.addAndGet(directReset)
         mobileRecoveryCfPressureResetCount.addAndGet(pressureReset.toLong())
         logger.log("mobile network generation changed $previousNetworkStatus->$networkStatus generation=$newGeneration; reset direct cooldowns=$directReset cfPressure=$pressureReset")
@@ -1489,20 +1519,25 @@ class ProxyServer(
                 }
             }
             val newGeneration = routeGeneration.get()
+            routeWaitRecheckedNetworkGeneration.incrementAndGet()
             val current = currentNetworkStatus
             if (newGeneration != initialGeneration) {
                 networkSettlingStaleAttemptsIgnored.incrementAndGet()
-                logger.log("DC$dcId route attempt ignored stale network generation $initialGeneration -> $newGeneration after network settling wait")
+                if (isMobile(current)) noneToMobileRouteWaitStaleCount.incrementAndGet()
+                logger.log("DC$dcId route wait rechecked network generation $initialGeneration -> $newGeneration after network settling wait")
             }
             if (!current.equals("none", ignoreCase = true)) {
                 networkSettlingResumedAfterAvailable.incrementAndGet()
+                if (isMobile(current)) routeWaitResumedAfterMobileAvailable.incrementAndGet()
                 logger.log("DC$dcId network appeared during settling as $current; retrying route selection")
                 return true
             }
+            mobileRecoveryNoRouteDuringSettlingCount.incrementAndGet()
             networkSettlingControlledFailures.incrementAndGet()
             logger.log("DC$dcId network still none after settling wait; controlled no-route failure")
             return false
         }
+        mobileRecoveryNoRouteDuringSettlingCount.incrementAndGet()
         networkSettlingControlledFailures.incrementAndGet()
         logger.log("DC$dcId network=none outside settling window; controlled no-route failure")
         return false
@@ -1731,7 +1766,11 @@ class ProxyServer(
             webSocket
         } catch (error: Throwable) {
             wsConnectErrors.incrementAndGet()
-            if (isTimeout(error)) { directTimeouts.incrementAndGet(); recordRecentEvent(recentDirectTimeoutTimes) }
+            if (isTimeout(error)) {
+                directTimeouts.incrementAndGet()
+                mobileRecoveryDirectRescueTimeoutCount.incrementAndGet()
+                recordRecentEvent(recentDirectTimeoutTimes)
+            }
             val detail = websocketFailureDetail(error)
             finishMobileDirectRescueFailure(parsed.dcId, detail, expectedGeneration)
             logger.log("DC${parsed.dcId} mobile direct rescue failed: $detail")
@@ -1760,8 +1799,13 @@ class ProxyServer(
         if (success) {
             if (lastMobileRecoveryResult.get() != "success") {
                 mobileToMobileRecoverySuccesses.incrementAndGet()
+                if (lastMobileRecoveryReason.get()?.startsWith("none->", ignoreCase = true) == true) {
+                    noneToMobileRecoverySuccesses.incrementAndGet()
+                }
                 lastNetworkAvailableAtMs.get().takeIf { it > 0L }?.let { availableAt ->
-                    mobileRecoveryFirstSuccessLatencyMs.compareAndSet(0L, (System.currentTimeMillis() - availableAt).coerceAtLeast(0L))
+                    val latency = (System.currentTimeMillis() - availableAt).coerceAtLeast(0L)
+                    mobileRecoveryFirstSuccessLatencyMs.compareAndSet(0L, latency)
+                    mobileRecoveryCfFirstSuccessLatencyMs.compareAndSet(0L, latency)
                 }
             }
             lastMobileRecoveryResult.set("success")

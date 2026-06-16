@@ -42,6 +42,9 @@ class CfDomainHealth(
     private var failuresIgnoredBecauseNetworkChanged: Long = 0
     private var cooldownsSkippedBecauseNetworkSettling: Long = 0
     private var transientCooldownsClearedOnNetworkAvailable: Long = 0
+    private var mobileRecoveryProbeWindowUntilMs: Long = 0
+    @Suppress("unused") private var mobileRecoveryProbeWindowGeneration: Long = 0
+    private val mobileRecoveryProbeStartsByDc = mutableMapOf<Int, Int>()
     private val activeConnectsByDc = mutableMapOf<Int, Int>()
     private val maxConcurrentConnectsByDc = mutableMapOf<Int, Int>()
     private val inFlightByDomain = mutableMapOf<CfDomainKey, Int>()
@@ -404,12 +407,33 @@ class CfDomainHealth(
     }
 
     @Synchronized
+    fun startMobileRecoveryProbeWindow(generation: Long) {
+        mobileRecoveryProbeWindowGeneration = generation
+        mobileRecoveryProbeWindowUntilMs = nowMs() + MOBILE_RECOVERY_PROBE_WINDOW_MS
+        mobileRecoveryProbeStartsByDc.clear()
+    }
+
+    @Synchronized
     fun beginPressureManagedCycle(dcId: Int, networkStatus: String): CfPressureDecision {
         val now = nowMs()
         val state = pressureStateFor(dcId)
         val counts = pressureCountsLocked(dcId, now)
         val level = evaluatePressureLevel(counts)
         updatePressureLevelLocked(dcId, state, level, now)
+        if ((networkStatus.equals("mobile", ignoreCase = true) || networkStatus.equals("cellular", ignoreCase = true)) &&
+            now <= mobileRecoveryProbeWindowUntilMs &&
+            (mobileRecoveryProbeStartsByDc[dcId] ?: 0) < MOBILE_RECOVERY_PROBE_MAX_STARTS_PER_DC
+        ) {
+            mobileRecoveryProbeStartsByDc[dcId] = (mobileRecoveryProbeStartsByDc[dcId] ?: 0) + 1
+            pressureLimitedAttempts += 1
+            return CfPressureDecision(
+                level = level,
+                maxAttempts = MOBILE_RECOVERY_PROBE_MAX_ATTEMPTS_PER_CYCLE,
+                connectQueueWaitMs = CONNECT_QUEUE_WAIT_MS,
+                probeAllowed = true,
+                nextProbeAtMs = mobileRecoveryProbeWindowUntilMs,
+            )
+        }
         return when (level) {
             CfPressureLevel.NORMAL -> CfPressureDecision(level = level, maxAttempts = Int.MAX_VALUE, connectQueueWaitMs = CONNECT_QUEUE_WAIT_MS)
             CfPressureLevel.DEGRADED -> {
@@ -802,6 +826,9 @@ class CfDomainHealth(
         const val PRESSURE_WINDOW_MS: Long = 30_000L
         const val SATURATED_PROBE_WINDOW_MS: Long = 3_000L
         const val DEGRADED_MOBILE_MAX_ATTEMPTS_PER_CYCLE: Int = 1
+        const val MOBILE_RECOVERY_PROBE_WINDOW_MS: Long = 2_500L
+        const val MOBILE_RECOVERY_PROBE_MAX_STARTS_PER_DC: Int = 2
+        const val MOBILE_RECOVERY_PROBE_MAX_ATTEMPTS_PER_CYCLE: Int = 2
         const val DEGRADED_DEFAULT_MAX_ATTEMPTS_PER_CYCLE: Int = 2
         const val DEGRADED_CONNECT_QUEUE_WAIT_MS: Long = 50L
         const val SATURATED_CONNECT_QUEUE_WAIT_MS: Long = 25L

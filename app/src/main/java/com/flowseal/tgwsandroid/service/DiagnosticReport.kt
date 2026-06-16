@@ -576,9 +576,17 @@ object DiagnosticReportFormatter {
             "mobile_to_mobile_recovery_attempts=${stats.mobileToMobileRecoveryAttempts}, " +
             "mobile_to_mobile_recovery_successes=${stats.mobileToMobileRecoverySuccesses}, " +
             "mobile_to_mobile_recovery_failures=${stats.mobileToMobileRecoveryFailures}, " +
+            "none_to_mobile_recovery_attempts=${stats.noneToMobileRecoveryAttempts}, " +
+            "none_to_mobile_recovery_successes=${stats.noneToMobileRecoverySuccesses}, " +
+            "none_to_mobile_route_wait_stale_count=${stats.noneToMobileRouteWaitStaleCount}, " +
+            "route_wait_resumed_after_mobile_available=${stats.routeWaitResumedAfterMobileAvailable}, " +
+            "route_wait_rechecked_network_generation=${stats.routeWaitRecheckedNetworkGeneration}, " +
             "mobile_recovery_cf_pressure_reset_count=${stats.mobileRecoveryCfPressureResetCount}, " +
             "mobile_recovery_direct_cooldown_reset_count=${stats.mobileRecoveryDirectCooldownResetCount}, " +
             "mobile_recovery_first_success_latency_ms=${stats.mobileRecoveryFirstSuccessLatencyMs ?: "unknown"}, " +
+            "mobile_recovery_cf_first_success_latency_ms=${stats.mobileRecoveryCfFirstSuccessLatencyMs ?: "unknown"}, " +
+            "mobile_recovery_direct_rescue_timeout_count=${stats.mobileRecoveryDirectRescueTimeoutCount}, " +
+            "mobile_recovery_no_route_during_settling_count=${stats.mobileRecoveryNoRouteDuringSettlingCount}, " +
             "last_mobile_recovery_reason=${stats.lastMobileRecoveryReason ?: "none"}, " +
             "last_mobile_recovery_network_generation=${stats.lastMobileRecoveryNetworkGeneration}, " +
             "last_mobile_recovery_result=${stats.lastMobileRecoveryResult ?: "none"}, " +
