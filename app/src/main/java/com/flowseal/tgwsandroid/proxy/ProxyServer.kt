@@ -295,6 +295,16 @@ class ProxyServerStats {
     var mobileDirectRescueFailures: Long = 0
     var mobileDirectRescueSuppressed: Long = 0
     var mobileRescueSkippedBecauseNetworkChanged: Long = 0
+    var mobileNetworkGenerationChanges: Long = 0
+    var mobileToMobileRecoveryAttempts: Long = 0
+    var mobileToMobileRecoverySuccesses: Long = 0
+    var mobileToMobileRecoveryFailures: Long = 0
+    var mobileRecoveryCfPressureResetCount: Long = 0
+    var mobileRecoveryDirectCooldownResetCount: Long = 0
+    var mobileRecoveryFirstSuccessLatencyMs: Long? = null
+    var lastMobileRecoveryReason: String? = null
+    var lastMobileRecoveryNetworkGeneration: Long = 0
+    var lastMobileRecoveryResult: String? = null
     var wifiDirectRecoveryAttempts: Long = 0
     var wifiDirectRecoverySuccesses: Long = 0
     var wifiDirectRecoveryFailures: Long = 0
@@ -813,6 +823,16 @@ class ProxyServer(
     private val mobileDirectRescueFailures = AtomicLong(0)
     private val mobileDirectRescueSuppressed = AtomicLong(0)
     private val mobileRescueSkippedBecauseNetworkChanged = AtomicLong(0)
+    private val mobileNetworkGenerationChanges = AtomicLong(0)
+    private val mobileToMobileRecoveryAttempts = AtomicLong(0)
+    private val mobileToMobileRecoverySuccesses = AtomicLong(0)
+    private val mobileToMobileRecoveryFailures = AtomicLong(0)
+    private val mobileRecoveryCfPressureResetCount = AtomicLong(0)
+    private val mobileRecoveryDirectCooldownResetCount = AtomicLong(0)
+    private val mobileRecoveryFirstSuccessLatencyMs = AtomicLong(0)
+    private val lastMobileRecoveryReason = AtomicReference<String?>(null)
+    private val lastMobileRecoveryNetworkGeneration = AtomicLong(0)
+    private val lastMobileRecoveryResult = AtomicReference<String?>(null)
     private val wifiDirectRecoveryAttempts = AtomicLong(0)
     private val wifiDirectRecoverySuccesses = AtomicLong(0)
     private val wifiDirectRecoveryFailures = AtomicLong(0)
@@ -1035,6 +1055,16 @@ class ProxyServer(
             snapshot.mobileDirectRescueFailures = mobileDirectRescueFailures.get()
             snapshot.mobileDirectRescueSuppressed = mobileDirectRescueSuppressed.get()
             snapshot.mobileRescueSkippedBecauseNetworkChanged = mobileRescueSkippedBecauseNetworkChanged.get()
+            snapshot.mobileNetworkGenerationChanges = mobileNetworkGenerationChanges.get()
+            snapshot.mobileToMobileRecoveryAttempts = mobileToMobileRecoveryAttempts.get()
+            snapshot.mobileToMobileRecoverySuccesses = mobileToMobileRecoverySuccesses.get()
+            snapshot.mobileToMobileRecoveryFailures = mobileToMobileRecoveryFailures.get()
+            snapshot.mobileRecoveryCfPressureResetCount = mobileRecoveryCfPressureResetCount.get()
+            snapshot.mobileRecoveryDirectCooldownResetCount = mobileRecoveryDirectCooldownResetCount.get()
+            snapshot.mobileRecoveryFirstSuccessLatencyMs = mobileRecoveryFirstSuccessLatencyMs.get().takeIf { it > 0L }
+            snapshot.lastMobileRecoveryReason = lastMobileRecoveryReason.get()
+            snapshot.lastMobileRecoveryNetworkGeneration = lastMobileRecoveryNetworkGeneration.get()
+            snapshot.lastMobileRecoveryResult = lastMobileRecoveryResult.get()
             snapshot.wifiDirectRecoveryAttempts = wifiDirectRecoveryAttempts.get()
             snapshot.wifiDirectRecoverySuccesses = wifiDirectRecoverySuccesses.get()
             snapshot.wifiDirectRecoveryFailures = wifiDirectRecoveryFailures.get()
@@ -1168,7 +1198,10 @@ class ProxyServer(
             )
         }
         currentNetworkStatus = normalized
-        routeGeneration.incrementAndGet()
+        val newGeneration = routeGeneration.incrementAndGet()
+        if (isMobileGenerationRecoveryTransition(previousNetworkStatus, normalized)) {
+            prepareMobileNetworkGenerationRecovery(previousNetworkStatus, normalized, newGeneration)
+        }
         if (!isWifi(previousNetworkStatus) || !isWifi(normalized)) {
             directRouteHealth.markSettling(ROUTE_SETTLING_WINDOW_MS)
         }
@@ -1203,6 +1236,35 @@ class ProxyServer(
         )
         maybeStartAutoWifiDirectProbe(normalized, previousNetworkStatus)
         return result
+    }
+
+    private fun isMobileGenerationRecoveryTransition(previousNetworkStatus: String, networkStatus: String): Boolean {
+        val newIsMobileLike = isMobileLike(networkStatus) && !networkStatus.equals("none", ignoreCase = true)
+        return newIsMobileLike && (isMobile(previousNetworkStatus) || previousNetworkStatus.equals("none", ignoreCase = true))
+    }
+
+    private fun prepareMobileNetworkGenerationRecovery(previousNetworkStatus: String, networkStatus: String, newGeneration: Long) {
+        mobileNetworkGenerationChanges.incrementAndGet()
+        mobileToMobileRecoveryAttempts.incrementAndGet()
+        lastMobileRecoveryReason.set("$previousNetworkStatus->$networkStatus")
+        lastMobileRecoveryNetworkGeneration.set(newGeneration)
+        lastMobileRecoveryResult.set("prepared")
+        val now = System.currentTimeMillis()
+        var directReset = 0L
+        for ((_, state) in mobileDirectRescueByDc) {
+            synchronized(state) {
+                if (state.cooldownUntilMs > now || state.generation < newGeneration) {
+                    state.cooldownUntilMs = 0L
+                    state.inFlight = false
+                    state.generation = newGeneration
+                    directReset += 1
+                }
+            }
+        }
+        val pressureReset = cfDomainHealth.resetPressureForMobileNetworkGenerationChange()
+        mobileRecoveryDirectCooldownResetCount.addAndGet(directReset)
+        mobileRecoveryCfPressureResetCount.addAndGet(pressureReset.toLong())
+        logger.log("mobile network generation changed $previousNetworkStatus->$networkStatus generation=$newGeneration; reset direct cooldowns=$directReset cfPressure=$pressureReset")
     }
 
     private fun shouldIgnoreHealthyWifiCapabilityEvent(previousNetworkStatus: String, networkStatus: String): Boolean =
@@ -1644,7 +1706,7 @@ class ProxyServer(
         val state = mobileDirectRescueByDc.getOrPut(parsed.dcId) { MobileDirectRescueState() }
         val domain = wsDomains(parsed.dcId, parsed.isMedia).firstOrNull()
         if (domain == null) {
-            finishMobileDirectRescueFailure(parsed.dcId, "no direct domain")
+            finishMobileDirectRescueFailure(parsed.dcId, "no direct domain", expectedGeneration)
             return null
         }
         if (routeGeneration.get() != expectedGeneration || !isMobile(currentNetworkStatus) || routeState.configuredRouteMode != NetworkRouteMode.AUTO || effectiveRouteMode() != NetworkRouteMode.CF_FIRST) {
@@ -1661,28 +1723,52 @@ class ProxyServer(
                 state.cooldownUntilMs = System.currentTimeMillis() + MOBILE_DIRECT_RESCUE_SUCCESS_REUSE_MS
                 state.lastError = null
                 state.lastSuccessTimeMs = System.currentTimeMillis()
+                state.generation = expectedGeneration
             }
             mobileDirectRescueSuccesses.incrementAndGet()
+            recordMobileGenerationRecoveryResult(expectedGeneration, success = true)
             logger.log("DC${parsed.dcId} mobile direct rescue success; direct route allowed for this client")
             webSocket
         } catch (error: Throwable) {
             wsConnectErrors.incrementAndGet()
             if (isTimeout(error)) { directTimeouts.incrementAndGet(); recordRecentEvent(recentDirectTimeoutTimes) }
             val detail = websocketFailureDetail(error)
-            finishMobileDirectRescueFailure(parsed.dcId, detail)
+            finishMobileDirectRescueFailure(parsed.dcId, detail, expectedGeneration)
             logger.log("DC${parsed.dcId} mobile direct rescue failed: $detail")
             null
         }
     }
 
-    private fun finishMobileDirectRescueFailure(dcId: Int, detail: String) {
+    private fun finishMobileDirectRescueFailure(dcId: Int, detail: String, expectedGeneration: Long) {
         val state = mobileDirectRescueByDc.getOrPut(dcId) { MobileDirectRescueState() }
         synchronized(state) {
             state.inFlight = false
+            if (routeGeneration.get() != expectedGeneration) {
+                mobileRescueSkippedBecauseNetworkChanged.incrementAndGet()
+                return
+            }
             state.cooldownUntilMs = System.currentTimeMillis() + MOBILE_DIRECT_RESCUE_FAILURE_COOLDOWN_MS
             state.lastError = detail
+            state.generation = expectedGeneration
         }
         mobileDirectRescueFailures.incrementAndGet()
+        recordMobileGenerationRecoveryResult(expectedGeneration, success = false)
+    }
+
+    private fun recordMobileGenerationRecoveryResult(generation: Long, success: Boolean) {
+        if (generation != lastMobileRecoveryNetworkGeneration.get()) return
+        if (success) {
+            if (lastMobileRecoveryResult.get() != "success") {
+                mobileToMobileRecoverySuccesses.incrementAndGet()
+                lastNetworkAvailableAtMs.get().takeIf { it > 0L }?.let { availableAt ->
+                    mobileRecoveryFirstSuccessLatencyMs.compareAndSet(0L, (System.currentTimeMillis() - availableAt).coerceAtLeast(0L))
+                }
+            }
+            lastMobileRecoveryResult.set("success")
+        } else if (lastMobileRecoveryResult.get() != "success") {
+            mobileToMobileRecoveryFailures.incrementAndGet()
+            lastMobileRecoveryResult.set("failure")
+        }
     }
 
     private fun incrementPoolCounter(
@@ -2011,6 +2097,7 @@ class ProxyServer(
                 val circuitReset = cfDomainHealth.recordSuccess(parsed.dcId, parsed.isMedia, baseDomain, latencyMs)
                 logCfPressureLevelChanges()
                 recordSuccessfulRoute()
+                recordMobileGenerationRecoveryResult(attemptGeneration, success = true)
                 if (circuitReset) logger.log("CF all-cooldown circuit reset after success for DC${parsed.dcId}")
                 logger.log("CF pressure reset/relaxed after success for DC${parsed.dcId} $baseDomain")
                 logger.log("CF domain success DC${parsed.dcId} $baseDomain latencyMs=$latencyMs")
@@ -2363,6 +2450,9 @@ class ProxyServer(
 
     private fun isMobile(networkStatus: String): Boolean = networkStatus.equals("mobile", ignoreCase = true) ||
         networkStatus.equals("cellular", ignoreCase = true)
+
+    private fun isMobileLike(networkStatus: String): Boolean =
+        isMobile(networkStatus) || networkStatus.equals("unknown", ignoreCase = true)
 
     private fun isDirectPoolEnabled(): Boolean = isDirectPoolEnabledFor(effectiveRouteMode())
 
@@ -2866,4 +2956,5 @@ private class MobileDirectRescueState {
     var cooldownUntilMs: Long = 0L
     var lastError: String? = null
     var lastSuccessTimeMs: Long = 0L
+    var generation: Long = 0L
 }

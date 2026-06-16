@@ -76,6 +76,12 @@ class TelemetryAggregator(
             recordDelta("handshake_accepted", previous.connectionsTotal, stats.connectionsTotal)
             recordDelta("session_unexpected_error", previous.sessionUnexpectedErrors, stats.sessionUnexpectedErrors)
             recordDelta("unsupported_dc", previous.unsupportedDc, stats.unsupportedDc)
+            recordDelta("mobile_network_generation_changes", previous.mobileNetworkGenerationChanges, stats.mobileNetworkGenerationChanges)
+            recordDelta("mobile_to_mobile_recovery_attempts", previous.mobileToMobileRecoveryAttempts, stats.mobileToMobileRecoveryAttempts)
+            recordDelta("mobile_to_mobile_recovery_successes", previous.mobileToMobileRecoverySuccesses, stats.mobileToMobileRecoverySuccesses)
+            recordDelta("mobile_to_mobile_recovery_failures", previous.mobileToMobileRecoveryFailures, stats.mobileToMobileRecoveryFailures)
+            recordDelta("mobile_recovery_cf_pressure_reset_count", previous.mobileRecoveryCfPressureResetCount, stats.mobileRecoveryCfPressureResetCount)
+            recordDelta("mobile_recovery_direct_cooldown_reset_count", previous.mobileRecoveryDirectCooldownResetCount, stats.mobileRecoveryDirectCooldownResetCount)
         }
         deriveInferredDiagnostics(stats)
         val previousUnsupported = lastUnsupportedDc

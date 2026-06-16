@@ -396,6 +396,14 @@ class CfDomainHealth(
 
 
     @Synchronized
+    fun resetPressureForMobileNetworkGenerationChange(): Int {
+        val count = pressureByDc.size
+        pressureByDc.clear()
+        allCooldownCircuitByDc.clear()
+        return count
+    }
+
+    @Synchronized
     fun beginPressureManagedCycle(dcId: Int, networkStatus: String): CfPressureDecision {
         val now = nowMs()
         val state = pressureStateFor(dcId)

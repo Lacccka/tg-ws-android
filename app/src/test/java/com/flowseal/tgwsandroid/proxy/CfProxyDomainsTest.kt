@@ -702,4 +702,19 @@ class CfProxyDomainsTest {
         assertEquals("normal", health.snapshot().pressure.levelByDc[4])
     }
 
+    @Test
+    fun mobileNetworkGenerationResetClearsCfPressureForFreshProbe() {
+        val health = CfDomainHealth(listOf("one.example", "two.example"), nowMs = { 1_000L }, jitterRatio = { 0.0 })
+        repeat(20) { health.recordPressureLimitedAttempt(2) }
+
+        val pressured = health.beginPressureManagedCycle(2, "mobile")
+        assertTrue(pressured.level >= CfPressureLevel.SATURATED)
+
+        assertEquals(1, health.resetPressureForMobileNetworkGenerationChange())
+        val afterReset = health.beginPressureManagedCycle(2, "mobile")
+
+        assertFalse(afterReset.controlledFailure)
+        assertEquals(CfPressureLevel.NORMAL, afterReset.level)
+    }
+
 }

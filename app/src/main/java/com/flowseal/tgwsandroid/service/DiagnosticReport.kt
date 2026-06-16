@@ -572,6 +572,16 @@ object DiagnosticReportFormatter {
             "mobileDirectRescueFailures=${stats.mobileDirectRescueFailures}, " +
             "mobileDirectRescueSuppressed=${stats.mobileDirectRescueSuppressed}, " +
             "mobileRescueSkippedBecauseNetworkChanged=${stats.mobileRescueSkippedBecauseNetworkChanged}, " +
+            "mobile_network_generation_changes=${stats.mobileNetworkGenerationChanges}, " +
+            "mobile_to_mobile_recovery_attempts=${stats.mobileToMobileRecoveryAttempts}, " +
+            "mobile_to_mobile_recovery_successes=${stats.mobileToMobileRecoverySuccesses}, " +
+            "mobile_to_mobile_recovery_failures=${stats.mobileToMobileRecoveryFailures}, " +
+            "mobile_recovery_cf_pressure_reset_count=${stats.mobileRecoveryCfPressureResetCount}, " +
+            "mobile_recovery_direct_cooldown_reset_count=${stats.mobileRecoveryDirectCooldownResetCount}, " +
+            "mobile_recovery_first_success_latency_ms=${stats.mobileRecoveryFirstSuccessLatencyMs ?: "unknown"}, " +
+            "last_mobile_recovery_reason=${stats.lastMobileRecoveryReason ?: "none"}, " +
+            "last_mobile_recovery_network_generation=${stats.lastMobileRecoveryNetworkGeneration}, " +
+            "last_mobile_recovery_result=${stats.lastMobileRecoveryResult ?: "none"}, " +
             "wifiDirectRecoveryAttempts=${stats.wifiDirectRecoveryAttempts}, " +
             "wifiDirectRecoverySuccesses=${stats.wifiDirectRecoverySuccesses}, " +
             "wifiDirectRecoveryFailures=${stats.wifiDirectRecoveryFailures}, " +
