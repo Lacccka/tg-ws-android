@@ -15,8 +15,8 @@ class TelemetryAggregator(
     private val flags = linkedMapOf<String, Boolean>()
     private val queue = ArrayDeque<JSONObject>()
     private var windowStartMs: Long = nowMs()
-    private var lastSnapshotAtMs: Long = 0L
-    private var lastForceFlushAtMs: Long = 0L
+    private var lastNormalFlushAtMs: Long? = null
+    private var lastForceFlushAtMs: Long? = null
     private var droppedEventsCount: Long = 0L
     private var droppedSnapshotsCount: Long = 0L
     private var lastStats: ProxyServerStats? = null
@@ -72,16 +72,17 @@ class TelemetryAggregator(
     @Synchronized fun maybeFlush(): JSONObject? {
         if (!telemetryEnabled()) return null
         val now = nowMs()
-        return if (now - lastSnapshotAtMs >= windowMs) flushLocked(now) else null
+        val lastFlush = lastNormalFlushAtMs
+        if (lastFlush != null && now - lastFlush < windowMs) return null
+        return flushLocked(now)?.also { lastNormalFlushAtMs = now }
     }
 
     @Synchronized fun forceFlushCritical(): JSONObject? {
         if (!telemetryEnabled()) return null
         val now = nowMs()
-        return if (now - lastForceFlushAtMs >= forceFlushMinIntervalMs) {
-            lastForceFlushAtMs = now
-            flushLocked(now)
-        } else null
+        val lastFlush = lastForceFlushAtMs
+        if (lastFlush != null && now - lastFlush < forceFlushMinIntervalMs) return null
+        return flushLocked(now)?.also { lastForceFlushAtMs = now }
     }
 
     @Synchronized fun flushOnStop(): JSONObject? = if (telemetryEnabled()) flushLocked(nowMs()) else null
@@ -115,7 +116,7 @@ class TelemetryAggregator(
             put("payload", payload)
         })
         if (queue.size >= maxQueueSize) droppedSnapshotsCount++ else queue.addLast(event)
-        counters.clear(); flags.clear(); droppedEventsCount = 0L; windowStartMs = now; lastSnapshotAtMs = now
+        counters.clear(); flags.clear(); droppedEventsCount = 0L; windowStartMs = now
         return event
     }
 
