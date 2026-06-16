@@ -2,6 +2,7 @@ package com.flowseal.tgwsandroid.telemetry
 
 import com.flowseal.tgwsandroid.proxy.ClientExperienceDiagnostics
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
+import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
@@ -14,6 +15,19 @@ class TelemetryAggregatorTest {
     @Before fun setUp() {
         enabled = true
         now = 1_000L
+    }
+
+    private fun flagsFromSnapshot(event: JSONObject?): JSONObject {
+        val snapshot = requireNotNull(event) {
+            "Expected diagnostics_snapshot event"
+        }
+        assertEquals("diagnostics_snapshot", snapshot.getString("name"))
+        val payload = requireNotNull(snapshot.optJSONObject("payload")) {
+            "diagnostics_snapshot payload is missing: $snapshot"
+        }
+        return requireNotNull(payload.optJSONObject("flags")) {
+            "diagnostics_snapshot payload.flags is missing: $payload"
+        }
     }
 
     @Test fun hundredDirectTimeoutsBecomeOneSnapshotCounter() {
@@ -259,7 +273,7 @@ class TelemetryAggregatorTest {
     @Test fun previousRunUnexpectedFlagsAreIncluded() {
         val agg = aggregator()
         agg.recordStats(stats(), true, false, previousRunEndedUnexpectedly = true)
-        val flags = agg.maybeFlush()!!.getJSONObject("payload").getJSONObject("flags")
+        val flags = flagsFromSnapshot(agg.pollSnapshot())
         assertTrue(flags.getBoolean("previous_run_ended_unexpectedly"))
         assertTrue(flags.getBoolean("unexpected_stop_detected"))
     }
@@ -267,7 +281,7 @@ class TelemetryAggregatorTest {
     @Test fun batteryRestrictionFlagIsIncluded() {
         val agg = aggregator()
         agg.recordStats(stats(), true, false, batteryRestrictionDetected = true)
-        val flags = agg.maybeFlush()!!.getJSONObject("payload").getJSONObject("flags")
+        val flags = flagsFromSnapshot(agg.pollSnapshot())
         assertTrue(flags.getBoolean("battery_restriction_detected"))
     }
 

@@ -2487,9 +2487,12 @@ class ProxyServerTest {
         assertEquals("expected cfFirstRecoveryAttempts", 1L, stats.recoveryDiagnostics.cfFirst.attempts)
         assertEquals("expected direct promotion after recovery", NetworkRouteMode.DIRECT_FIRST.configValue, stats.effectiveRouteMode)
         assertEquals("expected lastRouteUsed", "direct-cold", stats.lastRouteUsed)
+        val lastRouteUsedUpdateTimeMs = requireNotNull(stats.lastRouteUsedUpdateTimeMs) {
+            "Expected lastRouteUsedUpdateTimeMs to be set"
+        }
         assertTrue(
             "expected lastRouteUsedUpdateTimeMs > 0",
-            stats.lastRouteUsedUpdateTimeMs != null && stats.lastRouteUsedUpdateTimeMs > 0L,
+            lastRouteUsedUpdateTimeMs > 0L,
         )
         assertEquals("expected direct connector calls", 6, attempts.get())
         assertTrue(
@@ -2547,7 +2550,10 @@ class ProxyServerTest {
         val stats = proxy.stats()
         assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, stats.effectiveRouteMode)
         assertEquals(NetworkRouteMode.CF_FIRST.configValue, stats.previousEffectiveRouteMode)
-        assertTrue(stats.lastEffectiveRouteModeUpdateTimeMs != null && stats.lastEffectiveRouteModeUpdateTimeMs > 0L)
+        val lastEffectiveRouteModeUpdateTimeMs = requireNotNull(stats.lastEffectiveRouteModeUpdateTimeMs) {
+            "Expected lastEffectiveRouteModeUpdateTimeMs to be set"
+        }
+        assertTrue(lastEffectiveRouteModeUpdateTimeMs > 0L)
     }
 
 
