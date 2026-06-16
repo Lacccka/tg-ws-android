@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
+from datetime import datetime
 
 MISSING = "missing"
 
@@ -72,6 +74,10 @@ STATS_ALIASES = {
     "clientExperienceRecentPoolStale": "recentPoolStale",
     "clientExperienceTimeToFirstSuccessfulRouteAfterIdleMs": "timeToFirstSuccessfulRouteAfterIdleMs",
 }
+DEFAULT_PATTERN = "tg-ws-android-diagnostics-*.txt"
+GENERATED_RE = re.compile(r"^Generated:\s*(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\s*$", re.MULTILINE)
+FILENAME_TS_RE = re.compile(r"tg-ws-android-diagnostics-(\d{8}-\d{6})\.txt$")
+
 LINE_ALIASES = {
     "Configured route mode": "configuredRouteMode",
     "Effective route mode": "effectiveRouteMode",
@@ -221,12 +227,83 @@ def render(before: Report, after: Report) -> str:
     return "\n".join(lines)
 
 
+def report_time(path: Path) -> datetime:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    generated = GENERATED_RE.search(text)
+    if generated:
+        return datetime.strptime(generated.group(1), "%Y-%m-%d %H:%M:%S")
+    filename_ts = FILENAME_TS_RE.fullmatch(path.name)
+    if filename_ts:
+        return datetime.strptime(filename_ts.group(1), "%Y%m%d-%H%M%S")
+    return datetime.fromtimestamp(path.stat().st_mtime)
+
+
+def discover_reports(directory: Path, pattern: str) -> list[Path]:
+    return sorted((path for path in directory.glob(pattern) if path.is_file()), key=lambda path: (report_time(path), path.name))
+
+
+def print_selected(before: Path, after: Path) -> None:
+    print("Selected diagnostics:")
+    print(f"  before: {before}")
+    print(f"  after:  {after}")
+    print()
+
+
+def compare_files(before: Path, after: Path) -> None:
+    print(render(parse_report(before.read_text(encoding="utf-8", errors="replace")), parse_report(after.read_text(encoding="utf-8", errors="replace"))))
+
+
+def compare_directory(directory: Path, pattern: str, compare_all: bool, parser: argparse.ArgumentParser) -> int:
+    if not directory.exists():
+        parser.error(f"path does not exist: {directory}")
+    if not directory.is_dir():
+        parser.error(f"path is not a directory: {directory}")
+
+    reports = discover_reports(directory, pattern)
+    if len(reports) < 2:
+        parser.error(f"directory {directory} contains fewer than two files matching {pattern!r}")
+
+    pairs = zip(reports, reports[1:]) if compare_all else [(reports[-2], reports[-1])]
+    for index, (before, after) in enumerate(pairs):
+        if index:
+            print("\n" + "=" * 72 + "\n")
+        print_selected(before, after)
+        compare_files(before, after)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("before", type=Path)
-    parser.add_argument("after", type=Path)
+    parser.add_argument("paths", nargs="*", type=Path, help="two report files, or one diagnostics directory")
+    parser.add_argument("--dir", dest="directory", type=Path, help="directory containing diagnostics reports")
+    parser.add_argument("--pattern", default=DEFAULT_PATTERN, help=f"diagnostics filename glob (default: {DEFAULT_PATTERN})")
+    parser.add_argument("--all", action="store_true", help="compare every adjacent report pair in time order")
     args = parser.parse_args(argv)
-    print(render(parse_report(args.before.read_text(encoding="utf-8", errors="replace")), parse_report(args.after.read_text(encoding="utf-8", errors="replace"))))
+
+    if args.directory is not None:
+        if args.paths:
+            parser.error("do not provide positional paths with --dir")
+        return compare_directory(args.directory, args.pattern, args.all, parser)
+
+    if len(args.paths) == 1 and args.paths[0].is_dir():
+        return compare_directory(args.paths[0], args.pattern, args.all, parser)
+
+    if len(args.paths) != 2:
+        if len(args.paths) == 1 and not args.paths[0].exists():
+            parser.error(f"path does not exist: {args.paths[0]}")
+        parser.print_help(sys.stderr)
+        return 2
+
+    if args.all:
+        parser.error("--all requires directory mode")
+
+    before, after = args.paths
+    for path in (before, after):
+        if not path.exists():
+            parser.error(f"path does not exist: {path}")
+        if not path.is_file():
+            parser.error(f"path is not a file: {path}")
+    compare_files(before, after)
     return 0
 
 if __name__ == "__main__":
