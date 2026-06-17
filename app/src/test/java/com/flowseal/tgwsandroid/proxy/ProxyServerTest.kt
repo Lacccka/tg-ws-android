@@ -2052,22 +2052,51 @@ class ProxyServerTest {
 
         proxy.start()
         proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
-        waitUntil { proxy.stats().directAttempts >= 4L }
+        waitUntil("direct pool warmup connections recorded before route transition") {
+            connector.domains.count { it.endsWith(".web.telegram.org") } >= 4
+        }
         val directDomainsBefore = connector.domains.count { it.endsWith(".web.telegram.org") }
         proxy.applyEffectiveRouteMode(NetworkRouteMode.CF_FIRST, "test downgraded", "Wi-Fi")
+        waitUntil("effective route is cf_first before new session") {
+            proxy.stats().effectiveRouteMode == NetworkRouteMode.CF_FIRST.configValue
+        }
+        val beforeSessionStats = proxy.stats()
         server.enqueue(client)
         waitUntil { client.closed }
+        waitUntil("new session used CF route") { proxy.stats().lastRouteUsed == "cf" }
+        val afterSessionStats = proxy.stats()
         proxy.stop()
 
         val directDomainsAfter = connector.domains.count { it.endsWith(".web.telegram.org") }
         assertEquals(
-            "New sessions after direct_first -> cf_first must not open additional direct domains",
+            "New sessions after direct_first -> cf_first must not open additional direct domains; " +
+                "configured=${afterSessionStats.routeMode}, effective=${afterSessionStats.effectiveRouteMode}, " +
+                "reason=${afterSessionStats.lastRouteChangeReason}, directDomainsBefore=$directDomainsBefore, " +
+                "directDomainsAfter=$directDomainsAfter, poolHitsBefore=${beforeSessionStats.poolHits}, " +
+                "poolHitsAfter=${afterSessionStats.poolHits}, lastRouteUsed=${afterSessionStats.lastRouteUsed}",
             directDomainsBefore,
             directDomainsAfter,
         )
-        assertEquals("cf_first sessions must not use the old direct pool", 0L, proxy.stats().poolHits)
+        assertEquals(
+            "cf_first sessions must not use the old direct pool; " +
+                "configured=${afterSessionStats.routeMode}, effective=${afterSessionStats.effectiveRouteMode}, " +
+                "reason=${afterSessionStats.lastRouteChangeReason}, poolHitsBefore=${beforeSessionStats.poolHits}, " +
+                "poolHitsAfter=${afterSessionStats.poolHits}, lastRouteUsed=${afterSessionStats.lastRouteUsed}",
+            beforeSessionStats.poolHits,
+            afterSessionStats.poolHits,
+        )
+        assertEquals(
+            "New session after direct_first -> cf_first must use CF route; " +
+                "configured=${afterSessionStats.routeMode}, effective=${afterSessionStats.effectiveRouteMode}, " +
+                "reason=${afterSessionStats.lastRouteChangeReason}, lastRouteUsed=${afterSessionStats.lastRouteUsed}",
+            "cf",
+            afterSessionStats.lastRouteUsed,
+        )
         assertTrue(
-            "New session after direct_first -> cf_first must attempt CF domain",
+            "New session after direct_first -> cf_first must attempt CF domain; " +
+                "domains=${connector.domains}, configured=${afterSessionStats.routeMode}, " +
+                "effective=${afterSessionStats.effectiveRouteMode}, reason=${afterSessionStats.lastRouteChangeReason}, " +
+                "lastRouteUsed=${afterSessionStats.lastRouteUsed}",
             connector.domains.any { it == "kws2.cf.example" },
         )
     }

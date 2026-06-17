@@ -222,7 +222,8 @@ class MainActivity : Activity() {
     private fun buildSettingsScreen(): ScrollView {
         val density = resources.displayMetrics.density
         val padding = (16 * density).toInt()
-        val rowGap = (8 * density).toInt()
+        val rowGap = (10 * density).toInt()
+        val bottomContentPadding = (96 * density).toInt()
         routeModeValueText = createValueText()
         notificationStatusText = createValueText()
         batteryStatusText = createValueText()
@@ -281,7 +282,7 @@ class MainActivity : Activity() {
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(padding, padding, padding, padding)
+            setPadding(padding, padding, padding, bottomContentPadding)
             setBackgroundColor(COLOR_BACKGROUND)
             addHeader()
             addView(SettingsSection("Важное для стабильной работы", "Эти параметры помогают прокси не отключаться в фоне.") {
@@ -306,7 +307,7 @@ class MainActivity : Activity() {
                 addView(developerModeCheckBox, matchWrapParams())
                 developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
                 addView(developerSection, matchWrapParams(topMargin = rowGap))
-            }, cardParams(topMargin = padding, bottomMargin = padding))
+            }, cardParams(topMargin = padding))
 
         }
         return ScrollView(this).apply {
@@ -1049,34 +1050,34 @@ class MainActivity : Activity() {
     private fun SettingsRow(label: String, value: TextView): LinearLayout = createTextRow(label, value)
 
     private fun SettingsValueRow(title: String, description: String, value: TextView, onClick: (() -> Unit)? = null): LinearLayout =
-        SettingsBaseRow(title, description, value, null, onClick)
+        SettingsAdaptiveRow(title, description, topTrailing = value, meta = null, onClick = onClick)
 
     private fun SettingsStatusRow(title: String, description: String, value: TextView, badge: TextView? = null, onClick: () -> Unit): LinearLayout =
-        SettingsBaseRow(title, description, value, badge, onClick)
+        SettingsAdaptiveRow(title, description, topTrailing = null, meta = metaLine(badge, value), onClick = onClick)
 
     private fun SettingsActionRow(title: String, description: String, onClick: () -> Unit): LinearLayout =
-        SettingsBaseRow(title, description, createValueText().apply { text = "›"; textSize = 22f }, null, onClick)
+        SettingsAdaptiveRow(title, description, topTrailing = createValueText().apply { text = "›"; textSize = 22f }, meta = null, onClick = onClick)
 
     private fun SettingsSwitchRow(title: String, description: String, status: TextView, badge: TextView? = null, onClick: () -> Unit): LinearLayout {
         val switch = Switch(this).apply { isClickable = false; isFocusable = false }
         telemetrySwitch = switch
         status.visibility = View.GONE
-        return SettingsBaseRow(title, description, switch, badge, onClick)
+        return SettingsAdaptiveRow(title, description, topTrailing = switch, meta = metaLine(badge, status), onClick = onClick)
     }
 
-    private fun SettingsBaseRow(
+    private fun SettingsAdaptiveRow(
         title: String,
         description: String,
-        trailing: View,
-        badge: TextView? = null,
+        topTrailing: View? = null,
+        meta: View? = null,
         onClick: (() -> Unit)? = null,
     ): LinearLayout {
         val density = resources.displayMetrics.density
-        val vertical = (10 * density).toInt()
+        val vertical = (12 * density).toInt()
         val horizontal = (4 * density).toInt()
+        val gap = (6 * density).toInt()
         return LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = android.view.Gravity.CENTER_VERTICAL
+            orientation = LinearLayout.VERTICAL
             setPadding(horizontal, vertical, horizontal, vertical)
             if (onClick != null) {
                 isClickable = true
@@ -1084,34 +1085,61 @@ class MainActivity : Activity() {
                 foreground = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground)).use { attrs -> attrs.getDrawable(0) }
                 setOnClickListener { onClick() }
             }
-            val left = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.VERTICAL
-                val titleRow = LinearLayout(this@MainActivity).apply {
-                    orientation = LinearLayout.HORIZONTAL
-                    addView(TextView(this@MainActivity).apply {
-                        text = title
-                        textSize = 15f
-                        typeface = Typeface.DEFAULT_BOLD
-                        setTextColor(COLOR_TEXT_PRIMARY)
-                    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                    if (badge != null) addView(badge, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-                }
-                addView(titleRow, matchWrapParams())
-                addView(createValueText().apply {
-                    text = description
-                    setTextColor(COLOR_TEXT_SECONDARY)
-                }, matchWrapParams(topMargin = (3 * density).toInt()))
+
+            val titleView = TextView(this@MainActivity).apply {
+                text = title
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(COLOR_TEXT_PRIMARY)
+                maxLines = 2
             }
-            addView(left, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            addView(trailing.apply {
-                if (this is TextView) {
-                    textSize = 14f
-                    setTextColor(COLOR_TEXT_PRIMARY)
-                    typeface = Typeface.DEFAULT_BOLD
-                }
-            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
-                leftMargin = (12 * density).toInt()
-            })
+            val titleParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+            if (topTrailing == null) {
+                addView(titleView, matchWrapParams())
+            } else {
+                addView(LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = android.view.Gravity.CENTER_VERTICAL
+                    addView(titleView, titleParams)
+                    addView(topTrailing.apply {
+                        if (this is TextView) {
+                            textSize = 14f
+                            setTextColor(COLOR_TEXT_PRIMARY)
+                            typeface = Typeface.DEFAULT_BOLD
+                            maxLines = 2
+                        }
+                    }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                        leftMargin = (12 * density).toInt()
+                    })
+                }, matchWrapParams())
+            }
+
+            addView(createValueText().apply {
+                text = description
+                setTextColor(COLOR_TEXT_SECONDARY)
+            }, matchWrapParams(topMargin = (3 * density).toInt()))
+
+            if (meta != null) addView(meta, matchWrapParams(topMargin = gap))
+        }
+    }
+
+    private fun metaLine(vararg views: View?): LinearLayout? {
+        val visibleViews = views.filterNotNull()
+        if (visibleViews.isEmpty()) return null
+        val density = resources.displayMetrics.density
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            visibleViews.forEachIndexed { index, view ->
+                addView(view.apply {
+                    if (this is TextView) {
+                        textSize = 13f
+                        if (typeface == null) typeface = Typeface.DEFAULT_BOLD
+                    }
+                }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                    if (index > 0) leftMargin = (8 * density).toInt()
+                })
+            }
         }
     }
 
@@ -1122,7 +1150,7 @@ class MainActivity : Activity() {
         return SettingsValueRow(
             title = SettingsUiText.CONNECTION_MODE_TITLE,
             description = UserRouteModes.helperFor(current.routeMode),
-            value = createValueText().apply { text = current.title },
+            value = routeModeValueText.apply { text = current.title },
             onClick = { showConnectionModeDialog() },
         )
     }

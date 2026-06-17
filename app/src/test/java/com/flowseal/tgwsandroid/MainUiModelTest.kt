@@ -1,5 +1,6 @@
 package com.flowseal.tgwsandroid
 
+import com.flowseal.tgwsandroid.config.Appearance
 import com.flowseal.tgwsandroid.proxy.HandshakeDiagnosticState
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
@@ -312,6 +313,38 @@ class MainUiModelTest {
         assertEquals(1, listOf(SettingsScreenModel.connectionModeChoice.selectedValue).count { it.isNotBlank() })
         assertEquals(listOf("Авто", "Светлая", "Тёмная"), SettingsScreenModel.themeChoice.options)
         assertEquals(1, listOf(SettingsScreenModel.themeChoice.selectedValue).count { it.isNotBlank() })
+    }
+
+
+    @Test
+    fun settingsChoiceModelsUpdateSelectedValuesImmediately() {
+        assertEquals("Быстрый Wi-Fi", SettingsScreenModel.connectionModeChoice(NetworkRouteMode.DIRECT_FIRST).selectedValue)
+        assertEquals("Совместимый", SettingsScreenModel.connectionModeChoice(NetworkRouteMode.CF_FIRST).selectedValue)
+        assertEquals("Тёмная", SettingsScreenModel.themeChoice(Appearance.DARK).selectedValue)
+    }
+
+    @Test
+    fun pendingRestartActionIsNotDuplicated() {
+        val actions = MainActionModelMapper.actions(proxyEnabled = true, settingsChangedPendingRestart = true)
+        assertEquals(listOf("Отключить", "Перезапустить", "Подключить Telegram"), actions.visibleActions)
+        assertEquals(1, actions.visibleActions.count { it == "Перезапустить" })
+        assertEquals(MainActionModelMapper.PENDING_RESTART_NOTE, actions.restartNote)
+    }
+
+    @Test
+    fun adaptiveSettingsRowsKeepTextFieldsSeparate() {
+        val rows = SettingsScreenModel.normalRows.associateBy { it.title }
+        val battery = rows.getValue(SettingsUiText.BATTERY_BACKGROUND_TITLE)
+        assertEquals("Помогает сохранять подключение после блокировки экрана.", battery.description)
+        assertEquals("Может ограничиваться", battery.status)
+        assertEquals(SettingsBadge.IMPORTANT, battery.badge)
+        assertFalse(battery.title.contains(battery.description.orEmpty()))
+
+        val notifications = rows.getValue("Уведомления")
+        assertEquals("Показывают состояние подключения.", notifications.description)
+        assertEquals("Включено", notifications.status)
+        assertEquals(SettingsBadge.RECOMMENDED, notifications.badge)
+        assertFalse(notifications.title.contains(notifications.description.orEmpty()))
     }
 
     @Test

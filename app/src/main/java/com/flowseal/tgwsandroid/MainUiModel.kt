@@ -1,5 +1,6 @@
 package com.flowseal.tgwsandroid
 
+import com.flowseal.tgwsandroid.config.Appearance
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 
@@ -100,6 +101,8 @@ enum class SettingsRowKind {
 data class SettingsRowModel(
     val title: String,
     val kind: SettingsRowKind,
+    val description: String? = null,
+    val status: String? = null,
     val selectedValue: String? = null,
     val badge: SettingsBadge? = null,
 )
@@ -112,12 +115,12 @@ data class SettingsChoiceModel(
 
 object SettingsScreenModel {
     val normalRows: List<SettingsRowModel> = listOf(
-        SettingsRowModel("Уведомления", SettingsRowKind.STATUS, badge = SettingsBadge.RECOMMENDED),
-        SettingsRowModel(SettingsUiText.BATTERY_BACKGROUND_TITLE, SettingsRowKind.STATUS, badge = SettingsBadge.IMPORTANT),
-        SettingsRowModel("Автозапуск", SettingsRowKind.STATUS, badge = SettingsBadge.IMPORTANT),
-        SettingsRowModel("Анонимная диагностика", SettingsRowKind.SWITCH, badge = SettingsBadge.RECOMMENDED),
-        SettingsRowModel(SettingsUiText.CONNECTION_MODE_TITLE, SettingsRowKind.VALUE, selectedValue = SettingsUiText.connectionModeOptions.first()),
-        SettingsRowModel(SettingsUiText.THEME_TITLE, SettingsRowKind.VALUE, selectedValue = SettingsUiText.themeOptions.first()),
+        SettingsRowModel("Уведомления", SettingsRowKind.STATUS, description = "Показывают состояние подключения.", status = "Включено", badge = SettingsBadge.RECOMMENDED),
+        SettingsRowModel(SettingsUiText.BATTERY_BACKGROUND_TITLE, SettingsRowKind.STATUS, description = "Помогает сохранять подключение после блокировки экрана.", status = "Может ограничиваться", badge = SettingsBadge.IMPORTANT),
+        SettingsRowModel("Автозапуск", SettingsRowKind.STATUS, description = "Позволяет запускать прокси после перезагрузки устройства.", status = "Не проверено", badge = SettingsBadge.IMPORTANT),
+        SettingsRowModel("Анонимная диагностика", SettingsRowKind.SWITCH, description = "Помогает улучшать стабильность без личных данных.", status = "Выключено", badge = SettingsBadge.RECOMMENDED),
+        SettingsRowModel(SettingsUiText.CONNECTION_MODE_TITLE, SettingsRowKind.VALUE, description = RussianUiText.ROUTE_AUTO_HELPER, selectedValue = SettingsUiText.connectionModeOptions.first()),
+        SettingsRowModel(SettingsUiText.THEME_TITLE, SettingsRowKind.VALUE, description = "Выберите оформление приложения.", selectedValue = SettingsUiText.themeOptions.first()),
         SettingsRowModel("IP-адрес", SettingsRowKind.VALUE),
         SettingsRowModel("Порт", SettingsRowKind.VALUE),
         SettingsRowModel("Secret", SettingsRowKind.VALUE),
@@ -134,6 +137,18 @@ object SettingsScreenModel {
         title = SettingsUiText.THEME_TITLE,
         selectedValue = SettingsUiText.themeOptions.first(),
         options = SettingsUiText.themeOptions,
+    )
+
+    fun connectionModeChoice(selectedMode: NetworkRouteMode): SettingsChoiceModel = connectionModeChoice.copy(
+        selectedValue = UserRouteModes.labelFor(selectedMode),
+    )
+
+    fun themeChoice(selectedAppearance: Appearance): SettingsChoiceModel = themeChoice.copy(
+        selectedValue = when (selectedAppearance) {
+            Appearance.AUTO -> "Авто"
+            Appearance.LIGHT -> "Светлая"
+            Appearance.DARK -> "Тёмная"
+        },
     )
 }
 
