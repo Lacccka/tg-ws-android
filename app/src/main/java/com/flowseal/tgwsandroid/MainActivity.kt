@@ -36,6 +36,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import android.widget.Switch
 import androidx.core.content.res.use
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -75,9 +76,12 @@ class MainActivity : Activity() {
     private lateinit var autostartStatusText: TextView
     private lateinit var telemetryStatusText: TextView
     private lateinit var themeStatusText: TextView
+    private lateinit var hostStatusText: TextView
+    private lateinit var portStatusText: TextView
     private lateinit var secretStateText: TextView
     private lateinit var diagnosticsSummaryText: TextView
     private lateinit var telemetryCheckBox: CheckBox
+    private lateinit var telemetrySwitch: Switch
     private lateinit var telemetryTestButton: Button
     private lateinit var developerModeCheckBox: CheckBox
     private lateinit var developerSection: LinearLayout
@@ -225,6 +229,8 @@ class MainActivity : Activity() {
         autostartStatusText = createValueText()
         telemetryStatusText = createValueText()
         themeStatusText = createValueText()
+        hostStatusText = createValueText()
+        portStatusText = createValueText()
         secretStateText = createValueText().apply { setTextColor(COLOR_SUCCESS) }
         telemetryCheckBox = CheckBox(this).apply {
             text = "Отправлять анонимную диагностику"
@@ -278,55 +284,23 @@ class MainActivity : Activity() {
             setPadding(padding, padding, padding, padding)
             setBackgroundColor(COLOR_BACKGROUND)
             addHeader()
-            addView(SettingsSection("Важное для стабильной работы") {
-                addView(SettingsRow(
-                    title = "Уведомления",
-                    description = "Показывают состояние прокси.",
-                    value = notificationStatusText,
-                    badge = Badge("Рекомендуется"),
-                    onClick = { openNotificationSettingsFlow() },
-                ), matchWrapParams())
-                addView(SettingsRow(
-                    title = "Работа в фоне",
-                    description = "Помогает не останавливать прокси при блокировке экрана.",
-                    value = batteryStatusText,
-                    badge = Badge("Важно", COLOR_WARNING, Color.WHITE),
-                    onClick = { openBatterySettings() },
-                ), matchWrapParams(topMargin = rowGap))
-                addView(SettingsRow(
-                    title = "Автозапуск",
-                    description = "Позволяет запускаться после перезагрузки устройства.",
-                    value = autostartStatusText,
-                    badge = Badge("Важно", COLOR_WARNING, Color.WHITE),
-                    onClick = { openAutostartSettings() },
-                ), matchWrapParams(topMargin = rowGap))
-                addView(SettingsRow(
-                    title = "Анонимная диагностика",
-                    description = "Помогает улучшать стабильность без личных данных.",
-                    value = telemetryStatusText,
-                    badge = Badge("Рекомендуется"),
-                    onClick = { toggleTelemetry() },
-                ), matchWrapParams(topMargin = rowGap))
+            addView(SettingsSection("Важное для стабильной работы", "Эти параметры помогают прокси не отключаться в фоне.") {
+                addView(SettingsStatusRow("Уведомления", "Показывают состояние подключения.", notificationStatusText, Badge("Рекомендуется")) { openNotificationSettingsFlow() }, matchWrapParams())
+                addView(SettingsStatusRow("Работа в фоне", "Помогает сохранять подключение после блокировки экрана.", batteryStatusText, Badge("Важно", COLOR_WARNING, Color.WHITE)) { openBatterySettings() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsStatusRow("Автозапуск", "Позволяет запускать прокси после перезагрузки устройства.", autostartStatusText, Badge("Важно", COLOR_WARNING, Color.WHITE)) { openAutostartSettings() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsSwitchRow("Анонимная диагностика", "Помогает улучшать стабильность без личных данных.", telemetryStatusText, Badge("Рекомендуется")) { toggleTelemetry() }, matchWrapParams(topMargin = rowGap))
             }, cardParams())
             addView(SettingsSection("Подключение") {
                 addView(ConnectionModeSelector(), matchWrapParams())
             }, cardParams(topMargin = padding))
-            addView(SettingsSection("Внешний вид") {
-                addView(SettingsRow(
-                    title = SettingsUiText.THEME_TITLE,
-                    description = "Выберите оформление приложения.",
-                    value = themeStatusText,
-                    onClick = { showThemeDialog() },
-                ), matchWrapParams())
+            addView(SettingsSection("Telegram MTProto", "Параметры локального подключения Telegram.") {
+                addView(SettingsValueRow("IP-адрес", "Адрес локального прокси.", hostStatusText), matchWrapParams())
+                addView(SettingsValueRow("Порт", "Порт локального прокси.", portStatusText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsValueRow("Secret", "Скрыт в обычном интерфейсе.", secretStateText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsActionRow(SettingsUiText.RESET_SECRET_TITLE, "После обновления нужно заново подключить Telegram.") { confirmResetSecret() }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
-            addView(SettingsSection("Telegram") {
-                addView(SettingsRow(
-                    title = SettingsUiText.RESET_SECRET_TITLE,
-                    description = "После обновления нужно заново подключить Telegram.",
-                    value = secretStateText,
-                    badge = Badge("Важно", COLOR_WARNING, Color.WHITE),
-                    onClick = { confirmResetSecret() },
-                ), matchWrapParams())
+            addView(SettingsSection("Внешний вид") {
+                addView(SettingsValueRow(SettingsUiText.THEME_TITLE, "Выберите оформление приложения.", themeStatusText) { showThemeDialog() }, matchWrapParams())
             }, cardParams(topMargin = padding))
             addView(SettingsSection("Для разработчика") {
                 addView(developerModeCheckBox, matchWrapParams())
@@ -451,12 +425,15 @@ class MainActivity : Activity() {
             routeModeValueText.text = UserRouteModes.labelFor(config.routeMode)
             notificationStatusText.text = if (notificationPermissionMissing()) "Выключено" else "Включено"
             batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
-            autostartStatusText.text = if (config.autostart) "Включён" else "Не проверено"
+            autostartStatusText.text = if (config.autostart) "Включено" else "Не проверено"
             telemetryStatusText.text = if (config.telemetryEnabled) "Включено" else "Выключено"
             themeStatusText.text = appearanceLabel(config.appearance)
+            hostStatusText.text = config.host
+            portStatusText.text = config.port.toString()
             developerModeCheckBox.isChecked = developerModeEnabled()
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
             telemetryCheckBox.isChecked = config.telemetryEnabled
+            if (::telemetrySwitch.isInitialized) telemetrySwitch.isChecked = config.telemetryEnabled
             telemetryTestButton.isEnabled = config.telemetryEnabled
             secretStateText.text = "Secret скрыт"
         }
@@ -1001,7 +978,7 @@ class MainActivity : Activity() {
 
     private fun developerModeEnabled(): Boolean = prefs.getBoolean(PREF_DEVELOPER_MODE, false)
 
-    private fun SettingsSection(title: String, body: LinearLayout.() -> Unit): LinearLayout = LinearLayout(this).apply {
+    private fun SettingsSection(title: String, subtitle: String? = null, body: LinearLayout.() -> Unit): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
@@ -1012,7 +989,15 @@ class MainActivity : Activity() {
         val innerPadding = (16 * resources.displayMetrics.density).toInt()
         setPadding(innerPadding, innerPadding, innerPadding, innerPadding)
         if (title.isNotBlank()) {
-            addView(createSectionTitle(title), matchWrapParams(bottomMargin = (8 * resources.displayMetrics.density).toInt()))
+            addView(createSectionTitle(title), matchWrapParams())
+            if (subtitle != null) {
+                addView(createValueText().apply {
+                    text = subtitle
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                }, matchWrapParams(topMargin = (4 * resources.displayMetrics.density).toInt(), bottomMargin = (8 * resources.displayMetrics.density).toInt()))
+            } else {
+                addView(View(this@MainActivity), LinearLayout.LayoutParams(1, (8 * resources.displayMetrics.density).toInt()))
+            }
         }
         body()
     }
@@ -1063,42 +1048,70 @@ class MainActivity : Activity() {
 
     private fun SettingsRow(label: String, value: TextView): LinearLayout = createTextRow(label, value)
 
-    private fun SettingsRow(
+    private fun SettingsValueRow(title: String, description: String, value: TextView, onClick: (() -> Unit)? = null): LinearLayout =
+        SettingsBaseRow(title, description, value, null, onClick)
+
+    private fun SettingsStatusRow(title: String, description: String, value: TextView, badge: TextView? = null, onClick: () -> Unit): LinearLayout =
+        SettingsBaseRow(title, description, value, badge, onClick)
+
+    private fun SettingsActionRow(title: String, description: String, onClick: () -> Unit): LinearLayout =
+        SettingsBaseRow(title, description, createValueText().apply { text = "›"; textSize = 22f }, null, onClick)
+
+    private fun SettingsSwitchRow(title: String, description: String, status: TextView, badge: TextView? = null, onClick: () -> Unit): LinearLayout {
+        val switch = Switch(this).apply { isClickable = false; isFocusable = false }
+        telemetrySwitch = switch
+        status.visibility = View.GONE
+        return SettingsBaseRow(title, description, switch, badge, onClick)
+    }
+
+    private fun SettingsBaseRow(
         title: String,
         description: String,
-        value: TextView,
+        trailing: View,
         badge: TextView? = null,
-        onClick: ((View) -> Unit)? = null,
+        onClick: (() -> Unit)? = null,
     ): LinearLayout {
         val density = resources.displayMetrics.density
-        val gap = (8 * density).toInt()
+        val vertical = (10 * density).toInt()
+        val horizontal = (4 * density).toInt()
         return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+            orientation = LinearLayout.HORIZONTAL
+            gravity = android.view.Gravity.CENTER_VERTICAL
+            setPadding(horizontal, vertical, horizontal, vertical)
             if (onClick != null) {
                 isClickable = true
                 isFocusable = true
                 foreground = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground)).use { attrs -> attrs.getDrawable(0) }
-                setOnClickListener(onClick)
+                setOnClickListener { onClick() }
             }
-            val header = LinearLayout(this@MainActivity).apply {
-                orientation = LinearLayout.HORIZONTAL
-                addView(TextView(this@MainActivity).apply {
-                    text = title
-                    textSize = 15f
-                    typeface = Typeface.DEFAULT_BOLD
+            val left = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                val titleRow = LinearLayout(this@MainActivity).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    addView(TextView(this@MainActivity).apply {
+                        text = title
+                        textSize = 15f
+                        typeface = Typeface.DEFAULT_BOLD
+                        setTextColor(COLOR_TEXT_PRIMARY)
+                    }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    if (badge != null) addView(badge, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+                }
+                addView(titleRow, matchWrapParams())
+                addView(createValueText().apply {
+                    text = description
+                    setTextColor(COLOR_TEXT_SECONDARY)
+                }, matchWrapParams(topMargin = (3 * density).toInt()))
+            }
+            addView(left, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(trailing.apply {
+                if (this is TextView) {
+                    textSize = 14f
                     setTextColor(COLOR_TEXT_PRIMARY)
-                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-                if (badge != null) addView(badge, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-            }
-            addView(header, matchWrapParams())
-            addView(value.apply {
-                textSize = 14f
-                setTextColor(COLOR_TEXT_PRIMARY)
-            }, matchWrapParams(topMargin = 2))
-            addView(createValueText().apply {
-                text = description
-                setTextColor(COLOR_TEXT_SECONDARY)
-            }, matchWrapParams(topMargin = gap / 2))
+                    typeface = Typeface.DEFAULT_BOLD
+                }
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                leftMargin = (12 * density).toInt()
+            })
         }
     }
 
@@ -1106,7 +1119,7 @@ class MainActivity : Activity() {
         val config = ProxyRuntimeConfig.appConfig(applicationContext)
         val current = UserRouteModes.normalOptions.firstOrNull { it.routeMode == config.routeMode }
             ?: UserRouteModes.normalOptions.first()
-        return SettingsRow(
+        return SettingsValueRow(
             title = SettingsUiText.CONNECTION_MODE_TITLE,
             description = UserRouteModes.helperFor(current.routeMode),
             value = createValueText().apply { text = current.title },

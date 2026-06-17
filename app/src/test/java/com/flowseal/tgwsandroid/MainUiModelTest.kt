@@ -5,6 +5,7 @@ import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -291,6 +292,34 @@ class MainUiModelTest {
         assertEquals("Обновить secret", SettingsUiText.RESET_SECRET_TITLE)
         assertFalse(SettingsUiText.RESET_SECRET_TITLE.contains("Обновить подключение"))
         assertFalse(SettingsUiText.RESET_SECRET_TITLE.contains("Перезапустить прокси"))
+    }
+
+
+    @Test
+    fun settingsBadgesFollowPriorityRules() {
+        val rows = SettingsScreenModel.normalRows.associateBy { it.title }
+
+        assertTrue(rows.containsKey(SettingsUiText.RESET_SECRET_TITLE))
+        assertNotEquals(SettingsBadge.IMPORTANT, rows.getValue(SettingsUiText.RESET_SECRET_TITLE).badge)
+        assertNotEquals(SettingsBadge.RECOMMENDED, rows.getValue(SettingsUiText.RESET_SECRET_TITLE).badge)
+        assertEquals(SettingsBadge.IMPORTANT, rows.getValue(SettingsUiText.BATTERY_BACKGROUND_TITLE).badge)
+        assertEquals(SettingsBadge.IMPORTANT, rows.getValue("Автозапуск").badge)
+    }
+
+    @Test
+    fun settingsChoiceRowsExposeOneSelectedUserFacingValue() {
+        assertEquals(listOf("Авто", "Быстрый Wi-Fi", "Совместимый"), SettingsScreenModel.connectionModeChoice.options)
+        assertEquals(1, listOf(SettingsScreenModel.connectionModeChoice.selectedValue).count { it.isNotBlank() })
+        assertEquals(listOf("Авто", "Светлая", "Тёмная"), SettingsScreenModel.themeChoice.options)
+        assertEquals(1, listOf(SettingsScreenModel.themeChoice.selectedValue).count { it.isNotBlank() })
+    }
+
+    @Test
+    fun normalSettingsModelDoesNotExposeInternalRouteValues() {
+        val normalText = SettingsScreenModel.normalRows.joinToString(" ") { listOfNotNull(it.title, it.selectedValue, it.badge?.label).joinToString(" ") }
+        listOf("direct_first", "cf_first", "cf_only", "pool", "fallback").forEach { internalValue ->
+            assertFalse(normalText.contains(internalValue))
+        }
     }
 
     @Test

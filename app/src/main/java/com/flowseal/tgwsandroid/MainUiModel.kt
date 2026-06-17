@@ -84,6 +84,60 @@ object UserRouteModes {
 }
 
 
+enum class SettingsBadge(val label: String) {
+    IMPORTANT("Важно"),
+    RECOMMENDED("Рекомендуется"),
+}
+
+enum class SettingsRowKind {
+    SWITCH,
+    STATUS,
+    VALUE,
+    ACTION,
+    DANGER,
+}
+
+data class SettingsRowModel(
+    val title: String,
+    val kind: SettingsRowKind,
+    val selectedValue: String? = null,
+    val badge: SettingsBadge? = null,
+)
+
+data class SettingsChoiceModel(
+    val title: String,
+    val selectedValue: String,
+    val options: List<String>,
+)
+
+object SettingsScreenModel {
+    val normalRows: List<SettingsRowModel> = listOf(
+        SettingsRowModel("Уведомления", SettingsRowKind.STATUS, badge = SettingsBadge.RECOMMENDED),
+        SettingsRowModel(SettingsUiText.BATTERY_BACKGROUND_TITLE, SettingsRowKind.STATUS, badge = SettingsBadge.IMPORTANT),
+        SettingsRowModel("Автозапуск", SettingsRowKind.STATUS, badge = SettingsBadge.IMPORTANT),
+        SettingsRowModel("Анонимная диагностика", SettingsRowKind.SWITCH, badge = SettingsBadge.RECOMMENDED),
+        SettingsRowModel(SettingsUiText.CONNECTION_MODE_TITLE, SettingsRowKind.VALUE, selectedValue = SettingsUiText.connectionModeOptions.first()),
+        SettingsRowModel(SettingsUiText.THEME_TITLE, SettingsRowKind.VALUE, selectedValue = SettingsUiText.themeOptions.first()),
+        SettingsRowModel("IP-адрес", SettingsRowKind.VALUE),
+        SettingsRowModel("Порт", SettingsRowKind.VALUE),
+        SettingsRowModel("Secret", SettingsRowKind.VALUE),
+        SettingsRowModel(SettingsUiText.RESET_SECRET_TITLE, SettingsRowKind.ACTION),
+    )
+
+    val connectionModeChoice = SettingsChoiceModel(
+        title = SettingsUiText.CONNECTION_MODE_TITLE,
+        selectedValue = SettingsUiText.connectionModeOptions.first(),
+        options = SettingsUiText.connectionModeOptions,
+    )
+
+    val themeChoice = SettingsChoiceModel(
+        title = SettingsUiText.THEME_TITLE,
+        selectedValue = SettingsUiText.themeOptions.first(),
+        options = SettingsUiText.themeOptions,
+    )
+}
+
+
 data class MainHeroState(
     val title: String,
     val subtitle: String,
