@@ -350,6 +350,7 @@ class MainActivity : Activity() {
                 addView(SettingsValueRow("Secret", "Скрыт в обычном интерфейсе.", secretStateText), matchWrapParams(topMargin = rowGap))
                 addView(SettingsActionRow(SettingsUiText.RESET_SECRET_TITLE, "После обновления нужно заново подключить Telegram.") { confirmResetSecret() }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
+            addView(DcMappingsSection(), cardParams(topMargin = padding))
             addView(SettingsSection("Внешний вид") {
                 addView(ThemeSelector(), matchWrapParams())
             }, cardParams(topMargin = padding))
@@ -877,11 +878,129 @@ class MainActivity : Activity() {
     }
 
     private fun isValidIpv4(value: String): Boolean {
-        if (value.isBlank()) return false
-        val parts = value.split('.')
-        return parts.size == 4 && parts.all { part ->
-            part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && part.toIntOrNull() in 0..255
+        return DcMappingEditor.isValidIpv4(value)
+    }
+
+    private fun DcMappingsSection(): LinearLayout {
+        val density = resources.displayMetrics.density
+        val rowGap = (10 * density).toInt()
+        val mappings = DcMappingEditor.validMappings(ProxyRuntimeConfig.appConfig(applicationContext).dcIp)
+        return SettingsSection(SettingsUiText.DC_SECTION_TITLE, SettingsUiText.DC_SECTION_SUBTITLE) {
+            if (mappings.isEmpty()) {
+                addView(
+                    SettingsAdaptiveRow(SettingsUiText.DC_EMPTY_TITLE, SettingsUiText.DC_EMPTY_DESCRIPTION),
+                    matchWrapParams(),
+                )
+            } else {
+                mappings.forEachIndexed { index, mapping ->
+                    addView(
+                        SettingsActionRow(mapping.rowTitle, mapping.ip) { showDcMappingDialog(mapping) },
+                        matchWrapParams(topMargin = if (index == 0) 0 else rowGap),
+                    )
+                }
+            }
+            addView(
+                SettingsActionRow(SettingsUiText.DC_ADD_TITLE, SettingsUiText.DC_EMPTY_DESCRIPTION) { showDcMappingDialog(null) },
+                matchWrapParams(topMargin = rowGap),
+            )
         }
+    }
+
+    private fun showDcMappingDialog(mapping: DcMapping?) {
+        val current = ProxyRuntimeConfig.appConfig(applicationContext)
+        val density = resources.displayMetrics.density
+        val dcInput = EditText(this).apply {
+            setText(mapping?.dc?.toString().orEmpty())
+            hint = "2"
+            inputType = InputType.TYPE_CLASS_NUMBER
+        }
+        val ipInput = EditText(this).apply {
+            setText(mapping?.ip.orEmpty())
+            hint = "149.154.167.220"
+            inputType = InputType.TYPE_CLASS_PHONE
+        }
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding((16 * density).toInt(), (8 * density).toInt(), (16 * density).toInt(), 0)
+            addView(dcInput, matchWrapParams())
+            addView(ipInput, matchWrapParams(topMargin = (8 * density).toInt()))
+        }
+        AlertDialog.Builder(this)
+            .setTitle(if (mapping == null) "Добавить датацентр" else "Изменить датацентр")
+            .setView(form)
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Сохранить", null)
+            .apply {
+                if (mapping != null) setNeutralButton("Удалить", null)
+            }
+            .create()
+            .also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        val dc = dcInput.text.toString().trim().toIntOrNull()
+                        val ip = ipInput.text.toString().trim()
+                        if (dc == null || dc <= 0) {
+                            dcInput.error = "Введите номер DC"
+                            return@setOnClickListener
+                        }
+                        if (!DcMappingEditor.isValidIpv4(ip)) {
+                            ipInput.error = "Введите корректный IP-адрес"
+                            return@setOnClickListener
+                        }
+                        saveDcMapping(current.dcIp, mapping?.dc, DcMapping(dc, ip))
+                        dialog.dismiss()
+                    }
+                    if (mapping != null) {
+                        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                            confirmDeleteDcMapping(mapping)
+                            dialog.dismiss()
+                        }
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun saveDcMapping(rawDcIp: List<String>, oldDc: Int?, newMapping: DcMapping) {
+        val newRaw = DcMappingEditor.raw(newMapping)
+        val updated = buildList {
+            var replaced = false
+            rawDcIp.forEach { raw ->
+                val parsed = DcMappingEditor.parse(raw)
+                when {
+                    parsed?.dc == oldDc -> {
+                        if (!replaced) add(newRaw)
+                        replaced = true
+                    }
+                    parsed?.dc == newMapping.dc -> {
+                        if (!replaced) add(newRaw)
+                        replaced = true
+                    }
+                    else -> add(raw)
+                }
+            }
+            if (!replaced) add(newRaw)
+        }
+        saveMtprotoConfig(ProxyRuntimeConfig.appConfig(applicationContext).copy(dcIp = updated), "dc mapping changed")
+        val savedScrollY = currentSettingsScrollY()
+        rebuildCurrentScreenIfSettings()
+        restoreSettingsScrollY(savedScrollY)
+    }
+
+    private fun confirmDeleteDcMapping(mapping: DcMapping) {
+        AlertDialog.Builder(this)
+            .setTitle("Удалить датацентр?")
+            .setMessage("${mapping.rowTitle} / ${mapping.ip}")
+            .setPositiveButton("Удалить") { _, _ ->
+                val current = ProxyRuntimeConfig.appConfig(applicationContext)
+                val updated = current.dcIp.filterNot { DcMappingEditor.parse(it)?.dc == mapping.dc }
+                saveMtprotoConfig(current.copy(dcIp = updated), "dc mapping deleted")
+                val savedScrollY = currentSettingsScrollY()
+                rebuildCurrentScreenIfSettings()
+                restoreSettingsScrollY(savedScrollY)
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun confirmResetSecret() {

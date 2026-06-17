@@ -184,6 +184,11 @@ object SettingsUiText {
     const val RESET_SECRET_DIALOG_MESSAGE = "После обновления нужно заново подключить Telegram."
     const val CONNECTION_MODE_TITLE = "Режим подключения"
     const val THEME_TITLE = "Тема приложения"
+    const val DC_SECTION_TITLE = "Датацентры Telegram"
+    const val DC_SECTION_SUBTITLE = "Прямые адреса Telegram DC для подключения."
+    const val DC_EMPTY_TITLE = "Датацентры не добавлены"
+    const val DC_EMPTY_DESCRIPTION = "Можно добавить прямой адрес Telegram DC."
+    const val DC_ADD_TITLE = "Добавить датацентр"
     val themeOptions: List<String> = AppearanceUiModels.options.map { it.label }
     val connectionModeOptions: List<String> = UserRouteModes.normalOptions.map { it.title }
     val connectionModeDialogDescriptions: List<String> = listOf(
@@ -201,6 +206,35 @@ object SettingsUiText {
     const val QS_TILE_HELP_MESSAGE = "Откройте шторку быстрых настроек, нажмите «Изменить» или значок карандаша, найдите «TG Proxy» и перетащите её наверх."
 
     fun batteryStatusLine(status: String): String = "Статус: $status"
+}
+
+data class DcMapping(val dc: Int, val ip: String) {
+    val rowTitle: String = "DC $dc"
+}
+
+object DcMappingEditor {
+    fun validMappings(rawDcIp: List<String>): List<DcMapping> = rawDcIp.mapNotNull(::parse)
+        .distinctBy { it.dc }
+        .sortedBy { it.dc }
+
+    fun parse(raw: String): DcMapping? {
+        val parts = raw.split(':')
+        if (parts.size != 2) return null
+        val dc = parts[0].trim().toIntOrNull() ?: return null
+        val ip = parts[1].trim()
+        if (dc <= 0 || !isValidIpv4(ip)) return null
+        return DcMapping(dc, ip)
+    }
+
+    fun raw(mapping: DcMapping): String = "${mapping.dc}:${mapping.ip}"
+
+    fun isValidIpv4(value: String): Boolean {
+        if (value.isBlank()) return false
+        val parts = value.split('.')
+        return parts.size == 4 && parts.all { part ->
+            part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && part.toIntOrNull() in 0..255
+        }
+    }
 }
 
 object UserRouteModes {
@@ -318,6 +352,37 @@ data class SettingsChoiceModel(
 )
 
 object SettingsScreenModel {
+    data class SectionModel(
+        val title: String,
+        val subtitle: String? = null,
+        val developerOnly: Boolean = false,
+        val rows: List<SettingsRowModel> = emptyList(),
+    )
+
+    fun dcSection(rawDcIp: List<String>): SectionModel {
+        val mappings = DcMappingEditor.validMappings(rawDcIp)
+        val rows = buildList {
+            if (mappings.isEmpty()) {
+                add(SettingsRowModel(SettingsUiText.DC_EMPTY_TITLE, SettingsRowKind.STATUS, description = SettingsUiText.DC_EMPTY_DESCRIPTION))
+            } else {
+                mappings.forEach { mapping ->
+                    add(SettingsRowModel(mapping.rowTitle, SettingsRowKind.VALUE, description = mapping.ip))
+                }
+            }
+            add(SettingsRowModel(SettingsUiText.DC_ADD_TITLE, SettingsRowKind.ACTION))
+        }
+        return SectionModel(SettingsUiText.DC_SECTION_TITLE, SettingsUiText.DC_SECTION_SUBTITLE, developerOnly = false, rows = rows)
+    }
+
+    fun sections(rawDcIp: List<String>): List<SectionModel> = listOf(
+        SectionModel("Важное для стабильной работы"),
+        SectionModel("Подключение"),
+        SectionModel("Telegram MTProto"),
+        dcSection(rawDcIp),
+        SectionModel("Внешний вид"),
+        SectionModel("Для разработчика", developerOnly = false),
+    )
+
     val normalRows: List<SettingsRowModel> = listOf(
         SettingsRowModel("Уведомления", SettingsRowKind.STATUS, description = "Показывают состояние подключения.", status = "Включено", badge = SettingsBadge.RECOMMENDED),
         SettingsRowModel(SettingsUiText.BATTERY_BACKGROUND_TITLE, SettingsRowKind.STATUS, description = "Помогает сохранять подключение после блокировки экрана.", status = "Может ограничиваться", badge = SettingsBadge.IMPORTANT),

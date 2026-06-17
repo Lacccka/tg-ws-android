@@ -381,6 +381,64 @@ class MainUiModelTest {
         assertEquals(1, listOf(SettingsScreenModel.themeChoice.selectedValue).count { it.isNotBlank() })
     }
 
+    @Test
+    fun settingsLayoutIncludesTelegramDatacentersSectionAndAction() {
+        val section = SettingsScreenModel.dcSection(listOf("2:149.154.167.220", "4:149.154.167.220"))
+
+        assertEquals("Датацентры Telegram", section.title)
+        assertEquals("Прямые адреса Telegram DC для подключения.", section.subtitle)
+        assertTrue(section.rows.any { it.title == "Добавить датацентр" })
+    }
+
+    @Test
+    fun settingsDatacentersSectionIsPresentForDefaultEmptyAndMalformedConfig() {
+        val cases = listOf(
+            listOf("2:149.154.167.220", "4:149.154.167.220"),
+            emptyList(),
+            listOf("broken", "abc", "2:999.1.1.1"),
+        )
+
+        cases.forEach { dcIp ->
+            val section = SettingsScreenModel.dcSection(dcIp)
+            assertEquals("Датацентры Telegram", section.title)
+            assertTrue(section.rows.any { it.title == "Добавить датацентр" })
+        }
+    }
+
+    @Test
+    fun settingsDatacentersSectionIsNotDeveloperOnlyAndIsOrderedAfterMtprotoBeforeAppearance() {
+        val sections = SettingsScreenModel.sections(listOf("2:149.154.167.220")).map { it.title }
+        val dcSection = SettingsScreenModel.dcSection(emptyList())
+
+        assertFalse(dcSection.developerOnly)
+        assertTrue(sections.indexOf("Telegram MTProto") < sections.indexOf("Датацентры Telegram"))
+        assertTrue(sections.indexOf("Датацентры Telegram") < sections.indexOf("Внешний вид"))
+    }
+
+    @Test
+    fun settingsDatacentersRowsShowFormattedDcAndDoNotExposeRawConfigStrings() {
+        val rows = SettingsScreenModel.dcSection(listOf("2:149.154.167.220", "4:149.154.167.220")).rows
+        val normalText = rows.joinToString(" ") { listOfNotNull(it.title, it.description, it.selectedValue).joinToString(" ") }
+
+        assertTrue(rows.any { it.title == "DC 2" && it.description == "149.154.167.220" })
+        assertTrue(rows.any { it.title == "DC 4" && it.description == "149.154.167.220" })
+        assertFalse(normalText.contains("2:149.154.167.220"))
+    }
+
+    @Test
+    fun settingsDatacentersMalformedOnlyConfigShowsEmptyStateAndAction() {
+        val rows = SettingsScreenModel.dcSection(listOf("broken", "abc", "2:999.1.1.1")).rows
+
+        assertTrue(rows.any { it.title == "Датацентры не добавлены" })
+        assertTrue(rows.any { it.title == "Добавить датацентр" })
+        assertFalse(rows.any { it.title == "DC 2" })
+    }
+
+    @Test
+    fun addDatacenterActionUsesAddDialogTitle() {
+        assertEquals("Добавить датацентр", SettingsUiText.DC_ADD_TITLE)
+    }
+
 
     @Test
     fun settingsChoiceModelsUpdateSelectedValuesImmediately() {
