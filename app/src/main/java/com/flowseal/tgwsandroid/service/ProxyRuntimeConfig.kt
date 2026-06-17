@@ -111,5 +111,5 @@ object ProxyRuntimeConfig {
     private fun AppConfig.withValidSecret(): AppConfig =
         if (AppConfigStore.isValidSecretHex(secret)) this else copy(secret = FALLBACK_SECRET_HEX)
 
-    private fun String.toPartialSecret(): String = "${take(4)}...${takeLast(4)}"
+    private fun String.toPartialSecret(): String = "${take(4)}••••${takeLast(4)}"
 }

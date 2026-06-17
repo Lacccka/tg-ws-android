@@ -30,6 +30,8 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.CompoundButton
+import android.text.InputType
+import android.widget.EditText
 import android.widget.FrameLayout
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
@@ -343,8 +345,8 @@ class MainActivity : Activity() {
                 addView(ConnectionModeSelector(), matchWrapParams())
             }, cardParams(topMargin = padding))
             addView(SettingsSection("Telegram MTProto", "Параметры локального подключения Telegram.") {
-                addView(SettingsValueRow("IP-адрес", "Адрес локального прокси.", hostStatusText), matchWrapParams())
-                addView(SettingsValueRow("Порт", "Порт локального прокси.", portStatusText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsValueRow("IP-адрес", "Адрес локального прокси.", hostStatusText) { showEditHostDialog() }, matchWrapParams())
+                addView(SettingsValueRow("Порт", "Порт локального прокси.", portStatusText) { showEditPortDialog() }, matchWrapParams(topMargin = rowGap))
                 addView(SettingsValueRow("Secret", "Скрыт в обычном интерфейсе.", secretStateText), matchWrapParams(topMargin = rowGap))
                 addView(SettingsActionRow(SettingsUiText.RESET_SECRET_TITLE, "После обновления нужно заново подключить Telegram.") { confirmResetSecret() }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
@@ -524,7 +526,7 @@ class MainActivity : Activity() {
             telemetryCheckBox.isChecked = config.telemetryEnabled
             if (::telemetrySwitch.isInitialized) telemetrySwitch.isChecked = config.telemetryEnabled
             telemetryTestButton.isEnabled = config.telemetryEnabled
-            secretStateText.text = "Secret скрыт"
+            secretStateText.text = ProxyRuntimeConfig.partialTelegramSecret(applicationContext)
         }
 
         if (::diagnosticsSummaryText.isInitialized) {
@@ -776,8 +778,7 @@ class MainActivity : Activity() {
             "badHandshakeRecommendation=${stats.badHandshakeRecommendation}"
     }
 
-    private fun secretStateLine(): String = "Текущий secret: ${ProxyRuntimeConfig.partialTelegramSecret(applicationContext)}; " +
-        "источник=${ProxyRuntimeConfig.secretSource(applicationContext)}; ссылка актуальна=${ProxyRuntimeConfig.proxyLinkCurrent(applicationContext)}"
+    private fun secretStateLine(): String = "Secret: ${ProxyRuntimeConfig.partialTelegramSecret(applicationContext)}"
 
     private fun startProxyService() {
         prefs.edit().putBoolean(PREF_PROXY_EVER_STARTED, true).apply()
@@ -802,6 +803,87 @@ class MainActivity : Activity() {
         refreshState()
     }
 
+
+    private fun showEditHostDialog() {
+        val current = ProxyRuntimeConfig.appConfig(applicationContext)
+        val input = EditText(this).apply {
+            setText(current.host)
+            selectAll()
+            inputType = InputType.TYPE_CLASS_PHONE
+        }
+        AlertDialog.Builder(this)
+            .setTitle("IP-адрес")
+            .setView(input)
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Сохранить", null)
+            .create()
+            .also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        val value = input.text.toString().trim()
+                        if (!isValidIpv4(value)) {
+                            input.error = "Введите корректный IP-адрес"
+                            return@setOnClickListener
+                        }
+                        saveMtprotoConfig(current.copy(host = value), "host changed")
+                        dialog.dismiss()
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun showEditPortDialog() {
+        val current = ProxyRuntimeConfig.appConfig(applicationContext)
+        val input = EditText(this).apply {
+            setText(current.port.toString())
+            selectAll()
+            inputType = InputType.TYPE_CLASS_NUMBER
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Порт")
+            .setView(input)
+            .setNegativeButton("Отмена", null)
+            .setPositiveButton("Сохранить", null)
+            .create()
+            .also { dialog ->
+                dialog.setOnShowListener {
+                    dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        val port = input.text.toString().trim().toIntOrNull()
+                        if (port == null || port !in 1..65535) {
+                            input.error = "Введите корректный порт"
+                            return@setOnClickListener
+                        }
+                        saveMtprotoConfig(current.copy(port = port), "port changed")
+                        dialog.dismiss()
+                    }
+                }
+            }
+            .show()
+    }
+
+    private fun saveMtprotoConfig(config: com.flowseal.tgwsandroid.config.AppConfig, logReason: String) {
+        AppConfigStore.from(applicationContext).saveConfig(config)
+        ProxyRuntimeConfig.initialize(applicationContext)
+        val running = ProxyForegroundService.State.running
+        pendingRestartRequired = running
+        ProxyForegroundService.State.addLog(
+            if (running) "$logReason; reconnect required" else "$logReason; will apply on next proxy start",
+            LogSeverity.INFO,
+            "ui",
+        )
+        if (running) Toast.makeText(this, "Настройки изменены — Переподключить", Toast.LENGTH_LONG).show()
+        refreshState()
+    }
+
+    private fun isValidIpv4(value: String): Boolean {
+        if (value.isBlank()) return false
+        val parts = value.split('.')
+        return parts.size == 4 && parts.all { part ->
+            part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && part.toIntOrNull() in 0..255
+        }
+    }
+
     private fun confirmResetSecret() {
         AlertDialog.Builder(this)
             .setTitle(SettingsUiText.RESET_SECRET_DIALOG_TITLE)
@@ -814,14 +896,14 @@ class MainActivity : Activity() {
     private fun resetSecret() {
         ProxyRuntimeConfig.resetSecret(applicationContext)
         val running = ProxyForegroundService.State.running
-        pendingRestartRequired = false
+        pendingRestartRequired = running
         val logMessage = if (running) {
-            "proxy secret reset; restarting proxy to apply new secret"
+            "proxy secret reset; reconnect required"
         } else {
             "proxy secret reset; will apply on next proxy start"
         }
         ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
-        if (running) restartProxyService()
+        if (running) Toast.makeText(this, "Настройки изменены — Переподключить", Toast.LENGTH_LONG).show()
         Toast.makeText(this, SecretUpdatedMessageModel.MESSAGE, Toast.LENGTH_LONG).show()
         refreshState()
     }

@@ -45,9 +45,9 @@ class ProxyRuntimeConfigTest {
     @Test
     fun summariesMatchSmokeTestInstructions() {
         assertEquals("127.0.0.1:1443", ProxyRuntimeConfig.endpointSummary(appConfig))
-        assertEquals("4014...3da8", ProxyRuntimeConfig.partialSecret(appConfig))
+        assertEquals("4014••••3da8", ProxyRuntimeConfig.partialSecret(appConfig))
         assertEquals("dd4014e15dd34e4b05c42413eab68c3da8", ProxyRuntimeConfig.telegramSecretHex(appConfig))
-        assertEquals("dd40...3da8", ProxyRuntimeConfig.partialTelegramSecret(appConfig))
+        assertEquals("dd40••••3da8", ProxyRuntimeConfig.partialTelegramSecret(appConfig))
         assertEquals("2,4 via 149.154.167.220", ProxyRuntimeConfig.dcSummary(appConfig))
         assertEquals("enabled", ProxyRuntimeConfig.cfFallbackSummary(appConfig))
     }
