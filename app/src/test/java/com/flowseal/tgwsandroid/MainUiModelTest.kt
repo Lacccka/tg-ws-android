@@ -399,6 +399,13 @@ class MainUiModelTest {
     }
 
     @Test
+    fun compactThemeHelpersAreShortSelectorLabels() {
+        assertEquals("системная тема", AppearanceUiModels.compactHelper(Appearance.AUTO))
+        assertEquals("светлая тема", AppearanceUiModels.compactHelper(Appearance.LIGHT))
+        assertEquals("тёмная тема", AppearanceUiModels.compactHelper(Appearance.DARK))
+    }
+
+    @Test
     fun stoppedProxyTelegramStatusSaysProxyStopped() {
         assertEquals("Прокси остановлен", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = stats()))
     }

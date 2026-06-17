@@ -120,6 +120,12 @@ object AppearanceUiModels {
 
     fun description(appearance: Appearance): String = uiModel(appearance).description
 
+    fun compactHelper(appearance: Appearance): String = when (appearance) {
+        Appearance.AUTO -> "системная тема"
+        Appearance.LIGHT -> "светлая тема"
+        Appearance.DARK -> "тёмная тема"
+    }
+
     fun nightMode(appearance: Appearance): ResolvedNightMode = when (appearance) {
         Appearance.AUTO -> ResolvedNightMode.FOLLOW_SYSTEM
         Appearance.LIGHT -> ResolvedNightMode.LIGHT

@@ -33,6 +33,7 @@ import android.widget.CheckBox
 import android.widget.FrameLayout
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.button.MaterialButtonToggleGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -73,10 +74,15 @@ class MainActivity : Activity() {
 
     private lateinit var batteryStatusText: TextView
     private lateinit var routeModeValueText: TextView
+    private lateinit var routeModeDescriptionText: TextView
     private lateinit var notificationStatusText: TextView
     private lateinit var autostartStatusText: TextView
     private lateinit var telemetryStatusText: TextView
     private lateinit var themeStatusText: TextView
+    private lateinit var themeHelperText: TextView
+    private var themeToggleGroup: MaterialButtonToggleGroup? = null
+    private val themeButtons = mutableMapOf<Appearance, MaterialButton>()
+    private var settingsScrollView: ScrollView? = null
     private lateinit var hostStatusText: TextView
     private lateinit var portStatusText: TextView
     private lateinit var secretStateText: TextView
@@ -176,10 +182,17 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun rebuildRootForAppearanceChange() {
+    private fun rebuildRootForAppearanceChange(savedSettingsScrollY: Int = currentSettingsScrollY()) {
         val screen = currentScreen
         setContentView(buildRootView())
         showScreen(screen, forceRefresh = true)
+        if (screen == Screen.SETTINGS) restoreSettingsScrollY(savedSettingsScrollY)
+    }
+
+    private fun currentSettingsScrollY(): Int = settingsScrollView?.scrollY ?: 0
+
+    private fun restoreSettingsScrollY(scrollY: Int) {
+        settingsScrollView?.post { settingsScrollView?.scrollTo(0, scrollY) }
     }
 
     private fun applyAppearanceToWindow(appearance: Appearance) {
@@ -259,6 +272,9 @@ class MainActivity : Activity() {
         autostartStatusText = createValueText()
         telemetryStatusText = createValueText()
         themeStatusText = createValueText()
+        themeHelperText = createValueText(textSize = 13f)
+        themeToggleGroup = null
+        themeButtons.clear()
         hostStatusText = createValueText()
         portStatusText = createValueText()
         secretStateText = createValueText().apply { setTextColor(COLOR_SUCCESS) }
@@ -340,6 +356,7 @@ class MainActivity : Activity() {
 
         }
         return ScrollView(this).apply {
+            settingsScrollView = this
             setBackgroundColor(COLOR_BACKGROUND)
             addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
@@ -373,7 +390,7 @@ class MainActivity : Activity() {
             "route mode changed to ${routeMode.configValue}; will apply on next proxy start"
         }
         ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
-        addView(ThemeSelector(), matchWrapParams())
+        updateConnectionModeRow(routeMode)
         refreshState()
     }
 
@@ -458,7 +475,8 @@ class MainActivity : Activity() {
             batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
             autostartStatusText.text = if (config.autostart) "Включено" else "Не проверено"
             telemetryStatusText.text = if (config.telemetryEnabled) "Включено" else "Выключено"
-            themeStatusText.text = AppearanceUiModels.label(config.appearance)
+            updateConnectionModeRow(config.routeMode)
+            updateThemeSelectorState(config.appearance)
             hostStatusText.text = config.host
             portStatusText.text = config.port.toString()
             developerModeCheckBox.isChecked = developerModeEnabled()
@@ -886,7 +904,8 @@ class MainActivity : Activity() {
         store.saveConfig(store.loadConfig().copy(appearance = appearance))
         ProxyRuntimeConfig.initialize(applicationContext)
         applyAppearanceToWindow(appearance)
-        rebuildRootForAppearanceChange()
+        updateThemeSelectorState(appearance)
+        rebuildRootForAppearanceChange(currentSettingsScrollY())
     }
 
     private fun appearanceDialogText(appearance: Appearance): String {
@@ -1184,29 +1203,89 @@ class MainActivity : Activity() {
 
     private fun ThemeSelector(): LinearLayout {
         val appearance = ProxyRuntimeConfig.appConfig(applicationContext).appearance
-        val model = AppearanceUiModels.uiModel(appearance)
-        val meta = if (appearance == Appearance.AUTO) metaLine(createValueText(textSize = 13f).apply {
-            text = currentThemeStatusText()
-            setTextColor(COLOR_TEXT_MUTED)
-        }) else null
-        return SettingsValueRow(
-            title = SettingsUiText.THEME_TITLE,
-            description = model.description,
-            value = themeStatusText.apply { text = model.label },
-            meta = meta,
-            onClick = { showThemeDialog() },
-        )
+        val density = resources.displayMetrics.density
+        val vertical = (12 * density).toInt()
+        val horizontal = (4 * density).toInt()
+        val gap = (8 * density).toInt()
+        val group = MaterialButtonToggleGroup(this).apply {
+            isSingleSelection = true
+            isSelectionRequired = true
+        }
+        themeToggleGroup = group
+        AppearanceUiModels.options.forEachIndexed { index, option ->
+            val button = MaterialButton(this).apply {
+                id = View.generateViewId()
+                text = option.label
+                isAllCaps = false
+                minWidth = 0
+                minimumWidth = 0
+                insetTop = 0
+                insetBottom = 0
+                setPadding((12 * density).toInt(), 0, (12 * density).toInt(), 0)
+                tag = option.appearance
+            }
+            themeButtons[option.appearance] = button
+            group.addView(button, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                if (index > 0) leftMargin = (4 * density).toInt()
+            })
+        }
+        group.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (!isChecked) return@addOnButtonCheckedListener
+            val selected = themeButtons.entries.firstOrNull { it.value.id == checkedId }?.key ?: return@addOnButtonCheckedListener
+            if (selected != ProxyRuntimeConfig.appConfig(applicationContext).appearance) setAppearance(selected)
+        }
+        updateThemeSelectorState(appearance)
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(horizontal, vertical, horizontal, vertical)
+            addView(TextView(this@MainActivity).apply {
+                text = SettingsUiText.THEME_TITLE
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(COLOR_TEXT_PRIMARY)
+            }, matchWrapParams())
+            addView(group, matchWrapParams(topMargin = gap))
+            addView(themeHelperText.apply { setTextColor(COLOR_TEXT_SECONDARY) }, matchWrapParams(topMargin = (4 * density).toInt()))
+        }
+    }
+
+    private fun updateThemeSelectorState(appearance: Appearance) {
+        themeStatusText.text = AppearanceUiModels.label(appearance)
+        themeHelperText.text = AppearanceUiModels.compactHelper(appearance)
+        themeToggleGroup?.let { group ->
+            val buttonId = themeButtons[appearance]?.id ?: return@let
+            if (group.checkedButtonId != buttonId) group.check(buttonId)
+        }
+        themeButtons.forEach { (buttonAppearance, button) ->
+            val selected = buttonAppearance == appearance
+            button.backgroundTintList = ColorStateList.valueOf(if (selected) COLOR_ACCENT else COLOR_BACKGROUND_ALT)
+            button.setTextColor(if (selected) Color.WHITE else COLOR_TEXT_PRIMARY)
+            button.strokeColor = ColorStateList.valueOf(if (selected) COLOR_ACCENT else COLOR_CARD_STROKE)
+            button.strokeWidth = (1 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        }
     }
 
     private fun ConnectionModeSelector(): LinearLayout {
         val config = ProxyRuntimeConfig.appConfig(applicationContext)
         val routeModeUi = UserRouteModes.uiModel(config.routeMode)
-        return SettingsValueRow(
+        routeModeDescriptionText = createValueText().apply {
+            text = routeModeUi.description
+            setTextColor(COLOR_TEXT_SECONDARY)
+        }
+        val row = SettingsValueRow(
             title = SettingsUiText.CONNECTION_MODE_TITLE,
             description = routeModeUi.description,
             value = routeModeValueText.apply { text = routeModeUi.label },
             onClick = { showConnectionModeDialog() },
         )
+        routeModeDescriptionText = (row.getChildAt(1) as? TextView) ?: routeModeDescriptionText
+        return row
+    }
+
+    private fun updateConnectionModeRow(routeMode: NetworkRouteMode) {
+        val routeModeUi = UserRouteModes.uiModel(routeMode)
+        routeModeValueText.text = routeModeUi.label
+        if (::routeModeDescriptionText.isInitialized) routeModeDescriptionText.text = routeModeUi.description
     }
 
     private fun StatusChip(text: String): TextView = Badge(text, COLOR_ACCENT, Color.WHITE)
