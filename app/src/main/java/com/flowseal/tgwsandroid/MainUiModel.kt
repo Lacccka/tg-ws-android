@@ -11,8 +11,8 @@ object RussianUiText {
     const val ROUTE_COMPATIBLE_SHORT = "Совместимый"
     const val ROUTE_AUTO_SELECTION = "Автоматический выбор"
     const val ROUTE_AUTO_HELPER = ROUTE_AUTO_SUBTITLE
-    const val ROUTE_FAST_WIFI_HELPER = "Для стабильного Wi-Fi. Может подключаться быстрее."
-    const val ROUTE_COMPATIBLE_HELPER = "Для мобильной сети и нестабильного подключения."
+    const val ROUTE_FAST_WIFI_HELPER = "Для стабильного Wi-Fi."
+    const val ROUTE_COMPATIBLE_HELPER = "Для мобильной сети."
     const val MOBILE_COMPATIBLE_ROUTE_HELPER = "На мобильной сети используется совместимый маршрут. Ping может быть выше."
 }
 
@@ -29,7 +29,7 @@ object SettingsUiText {
     const val RESET_SECRET_DIALOG_MESSAGE = "После обновления нужно заново подключить Telegram."
     const val CONNECTION_MODE_TITLE = "Режим подключения"
     const val THEME_TITLE = "Тема приложения"
-    val themeOptions: List<String> = listOf("Авто", "Светлая", "Тёмная")
+    val themeOptions: List<String> = AppearanceUiModels.options.map { it.label }
     val connectionModeOptions: List<String> = UserRouteModes.normalOptions.map { it.title }
     val connectionModeDialogDescriptions: List<String> = listOf(
         RussianUiText.ROUTE_AUTO_SUBTITLE,
@@ -67,6 +67,12 @@ object UserRouteModes {
         ),
     )
 
+    fun uiModel(mode: NetworkRouteMode): RouteModeUiModel = RouteModeUiModel(
+        label = labelFor(mode),
+        description = helperFor(mode),
+    )
+
+
     fun labelFor(mode: NetworkRouteMode): String = normalOptions.firstOrNull { it.routeMode == mode }?.title
         ?: RussianUiText.ROUTE_COMPATIBLE_SHORT
 
@@ -81,6 +87,43 @@ object UserRouteModes {
         NetworkRouteMode.DIRECT_FIRST -> RussianUiText.ROUTE_FAST_WIFI_HELPER
         NetworkRouteMode.CF_FIRST -> RussianUiText.ROUTE_COMPATIBLE_HELPER
         NetworkRouteMode.CF_ONLY -> RussianUiText.ROUTE_COMPATIBLE_HELPER
+    }
+}
+
+data class RouteModeUiModel(
+    val label: String,
+    val description: String,
+)
+
+data class AppearanceUiModel(
+    val appearance: Appearance,
+    val label: String,
+    val description: String,
+)
+
+enum class ResolvedNightMode {
+    FOLLOW_SYSTEM,
+    LIGHT,
+    DARK,
+}
+
+object AppearanceUiModels {
+    val options: List<AppearanceUiModel> = listOf(
+        AppearanceUiModel(Appearance.AUTO, "Авто", "Следует системной теме."),
+        AppearanceUiModel(Appearance.LIGHT, "Светлая", "Всегда использовать светлую тему."),
+        AppearanceUiModel(Appearance.DARK, "Тёмная", "Всегда использовать тёмную тему."),
+    )
+
+    fun uiModel(appearance: Appearance): AppearanceUiModel = options.first { it.appearance == appearance }
+
+    fun label(appearance: Appearance): String = uiModel(appearance).label
+
+    fun description(appearance: Appearance): String = uiModel(appearance).description
+
+    fun nightMode(appearance: Appearance): ResolvedNightMode = when (appearance) {
+        Appearance.AUTO -> ResolvedNightMode.FOLLOW_SYSTEM
+        Appearance.LIGHT -> ResolvedNightMode.LIGHT
+        Appearance.DARK -> ResolvedNightMode.DARK
     }
 }
 
@@ -120,7 +163,7 @@ object SettingsScreenModel {
         SettingsRowModel("Автозапуск", SettingsRowKind.STATUS, description = "Позволяет запускать прокси после перезагрузки устройства.", status = "Не проверено", badge = SettingsBadge.IMPORTANT),
         SettingsRowModel("Анонимная диагностика", SettingsRowKind.SWITCH, description = "Помогает улучшать стабильность без личных данных.", status = "Выключено", badge = SettingsBadge.RECOMMENDED),
         SettingsRowModel(SettingsUiText.CONNECTION_MODE_TITLE, SettingsRowKind.VALUE, description = RussianUiText.ROUTE_AUTO_HELPER, selectedValue = SettingsUiText.connectionModeOptions.first()),
-        SettingsRowModel(SettingsUiText.THEME_TITLE, SettingsRowKind.VALUE, description = "Выберите оформление приложения.", selectedValue = SettingsUiText.themeOptions.first()),
+        SettingsRowModel(SettingsUiText.THEME_TITLE, SettingsRowKind.VALUE, description = AppearanceUiModels.uiModel(Appearance.AUTO).description, selectedValue = AppearanceUiModels.uiModel(Appearance.AUTO).label),
         SettingsRowModel("IP-адрес", SettingsRowKind.VALUE),
         SettingsRowModel("Порт", SettingsRowKind.VALUE),
         SettingsRowModel("Secret", SettingsRowKind.VALUE),
@@ -144,11 +187,7 @@ object SettingsScreenModel {
     )
 
     fun themeChoice(selectedAppearance: Appearance): SettingsChoiceModel = themeChoice.copy(
-        selectedValue = when (selectedAppearance) {
-            Appearance.AUTO -> "Авто"
-            Appearance.LIGHT -> "Светлая"
-            Appearance.DARK -> "Тёмная"
-        },
+        selectedValue = AppearanceUiModels.uiModel(selectedAppearance).label,
     )
 }
 

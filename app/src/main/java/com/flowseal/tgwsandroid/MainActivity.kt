@@ -12,6 +12,7 @@ import android.content.ComponentName
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Icon
@@ -107,6 +108,7 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         ProxyRuntimeConfig.initialize(applicationContext)
+        applyAppearanceToWindow(ProxyRuntimeConfig.appConfig(applicationContext).appearance)
         ProxyForegroundService.State.initialize(applicationContext, "activity")
         pendingRestartRequired = savedInstanceState?.getBoolean(KEY_PENDING_RESTART_REQUIRED) ?: false
         currentScreen = Screen.valueOf(savedInstanceState?.getString(KEY_CURRENT_SCREEN) ?: Screen.HOME.name)
@@ -166,6 +168,33 @@ class MainActivity : Activity() {
         }
         refreshState()
     }
+
+
+    private fun rebuildCurrentScreenIfSettings() {
+        if (::contentHost.isInitialized && currentScreen == Screen.SETTINGS) {
+            showScreen(Screen.SETTINGS, forceRefresh = true)
+        }
+    }
+
+    private fun rebuildRootForAppearanceChange() {
+        val screen = currentScreen
+        setContentView(buildRootView())
+        showScreen(screen, forceRefresh = true)
+    }
+
+    private fun applyAppearanceToWindow(appearance: Appearance) {
+        val dark = isDarkTheme(appearance)
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = !dark
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightNavigationBars = !dark
+    }
+
+    private fun isDarkTheme(appearance: Appearance = ProxyRuntimeConfig.appConfig(applicationContext).appearance): Boolean = when (AppearanceUiModels.nightMode(appearance)) {
+        ResolvedNightMode.DARK -> true
+        ResolvedNightMode.LIGHT -> false
+        ResolvedNightMode.FOLLOW_SYSTEM -> (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    private fun currentThemeStatusText(): String = if (isDarkTheme(Appearance.AUTO)) "Сейчас: тёмная" else "Сейчас: светлая"
 
     private fun buildHomeScreen(): ScrollView {
         val density = resources.displayMetrics.density
@@ -301,7 +330,7 @@ class MainActivity : Activity() {
                 addView(SettingsActionRow(SettingsUiText.RESET_SECRET_TITLE, "После обновления нужно заново подключить Telegram.") { confirmResetSecret() }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
             addView(SettingsSection("Внешний вид") {
-                addView(SettingsValueRow(SettingsUiText.THEME_TITLE, "Выберите оформление приложения.", themeStatusText) { showThemeDialog() }, matchWrapParams())
+                addView(ThemeSelector(), matchWrapParams())
             }, cardParams(topMargin = padding))
             addView(SettingsSection("Для разработчика") {
                 addView(developerModeCheckBox, matchWrapParams())
@@ -344,6 +373,7 @@ class MainActivity : Activity() {
             "route mode changed to ${routeMode.configValue}; will apply on next proxy start"
         }
         ProxyForegroundService.State.addLog(logMessage, LogSeverity.INFO, "ui")
+        addView(ThemeSelector(), matchWrapParams())
         refreshState()
     }
 
@@ -428,7 +458,7 @@ class MainActivity : Activity() {
             batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
             autostartStatusText.text = if (config.autostart) "Включено" else "Не проверено"
             telemetryStatusText.text = if (config.telemetryEnabled) "Включено" else "Выключено"
-            themeStatusText.text = appearanceLabel(config.appearance)
+            themeStatusText.text = AppearanceUiModels.label(config.appearance)
             hostStatusText.text = config.host
             portStatusText.text = config.port.toString()
             developerModeCheckBox.isChecked = developerModeEnabled()
@@ -839,26 +869,32 @@ class MainActivity : Activity() {
 
     private fun showThemeDialog() {
         val options = Appearance.entries
-        val labels = options.map(::appearanceLabel).toTypedArray()
+        val labels = options.map { appearanceDialogText(it) }.toTypedArray()
         val current = ProxyRuntimeConfig.appConfig(applicationContext).appearance
         AlertDialog.Builder(this)
             .setTitle(SettingsUiText.THEME_TITLE)
             .setSingleChoiceItems(labels, options.indexOf(current).coerceAtLeast(0)) { dialog, index ->
-                val store = AppConfigStore.from(applicationContext)
-                store.saveConfig(store.loadConfig().copy(appearance = options[index]))
-                ProxyRuntimeConfig.initialize(applicationContext)
-                refreshState()
+                setAppearance(options[index])
                 dialog.dismiss()
             }
             .setNegativeButton("Отмена", null)
             .show()
     }
 
-    private fun appearanceLabel(appearance: Appearance): String = when (appearance) {
-        Appearance.AUTO -> "Авто"
-        Appearance.LIGHT -> "Светлая"
-        Appearance.DARK -> "Тёмная"
+    private fun setAppearance(appearance: Appearance) {
+        val store = AppConfigStore.from(applicationContext)
+        store.saveConfig(store.loadConfig().copy(appearance = appearance))
+        ProxyRuntimeConfig.initialize(applicationContext)
+        applyAppearanceToWindow(appearance)
+        rebuildRootForAppearanceChange()
     }
+
+    private fun appearanceDialogText(appearance: Appearance): String {
+        val model = AppearanceUiModels.uiModel(appearance)
+        return "${model.label}\n${model.description}"
+    }
+
+
 
     private fun openNotificationSettingsFlow() {
         if (notificationPermissionMissing()) {
@@ -1031,7 +1067,9 @@ class MainActivity : Activity() {
     }
 
     private fun createNavigationBar(): BottomNavigationView = BottomNavigationView(this).apply {
-        setBackgroundColor(Color.WHITE)
+        setBackgroundColor(COLOR_BACKGROUND_ALT)
+        itemTextColor = ColorStateList.valueOf(COLOR_TEXT_PRIMARY)
+        itemIconTintList = ColorStateList.valueOf(COLOR_TEXT_PRIMARY)
         labelVisibilityMode = com.google.android.material.navigation.NavigationBarView.LABEL_VISIBILITY_LABELED
         menu.add(0, Screen.HOME.itemId, 0, "Главная")
         menu.add(0, Screen.SETTINGS.itemId, 1, "Настройки")
@@ -1049,8 +1087,8 @@ class MainActivity : Activity() {
 
     private fun SettingsRow(label: String, value: TextView): LinearLayout = createTextRow(label, value)
 
-    private fun SettingsValueRow(title: String, description: String, value: TextView, onClick: (() -> Unit)? = null): LinearLayout =
-        SettingsAdaptiveRow(title, description, topTrailing = value, meta = null, onClick = onClick)
+    private fun SettingsValueRow(title: String, description: String, value: TextView, meta: View? = null, onClick: (() -> Unit)? = null): LinearLayout =
+        SettingsAdaptiveRow(title, description, topTrailing = value, meta = meta, onClick = onClick)
 
     private fun SettingsStatusRow(title: String, description: String, value: TextView, badge: TextView? = null, onClick: () -> Unit): LinearLayout =
         SettingsAdaptiveRow(title, description, topTrailing = null, meta = metaLine(badge, value), onClick = onClick)
@@ -1143,14 +1181,30 @@ class MainActivity : Activity() {
         }
     }
 
+
+    private fun ThemeSelector(): LinearLayout {
+        val appearance = ProxyRuntimeConfig.appConfig(applicationContext).appearance
+        val model = AppearanceUiModels.uiModel(appearance)
+        val meta = if (appearance == Appearance.AUTO) metaLine(createValueText(textSize = 13f).apply {
+            text = currentThemeStatusText()
+            setTextColor(COLOR_TEXT_MUTED)
+        }) else null
+        return SettingsValueRow(
+            title = SettingsUiText.THEME_TITLE,
+            description = model.description,
+            value = themeStatusText.apply { text = model.label },
+            meta = meta,
+            onClick = { showThemeDialog() },
+        )
+    }
+
     private fun ConnectionModeSelector(): LinearLayout {
         val config = ProxyRuntimeConfig.appConfig(applicationContext)
-        val current = UserRouteModes.normalOptions.firstOrNull { it.routeMode == config.routeMode }
-            ?: UserRouteModes.normalOptions.first()
+        val routeModeUi = UserRouteModes.uiModel(config.routeMode)
         return SettingsValueRow(
             title = SettingsUiText.CONNECTION_MODE_TITLE,
-            description = UserRouteModes.helperFor(current.routeMode),
-            value = routeModeValueText.apply { text = current.title },
+            description = routeModeUi.description,
+            value = routeModeValueText.apply { text = routeModeUi.label },
             onClick = { showConnectionModeDialog() },
         )
     }
@@ -1211,6 +1265,17 @@ class MainActivity : Activity() {
         }
     }
 
+
+    private val COLOR_BACKGROUND: Int get() = if (isDarkTheme()) 0xFF111827.toInt() else 0xFFF6F7FB.toInt()
+    private val COLOR_BACKGROUND_ALT: Int get() = if (isDarkTheme()) 0xFF1F2937.toInt() else 0xFFEFF6FF.toInt()
+    private val COLOR_CARD_STROKE: Int get() = if (isDarkTheme()) 0xFF374151.toInt() else 0xFFE5E7EB.toInt()
+    private val COLOR_TEXT_PRIMARY: Int get() = if (isDarkTheme()) 0xFFF9FAFB.toInt() else 0xFF111827.toInt()
+    private val COLOR_TEXT_SECONDARY: Int get() = if (isDarkTheme()) 0xFFD1D5DB.toInt() else 0xFF4B5563.toInt()
+    private val COLOR_TEXT_MUTED: Int get() = if (isDarkTheme()) 0xFF9CA3AF.toInt() else 0xFF6B7280.toInt()
+    private val COLOR_WARNING: Int get() = if (isDarkTheme()) 0xFFF59E0B.toInt() else 0xFFB45309.toInt()
+    private val COLOR_ACCENT: Int get() = if (isDarkTheme()) 0xFF60A5FA.toInt() else 0xFF2563EB.toInt()
+    private val COLOR_SUCCESS: Int get() = if (isDarkTheme()) 0xFF34D399.toInt() else 0xFF047857.toInt()
+
     private enum class Screen(val itemId: Int) {
         HOME(1),
         SETTINGS(2),
@@ -1248,14 +1313,5 @@ class MainActivity : Activity() {
         private const val RECOMMENDATION_COOLDOWN_MS = 7L * 24L * 60L * 60L * 1000L
         private const val MAX_HINTS = 2
         private const val MAX_VISIBLE_LOG_LINES = 12
-        private const val COLOR_BACKGROUND = 0xFFF6F7FB.toInt()
-        private const val COLOR_BACKGROUND_ALT = 0xFFEFF6FF.toInt()
-        private const val COLOR_CARD_STROKE = 0xFFE5E7EB.toInt()
-        private const val COLOR_TEXT_PRIMARY = 0xFF111827.toInt()
-        private const val COLOR_TEXT_SECONDARY = 0xFF4B5563.toInt()
-        private const val COLOR_TEXT_MUTED = 0xFF6B7280.toInt()
-        private const val COLOR_WARNING = 0xFFB45309.toInt()
-        private const val COLOR_ACCENT = 0xFF2563EB.toInt()
-        private const val COLOR_SUCCESS = 0xFF047857.toInt()
     }
 }

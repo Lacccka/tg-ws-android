@@ -52,9 +52,40 @@ class MainUiModelTest {
     @Test
     fun selectedRouteHelperTextChangesBySelectedMode() {
         assertEquals("Рекомендуется. Приложение само выбирает подходящий режим.", UserRouteModes.helperFor(NetworkRouteMode.AUTO))
-        assertEquals("Для стабильного Wi-Fi. Может подключаться быстрее.", UserRouteModes.helperFor(NetworkRouteMode.DIRECT_FIRST))
-        assertEquals("Для мобильной сети и нестабильного подключения.", UserRouteModes.helperFor(NetworkRouteMode.CF_FIRST))
+        assertEquals("Для стабильного Wi-Fi.", UserRouteModes.helperFor(NetworkRouteMode.DIRECT_FIRST))
+        assertEquals("Для мобильной сети.", UserRouteModes.helperFor(NetworkRouteMode.CF_FIRST))
     }
+
+
+    @Test
+    fun routeModeUiModelDerivesLabelAndDescriptionFromSameSelectedMode() {
+        val cases = listOf(
+            NetworkRouteMode.AUTO to ("Авто" to "Рекомендуется. Приложение само выбирает подходящий режим."),
+            NetworkRouteMode.DIRECT_FIRST to ("Быстрый Wi-Fi" to "Для стабильного Wi-Fi."),
+            NetworkRouteMode.CF_FIRST to ("Совместимый" to "Для мобильной сети."),
+        )
+
+        cases.forEach { (mode, expected) ->
+            val model = UserRouteModes.uiModel(mode)
+            assertEquals(expected.first, model.label)
+            assertEquals(expected.second, model.description)
+        }
+    }
+
+    @Test
+    fun appearanceModesMapToResolvedNightModes() {
+        assertEquals(ResolvedNightMode.FOLLOW_SYSTEM, AppearanceUiModels.nightMode(Appearance.AUTO))
+        assertEquals(ResolvedNightMode.LIGHT, AppearanceUiModels.nightMode(Appearance.LIGHT))
+        assertEquals(ResolvedNightMode.DARK, AppearanceUiModels.nightMode(Appearance.DARK))
+    }
+
+    @Test
+    fun themeRowsUseClearDescriptions() {
+        assertEquals("Следует системной теме.", AppearanceUiModels.description(Appearance.AUTO))
+        assertEquals("Всегда использовать светлую тему.", AppearanceUiModels.description(Appearance.LIGHT))
+        assertEquals("Всегда использовать тёмную тему.", AppearanceUiModels.description(Appearance.DARK))
+    }
+
 
     @Test
     fun cfOnlyIsNotShownInNormalSettings() {
