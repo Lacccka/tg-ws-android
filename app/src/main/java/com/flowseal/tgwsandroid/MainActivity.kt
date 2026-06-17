@@ -182,9 +182,9 @@ class MainActivity : Activity() {
             text = ""
             setTextColor(COLOR_TEXT_SECONDARY)
         }
-        primaryControlButton = createFilledButton("Включить") { handleHeroPrimaryAction() }
+        primaryControlButton = createFilledButton("Включить") { handleMainPrimaryAction() }
         connectTelegramButton = createOutlinedButton("Перезапустить") { restartProxyService() }
-        restartPendingButton = createOutlinedButton("Перезапустить") { restartProxyService() }
+        restartPendingButton = createOutlinedButton("Подключить Telegram") { openTelegramProxyLink() }
         hintsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val chipsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -418,17 +418,28 @@ class MainActivity : Activity() {
             routeText.text = userModeChipLabel()
             qualityText.text = healthLabel
 
-            primaryControlButton.text = hero.primaryAction.orEmpty()
-            primaryControlButton.visibility = if (hero.primaryAction == null) View.GONE else View.VISIBLE
-            primaryControlButton.isEnabled = hero.primaryAction != null
-            connectTelegramButton.text = hero.secondaryAction.orEmpty()
-            connectTelegramButton.visibility = if (hero.secondaryAction == null) View.GONE else View.VISIBLE
-            connectTelegramButton.isEnabled = hero.secondaryAction != MainHeroStateMapper.RESTART_ACTION || running
-            connectTelegramButton.setOnClickListener { handleHeroSecondaryAction(hero.secondaryAction) }
+            val proxyEnabled = running || starting
+            val actions = MainActionModelMapper.actions(
+                proxyEnabled = proxyEnabled,
+                settingsChangedPendingRestart = pendingRestartRequired && running,
+            )
 
-            val showRestartWarning = pendingRestartRequired && running
-            restartRequiredText.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
-            restartPendingButton.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
+            primaryControlButton.text = actions.primaryAction.orEmpty()
+            primaryControlButton.visibility = if (actions.primaryAction == null) View.GONE else View.VISIBLE
+            primaryControlButton.isEnabled = actions.primaryAction != null
+
+            connectTelegramButton.text = actions.restartAction.orEmpty()
+            connectTelegramButton.visibility = if (actions.restartAction == null) View.GONE else View.VISIBLE
+            connectTelegramButton.isEnabled = running
+            connectTelegramButton.setOnClickListener { restartProxyService() }
+
+            restartRequiredText.text = actions.restartNote.orEmpty()
+            restartRequiredText.visibility = if (actions.restartNote == null) View.GONE else View.VISIBLE
+
+            restartPendingButton.text = actions.telegramAction.orEmpty()
+            restartPendingButton.visibility = if (actions.telegramAction == null) View.GONE else View.VISIBLE
+            restartPendingButton.isEnabled = actions.telegramAction != null
+            restartPendingButton.setOnClickListener { openTelegramProxyLink() }
             val telegramHelper = if (running && TelegramStatusUiText.showTelegramReconnectWarning(stats)) TelegramStatusUiText.RECONNECT_EXTRA_HELPER else null
             telegramCleanupHintText.text = telegramHelper.orEmpty()
             telegramCleanupHintText.visibility = if (telegramHelper == null) View.GONE else View.VISIBLE
@@ -438,10 +449,10 @@ class MainActivity : Activity() {
         if (::routeModeValueText.isInitialized) {
             val config = ProxyRuntimeConfig.appConfig(applicationContext)
             routeModeValueText.text = UserRouteModes.labelFor(config.routeMode)
-            notificationStatusText.text = if (notificationPermissionMissing()) "Выключены" else "Включены"
+            notificationStatusText.text = if (notificationPermissionMissing()) "Выключено" else "Включено"
             batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
             autostartStatusText.text = if (config.autostart) "Включён" else "Не проверено"
-            telemetryStatusText.text = if (config.telemetryEnabled) "Включена" else "Выключена"
+            telemetryStatusText.text = if (config.telemetryEnabled) "Включено" else "Выключено"
             themeStatusText.text = appearanceLabel(config.appearance)
             developerModeCheckBox.isChecked = developerModeEnabled()
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
@@ -596,26 +607,17 @@ class MainActivity : Activity() {
         return card
     }
 
-    private fun handleHeroPrimaryAction() {
+    private fun handleMainPrimaryAction() {
         if (isFinishing || isDestroyed) return
         when (primaryControlButton.text.toString()) {
-            MainHeroStateMapper.START_ACTION -> {
+            MainActionModelMapper.START_ACTION -> {
                 transitionStatus = TransitionStatus.STARTING
                 requestNotificationPermissionIfNeeded()
                 startProxyService()
             }
-            MainHeroStateMapper.CONNECT_TELEGRAM_ACTION -> openTelegramProxyLink()
-            MainHeroStateMapper.STOP_ACTION -> confirmStopProxy()
-            MainHeroStateMapper.RESTART_ACTION -> restartProxyService()
+            MainActionModelMapper.STOP_ACTION -> confirmStopProxy()
         }
         refreshState()
-    }
-
-    private fun handleHeroSecondaryAction(action: String?) {
-        if (isFinishing || isDestroyed) return
-        when (action) {
-            MainHeroStateMapper.RESTART_ACTION -> restartProxyService()
-        }
     }
 
     private fun confirmStopProxy() {

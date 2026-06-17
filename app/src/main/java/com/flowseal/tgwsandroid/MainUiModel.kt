@@ -30,6 +30,11 @@ object SettingsUiText {
     const val THEME_TITLE = "Тема приложения"
     val themeOptions: List<String> = listOf("Авто", "Светлая", "Тёмная")
     val connectionModeOptions: List<String> = UserRouteModes.normalOptions.map { it.title }
+    val connectionModeDialogDescriptions: List<String> = listOf(
+        RussianUiText.ROUTE_AUTO_SUBTITLE,
+        RussianUiText.ROUTE_FAST_WIFI_HELPER,
+        RussianUiText.ROUTE_COMPATIBLE_HELPER,
+    )
     const val BATTERY_BACKGROUND_TITLE = "Работа в фоне"
     const val BATTERY_XIAOMI_AUTOSTART_TEXT = "Откройте «Питание» или «Батарея» и выберите «Без ограничений». На Xiaomi также проверьте автозапуск."
     const val BATTERY_BUTTON_HELP_TEXT = "Откройте «Питание» или «Батарея» и выберите «Без ограничений»."
@@ -86,6 +91,39 @@ data class MainHeroState(
     val secondaryAction: String?,
 )
 
+data class MainActionModel(
+    val primaryAction: String?,
+    val restartAction: String?,
+    val telegramAction: String?,
+    val restartNote: String?,
+) {
+    val visibleActions: List<String> = listOfNotNull(primaryAction, restartAction, telegramAction)
+}
+
+object MainActionModelMapper {
+    const val START_ACTION = "Включить"
+    const val STOP_ACTION = "Отключить"
+    const val CONNECT_TELEGRAM_ACTION = "Подключить Telegram"
+    const val RESTART_ACTION = "Перезапустить"
+    const val PENDING_RESTART_NOTE = "Перезапустите прокси, чтобы применить изменения"
+
+    fun actions(proxyEnabled: Boolean, settingsChangedPendingRestart: Boolean): MainActionModel = if (proxyEnabled) {
+        MainActionModel(
+            primaryAction = STOP_ACTION,
+            restartAction = RESTART_ACTION,
+            telegramAction = CONNECT_TELEGRAM_ACTION,
+            restartNote = if (settingsChangedPendingRestart) PENDING_RESTART_NOTE else null,
+        )
+    } else {
+        MainActionModel(
+            primaryAction = START_ACTION,
+            restartAction = null,
+            telegramAction = null,
+            restartNote = null,
+        )
+    }
+}
+
 object MainHeroStateMapper {
     const val STARTING_TITLE = "Подключаемся…"
     const val STOPPED_TITLE = "Прокси выключен"
@@ -106,13 +144,13 @@ object MainHeroStateMapper {
         telegramReconnectWarning: Boolean,
         telegramConnected: Boolean,
     ): MainHeroState = when {
-        starting -> MainHeroState(STARTING_TITLE, "Это займёт несколько секунд", STOP_ACTION, RESTART_ACTION)
-        !running -> MainHeroState(STOPPED_TITLE, "Включите подключение", START_ACTION, null)
+        starting -> MainHeroState(STARTING_TITLE, "Это займёт несколько секунд", null, null)
+        !running -> MainHeroState(STOPPED_TITLE, "Включите подключение", null, null)
         failed || healthLabel == "Нестабильно" || telegramReconnectWarning -> {
-            MainHeroState(UNSTABLE_TITLE, "Попробуйте перезапустить прокси", STOP_ACTION, RESTART_ACTION)
+            MainHeroState(UNSTABLE_TITLE, "Можно перезапустить прокси или подключить Telegram заново", null, null)
         }
-        !telegramConnected -> MainHeroState(TELEGRAM_NOT_CONNECTED_TITLE, "Осталось подключить Telegram", STOP_ACTION, RESTART_ACTION)
-        else -> MainHeroState(READY_TITLE, "Telegram подключён", STOP_ACTION, RESTART_ACTION)
+        !telegramConnected -> MainHeroState(TELEGRAM_NOT_CONNECTED_TITLE, "Осталось подключить Telegram", null, null)
+        else -> MainHeroState(READY_TITLE, "Telegram подключён", null, null)
     }
 }
 

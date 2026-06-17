@@ -133,7 +133,7 @@ class MainUiModelTest {
         )
 
         assertEquals("Прокси выключен", hero.title)
-        assertEquals("Включить", hero.primaryAction)
+        assertEquals(null, hero.primaryAction)
     }
 
     @Test
@@ -148,7 +148,7 @@ class MainUiModelTest {
         )
 
         assertEquals("Прокси выключен", hero.title)
-        assertEquals("Включить", hero.primaryAction)
+        assertEquals(null, hero.primaryAction)
     }
 
     @Test
@@ -163,7 +163,7 @@ class MainUiModelTest {
         )
 
         assertEquals("Прокси выключен", hero.title)
-        assertEquals("Включить", hero.primaryAction)
+        assertEquals(null, hero.primaryAction)
     }
 
     @Test
@@ -178,8 +178,8 @@ class MainUiModelTest {
         )
 
         assertEquals("Подключение нестабильно", hero.title)
-        assertEquals("Отключить", hero.primaryAction)
-        assertEquals("Перезапустить", hero.secondaryAction)
+        assertEquals(null, hero.primaryAction)
+        assertEquals(null, hero.secondaryAction)
     }
 
     @Test
@@ -194,8 +194,8 @@ class MainUiModelTest {
         )
 
         assertEquals("Подключаемся…", hero.title)
-        assertEquals("Отключить", hero.primaryAction)
-        assertEquals("Перезапустить", hero.secondaryAction)
+        assertEquals(null, hero.primaryAction)
+        assertEquals(null, hero.secondaryAction)
     }
 
     @Test
@@ -210,8 +210,8 @@ class MainUiModelTest {
         )
 
         assertEquals("Почти готово", hero.title)
-        assertEquals("Отключить", hero.primaryAction)
-        assertEquals("Перезапустить", hero.secondaryAction)
+        assertEquals(null, hero.primaryAction)
+        assertEquals(null, hero.secondaryAction)
     }
 
     @Test
@@ -226,8 +226,53 @@ class MainUiModelTest {
         )
 
         assertEquals("Всё готово", hero.title)
-        assertEquals("Отключить", hero.primaryAction)
-        assertEquals("Перезапустить", hero.secondaryAction)
+        assertEquals(null, hero.primaryAction)
+        assertEquals(null, hero.secondaryAction)
+    }
+
+
+    @Test
+    fun stoppedMainActionsOnlyShowStart() {
+        val actions = MainActionModelMapper.actions(proxyEnabled = false, settingsChangedPendingRestart = false)
+
+        assertEquals(listOf("Включить"), actions.visibleActions)
+        assertFalse(actions.visibleActions.contains("Отключить"))
+        assertFalse(actions.visibleActions.contains("Перезапустить"))
+        assertFalse(actions.visibleActions.contains("Подключить Telegram"))
+    }
+
+    @Test
+    fun runningMainActionsAlwaysShowStopRestartAndTelegram() {
+        val actions = MainActionModelMapper.actions(proxyEnabled = true, settingsChangedPendingRestart = false)
+
+        assertEquals("Отключить", actions.primaryAction)
+        assertEquals("Перезапустить", actions.restartAction)
+        assertEquals("Подключить Telegram", actions.telegramAction)
+    }
+
+    @Test
+    fun pendingRestartUsesExistingRestartActionOnly() {
+        val actions = MainActionModelMapper.actions(proxyEnabled = true, settingsChangedPendingRestart = true)
+
+        assertEquals(1, actions.visibleActions.count { it == "Перезапустить" })
+        assertEquals("Перезапустите прокси, чтобы применить изменения", actions.restartNote)
+    }
+
+    @Test
+    fun stoppedWithPendingDiagnosticsStillDoesNotShowRestart() {
+        val hero = MainHeroStateMapper.state(
+            running = false,
+            starting = false,
+            failed = true,
+            healthLabel = "Нестабильно",
+            telegramReconnectWarning = true,
+            telegramConnected = false,
+        )
+        val actions = MainActionModelMapper.actions(proxyEnabled = false, settingsChangedPendingRestart = true)
+
+        assertEquals("Прокси выключен", hero.title)
+        assertEquals(listOf("Включить"), actions.visibleActions)
+        assertFalse(actions.visibleActions.contains("Перезапустить"))
     }
 
     @Test
@@ -251,6 +296,7 @@ class MainUiModelTest {
     @Test
     fun settingsConnectionModeOptionsAreExactlyUserFacingLabels() {
         assertEquals(listOf("Авто", "Быстрый Wi-Fi", "Совместимый"), SettingsUiText.connectionModeOptions)
+        assertEquals(3, SettingsUiText.connectionModeDialogDescriptions.size)
         assertFalse(SettingsUiText.connectionModeOptions.any { it in listOf("direct_first", "cf_first", "cf_only", "pool", "fallback") })
     }
 
