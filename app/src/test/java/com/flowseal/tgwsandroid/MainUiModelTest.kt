@@ -311,7 +311,7 @@ class MainUiModelTest {
 
     @Test
     fun batteryAndQuickSettingsInstructionsAreRussianAndCompact() {
-        assertEquals("Батарея без ограничений", SettingsUiText.BATTERY_BACKGROUND_TITLE)
+        assertEquals("Батарея", SettingsUiText.BATTERY_BACKGROUND_TITLE)
         assertTrue(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("автозапуск"))
         assertTrue(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("Без ограничений"))
         assertTrue(SettingsUiText.BATTERY_BUTTON_HELP_TEXT.contains("Без ограничений"))
@@ -328,8 +328,8 @@ class MainUiModelTest {
         assertEquals("Позже", RecommendationUiText.DISMISS_ACTION)
         assertEquals("Включить уведомления", RecommendationUiText.cards.getValue("notifications").first)
         assertEquals("Так будет проще видеть состояние подключения", RecommendationUiText.cards.getValue("notifications").second)
-        assertEquals("Батарея без ограничений", RecommendationUiText.cards.getValue("battery").first)
-        assertEquals("Разрешите TG WS работать в фоне", RecommendationUiText.cards.getValue("battery").second)
+        assertEquals("Батарея", RecommendationUiText.cards.getValue("battery").first)
+        assertEquals("Разрешите работать в фоне", RecommendationUiText.cards.getValue("battery").second)
         assertEquals("Кнопка в шторке", RecommendationUiText.cards.getValue("quick_settings").first)
         assertFalse(RecommendationUiText.cards.values.any { (title, subtitle) ->
             listOf(title, subtitle).any { text ->
@@ -612,7 +612,7 @@ class MainUiModelTest {
     fun adaptiveSettingsRowsKeepTextFieldsSeparate() {
         val rows = SettingsScreenModel.normalRows.associateBy { it.title }
         val battery = rows.getValue(SettingsUiText.BATTERY_BACKGROUND_TITLE)
-        assertEquals("Разрешите TG WS работать в фоне, чтобы прокси не отключался при заблокированном экране.", battery.description)
+        assertEquals("Разрешите работать в фоне, чтобы прокси не отключался.", battery.description)
         assertEquals("Нужно разрешить", battery.status)
         assertEquals(SettingsBadge.IMPORTANT, battery.badge)
         assertFalse(battery.title.contains(battery.description.orEmpty()))

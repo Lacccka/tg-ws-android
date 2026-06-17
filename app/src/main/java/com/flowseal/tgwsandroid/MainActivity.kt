@@ -340,13 +340,13 @@ class MainActivity : Activity() {
             setPadding(padding, padding, padding, bottomContentPadding)
             setBackgroundColor(currentColorScheme().background)
             addHeader()
-            addView(SettingsSection("Важное для стабильной работы", "Эти параметры помогают прокси не отключаться в фоне.") {
-                addView(SettingsStatusRow("Уведомления", "Показывают состояние подключения.", notificationStatusText, Badge("Рекомендуется")) { openNotificationSettingsFlow() }, matchWrapParams())
-                addView(SettingsStatusRow("Батарея без ограничений", "Разрешите TG WS работать в фоне, чтобы прокси не отключался при заблокированном экране.", batteryStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { onRequestBatteryUnrestricted() }, matchWrapParams(topMargin = rowGap))
+            addView(SettingsSection("Важные параметры", "Эти параметры помогают прокси не отключаться в фоне.") {
+                addView(SettingsStatusRow("Батарея", "Разрешите работать в фоне, чтобы прокси не отключался.", batteryStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { onRequestBatteryUnrestricted() }, matchWrapParams(topMargin = rowGap))
                 addView(SettingsStatusRow("Автозапуск", "Разрешите запуск после перезагрузки телефона.", autostartStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { onOpenAutostartSettings() }, matchWrapParams(topMargin = rowGap))
-                addView(SettingsStatusRow("Кнопка в шторке", "Добавьте быстрый переключатель, чтобы включать и останавливать прокси без открытия приложения.", quickSettingsStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { onAddQuickSettingsTile() }, matchWrapParams(topMargin = rowGap))
                 addView(SettingsStatusRow("Фоновые данные", "Если фоновые данные запрещены, прокси может работать только при открытом приложении.", backgroundDataStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { onOpenBackgroundDataSettings() }, matchWrapParams(topMargin = rowGap))
                 addView(SettingsSwitchRow("Анонимная диагностика", "Помогает улучшать стабильность без личных данных.", telemetryStatusText, Badge("Рекомендуется")) { toggleTelemetry() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsStatusRow("Кнопка в шторке", "Быстрый переключатель, чтобы включать и останавливать прокси без открытия приложения.", quickSettingsStatusText, Badge("Рекомендуется")) { onAddQuickSettingsTile() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsStatusRow("Уведомления", "Показывают состояние подключения.", notificationStatusText, Badge("Рекомендуется")) { openNotificationSettingsFlow() }, matchWrapParams())
             }, cardParams())
             addView(SettingsSection("Подключение") {
                 addView(ConnectionModeSelector(), matchWrapParams())
