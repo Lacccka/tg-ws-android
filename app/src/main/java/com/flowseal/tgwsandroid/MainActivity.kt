@@ -89,6 +89,7 @@ class MainActivity : Activity() {
     private lateinit var directDetailsText: TextView
 
     private var currentScreen: Screen = Screen.HOME
+    private var renderingScreen: Boolean = false
     private var pendingRestartRequired: Boolean = false
     private var transitionStatus: TransitionStatus = TransitionStatus.NONE
 
@@ -141,17 +142,25 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun showScreen(screen: Screen) {
-        currentScreen = screen
-        contentHost.removeAllViews()
-        val view = when (screen) {
-            Screen.HOME -> buildHomeScreen()
-            Screen.SETTINGS -> buildSettingsScreen()
-            Screen.DIAGNOSTICS -> buildDiagnosticsScreen()
+    private fun showScreen(screen: Screen, forceRefresh: Boolean = false) {
+        if (renderingScreen || (screen == currentScreen && contentHost.childCount > 0 && !forceRefresh)) {
+            return
         }
-        contentHost.addView(view, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-        if (::navigationBar.isInitialized && navigationBar.selectedItemId != screen.itemId) {
-            navigationBar.selectedItemId = screen.itemId
+        renderingScreen = true
+        try {
+            currentScreen = screen
+            contentHost.removeAllViews()
+            val view = when (screen) {
+                Screen.HOME -> buildHomeScreen()
+                Screen.SETTINGS -> buildSettingsScreen()
+                Screen.DIAGNOSTICS -> buildDiagnosticsScreen()
+            }
+            contentHost.addView(view, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            if (::navigationBar.isInitialized && navigationBar.selectedItemId != screen.itemId) {
+                navigationBar.menu.findItem(screen.itemId)?.isChecked = true
+            }
+        } finally {
+            renderingScreen = false
         }
         refreshState()
     }
@@ -398,13 +407,14 @@ class MainActivity : Activity() {
             val unstable = failed || healthLabel == "Нестабильно" || TelegramStatusUiText.showTelegramReconnectWarning(stats)
             val starting = transitionStatus == TransitionStatus.STARTING || (transitionStatus == TransitionStatus.STOPPING && running)
 
-            val hero = when {
-                starting -> HeroState("Подключаемся…", "Это займёт несколько секунд", null, null)
-                unstable -> HeroState("Подключение нестабильно", "Попробуйте переподключиться", "Переподключить", "Диагностика")
-                !running -> HeroState("Прокси выключен", "Включите подключение", "Включить", null)
-                !telegramConnected -> HeroState("Почти готово", "Осталось подключить Telegram", "Подключить Telegram", "Остановить")
-                else -> HeroState("Всё готово", "Telegram подключён", null, "Остановить")
-            }
+            val hero = MainHeroStateMapper.state(
+                running = running,
+                starting = starting,
+                failed = failed,
+                healthLabel = healthLabel,
+                telegramReconnectWarning = TelegramStatusUiText.showTelegramReconnectWarning(stats),
+                telegramConnected = telegramConnected,
+            )
 
             statusText.text = hero.title
             heroSubtitleText.text = hero.subtitle
@@ -422,7 +432,7 @@ class MainActivity : Activity() {
             val showRestartWarning = pendingRestartRequired && running
             restartRequiredText.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
             restartPendingButton.visibility = if (showRestartWarning) View.VISIBLE else View.GONE
-            val telegramHelper = if (TelegramStatusUiText.showTelegramReconnectWarning(stats)) TelegramStatusUiText.RECONNECT_EXTRA_HELPER else null
+            val telegramHelper = if (running && TelegramStatusUiText.showTelegramReconnectWarning(stats)) TelegramStatusUiText.RECONNECT_EXTRA_HELPER else null
             telegramCleanupHintText.text = telegramHelper.orEmpty()
             telegramCleanupHintText.visibility = if (telegramHelper == null) View.GONE else View.VISIBLE
             refreshHints()
@@ -574,34 +584,42 @@ class MainActivity : Activity() {
                     coolDownRecommendation(model.id)
                     refreshHints()
                 }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = gap })
-                addView(createFilledButton(model.actionLabel, model.onClick), LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(createFilledButton(model.actionLabel) { view ->
+                    model.onClick(view)
+                }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             }
             addView(actions, matchWrapParams(topMargin = gap))
         }
         card.isClickable = true
         card.isFocusable = true
         card.foreground = obtainStyledAttributes(intArrayOf(android.R.attr.selectableItemBackground)).use { attrs -> attrs.getDrawable(0) }
-        card.setOnClickListener(model.onClick)
+        card.setOnClickListener { view ->
+            view.isEnabled = false
+            model.onClick(view)
+            view.post { view.isEnabled = true }
+        }
         return card
     }
 
     private fun handleHeroPrimaryAction() {
+        if (isFinishing || isDestroyed) return
         when (primaryControlButton.text.toString()) {
-            "Включить" -> {
+            MainHeroStateMapper.START_ACTION -> {
                 transitionStatus = TransitionStatus.STARTING
                 requestNotificationPermissionIfNeeded()
                 startProxyService()
             }
-            "Подключить Telegram" -> openTelegramProxyLink()
-            "Переподключить" -> restartProxyService()
+            MainHeroStateMapper.CONNECT_TELEGRAM_ACTION -> openTelegramProxyLink()
+            MainHeroStateMapper.RECONNECT_ACTION -> restartProxyService()
         }
         refreshState()
     }
 
     private fun handleHeroSecondaryAction(action: String?) {
+        if (isFinishing || isDestroyed) return
         when (action) {
-            "Остановить" -> confirmStopProxy()
-            "Диагностика" -> showScreen(Screen.DIAGNOSTICS)
+            MainHeroStateMapper.STOP_ACTION -> confirmStopProxy()
+            MainHeroStateMapper.DIAGNOSTICS_ACTION -> showScreen(Screen.DIAGNOSTICS)
         }
     }
 
@@ -883,21 +901,30 @@ class MainActivity : Activity() {
     }
 
     private fun requestQuickSettingsTile() {
+        if (isFinishing || isDestroyed) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             val statusBarManager = getSystemService(StatusBarManager::class.java)
+            if (statusBarManager == null) {
+                showQuickSettingsTileHelp()
+                return
+            }
             val component = ComponentName(this, ProxyQuickSettingsTileService::class.java)
-            statusBarManager.requestAddTileService(
-                component,
-                "TG Proxy",
-                Icon.createWithResource(this, R.drawable.ic_qs_tg_proxy),
-                mainExecutor,
-            ) { result ->
-                if (result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ||
-                    result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED
-                ) {
-                    prefs.edit().putBoolean(PREF_RECOMMENDATION_QS_DONE, true).apply()
+            try {
+                statusBarManager.requestAddTileService(
+                    component,
+                    "TG Proxy",
+                    Icon.createWithResource(this, R.drawable.ic_qs_tg_proxy),
+                    mainExecutor,
+                ) { result ->
+                    if (result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ||
+                        result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED
+                    ) {
+                        prefs.edit().putBoolean(PREF_RECOMMENDATION_QS_DONE, true).apply()
+                    }
+                    if (!isFinishing && !isDestroyed) refreshState()
                 }
-                refreshState()
+            } catch (_: Throwable) {
+                showQuickSettingsTileHelp()
             }
         } else {
             showQuickSettingsTileHelp()
@@ -933,8 +960,10 @@ class MainActivity : Activity() {
             val sent = Telemetry.sendTestEvent(applicationContext, config)
             ProxyForegroundService.State.addLog("test telemetry send result=$sent", if (sent) LogSeverity.INFO else LogSeverity.WARN, "ui")
             handler.post {
-                Toast.makeText(this, if (sent) "Тестовая телеметрия отправлена" else "Не удалось отправить тестовую телеметрию", Toast.LENGTH_SHORT).show()
-                refreshState()
+                if (!isFinishing && !isDestroyed) {
+                    Toast.makeText(this, if (sent) "Тестовая телеметрия отправлена" else "Не удалось отправить тестовую телеметрию", Toast.LENGTH_SHORT).show()
+                    refreshState()
+                }
             }
         }
     }
@@ -1026,9 +1055,13 @@ class MainActivity : Activity() {
         menu.add(0, Screen.DIAGNOSTICS.itemId, 2, "Диагностика")
         selectedItemId = currentScreen.itemId
         setOnItemSelectedListener { item ->
-            Screen.fromItemId(item.itemId)?.let { showScreen(it) }
+            val selected = Screen.fromItemId(item.itemId) ?: return@setOnItemSelectedListener false
+            if (selected != currentScreen) {
+                showScreen(selected)
+            }
             true
         }
+        setOnItemReselectedListener { }
     }
 
     private fun SettingsRow(label: String, value: TextView): LinearLayout = createTextRow(label, value)
@@ -1150,13 +1183,6 @@ class MainActivity : Activity() {
         }
     }
     private enum class TransitionStatus { NONE, STARTING, STOPPING }
-
-    private data class HeroState(
-        val title: String,
-        val subtitle: String,
-        val primaryAction: String?,
-        val secondaryAction: String?,
-    )
 
     private data class RecommendationCardModel(
         val id: String,

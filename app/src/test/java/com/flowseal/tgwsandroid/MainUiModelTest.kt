@@ -120,6 +120,116 @@ class MainUiModelTest {
         })
     }
 
+
+    @Test
+    fun stoppedHeroIgnoresStaleUnstableHealth() {
+        val hero = MainHeroStateMapper.state(
+            running = false,
+            starting = false,
+            failed = false,
+            healthLabel = "Нестабильно",
+            telegramReconnectWarning = false,
+            telegramConnected = false,
+        )
+
+        assertEquals("Прокси выключен", hero.title)
+        assertEquals("Включить", hero.primaryAction)
+    }
+
+    @Test
+    fun stoppedHeroIgnoresStaleTelegramReconnectWarning() {
+        val hero = MainHeroStateMapper.state(
+            running = false,
+            starting = false,
+            failed = false,
+            healthLabel = "Стабильно",
+            telegramReconnectWarning = true,
+            telegramConnected = false,
+        )
+
+        assertEquals("Прокси выключен", hero.title)
+        assertEquals("Включить", hero.primaryAction)
+    }
+
+    @Test
+    fun stoppedHeroIgnoresPreviousFailedStatus() {
+        val hero = MainHeroStateMapper.state(
+            running = false,
+            starting = false,
+            failed = true,
+            healthLabel = "Нестабильно",
+            telegramReconnectWarning = true,
+            telegramConnected = false,
+        )
+
+        assertEquals("Прокси выключен", hero.title)
+        assertEquals("Включить", hero.primaryAction)
+    }
+
+    @Test
+    fun runningUnstableHeroOffersReconnect() {
+        val hero = MainHeroStateMapper.state(
+            running = true,
+            starting = false,
+            failed = false,
+            healthLabel = "Нестабильно",
+            telegramReconnectWarning = false,
+            telegramConnected = false,
+        )
+
+        assertEquals("Подключение нестабильно", hero.title)
+        assertEquals("Переподключить", hero.primaryAction)
+        assertEquals("Диагностика", hero.secondaryAction)
+    }
+
+    @Test
+    fun startingHeroHasNoDuplicateStartOrReconnectAction() {
+        val hero = MainHeroStateMapper.state(
+            running = false,
+            starting = true,
+            failed = true,
+            healthLabel = "Нестабильно",
+            telegramReconnectWarning = true,
+            telegramConnected = false,
+        )
+
+        assertEquals("Подключаемся…", hero.title)
+        assertEquals(null, hero.primaryAction)
+        assertEquals(null, hero.secondaryAction)
+    }
+
+    @Test
+    fun runningWithoutTelegramHeroConnectsTelegram() {
+        val hero = MainHeroStateMapper.state(
+            running = true,
+            starting = false,
+            failed = false,
+            healthLabel = "Стабильно",
+            telegramReconnectWarning = false,
+            telegramConnected = false,
+        )
+
+        assertEquals("Почти готово", hero.title)
+        assertEquals("Подключить Telegram", hero.primaryAction)
+        assertEquals("Остановить", hero.secondaryAction)
+    }
+
+    @Test
+    fun runningHealthyHeroOnlyOffersStopAsSecondary() {
+        val hero = MainHeroStateMapper.state(
+            running = true,
+            starting = false,
+            failed = false,
+            healthLabel = "Стабильно",
+            telegramReconnectWarning = false,
+            telegramConnected = true,
+        )
+
+        assertEquals("Всё готово", hero.title)
+        assertEquals(null, hero.primaryAction)
+        assertEquals("Остановить", hero.secondaryAction)
+    }
+
     @Test
     fun stoppedProxyTelegramStatusSaysProxyStopped() {
         assertEquals("Прокси остановлен", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = stats()))

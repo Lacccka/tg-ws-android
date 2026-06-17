@@ -71,6 +71,45 @@ object UserRouteModes {
     }
 }
 
+
+data class MainHeroState(
+    val title: String,
+    val subtitle: String,
+    val primaryAction: String?,
+    val secondaryAction: String?,
+)
+
+object MainHeroStateMapper {
+    const val STARTING_TITLE = "Подключаемся…"
+    const val STOPPED_TITLE = "Прокси выключен"
+    const val UNSTABLE_TITLE = "Подключение нестабильно"
+    const val TELEGRAM_NOT_CONNECTED_TITLE = "Почти готово"
+    const val READY_TITLE = "Всё готово"
+
+    const val START_ACTION = "Включить"
+    const val STOP_ACTION = "Остановить"
+    const val CONNECT_TELEGRAM_ACTION = "Подключить Telegram"
+    const val RECONNECT_ACTION = "Переподключить"
+    const val DIAGNOSTICS_ACTION = "Диагностика"
+
+    fun state(
+        running: Boolean,
+        starting: Boolean,
+        failed: Boolean,
+        healthLabel: String,
+        telegramReconnectWarning: Boolean,
+        telegramConnected: Boolean,
+    ): MainHeroState = when {
+        starting -> MainHeroState(STARTING_TITLE, "Это займёт несколько секунд", null, null)
+        !running -> MainHeroState(STOPPED_TITLE, "Включите подключение", START_ACTION, null)
+        failed || healthLabel == "Нестабильно" || telegramReconnectWarning -> {
+            MainHeroState(UNSTABLE_TITLE, "Попробуйте переподключиться", RECONNECT_ACTION, DIAGNOSTICS_ACTION)
+        }
+        !telegramConnected -> MainHeroState(TELEGRAM_NOT_CONNECTED_TITLE, "Осталось подключить Telegram", CONNECT_TELEGRAM_ACTION, STOP_ACTION)
+        else -> MainHeroState(READY_TITLE, "Telegram подключён", null, STOP_ACTION)
+    }
+}
+
 object DeveloperUiModel {
     const val DEFAULT_DEVELOPER_MODE_ENABLED = false
 
