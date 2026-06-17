@@ -421,6 +421,14 @@ class MainUiModelTest {
         }
     }
 
+
+    @Test
+    fun anonymousDiagnosticsRemainsSwitchControlInSettingsModel() {
+        val row = SettingsScreenModel.normalRows.single { it.title == "Анонимная диагностика" }
+
+        assertEquals(SettingsRowKind.SWITCH, row.kind)
+    }
+
     @Test
     fun settingsConnectionModeOptionsAreExactlyUserFacingLabels() {
         assertEquals(listOf("Авто", "Быстрый Wi-Fi", "Совместимый"), SettingsUiText.connectionModeOptions)
@@ -442,14 +450,30 @@ class MainUiModelTest {
 
 
     @Test
-    fun darkSwitchColorsDistinguishCheckedUncheckedAndDisabledStates() {
+    fun switchColorsKeepThumbsTracksAndSurfacesDistinctInBothThemes() {
+        val lightScheme = lightAppColorScheme()
+        val lightColors = ControlTintModels.switchColors(lightScheme)
+        val darkScheme = darkAppColorScheme()
+        val darkColors = ControlTintModels.switchColors(darkScheme)
+
+        assertNotEquals(lightColors.checkedThumb, lightColors.checkedTrack)
+        assertNotEquals(lightColors.uncheckedTrack, lightScheme.surfaceContainer)
+        assertNotEquals(lightColors.checkedTrack, lightColors.uncheckedTrack)
+
+        assertNotEquals(darkColors.checkedThumb, darkColors.checkedTrack)
+        assertNotEquals(darkColors.uncheckedTrack, darkScheme.surfaceContainer)
+        assertNotEquals(darkColors.checkedThumb, darkScheme.background)
+        assertNotEquals(darkColors.checkedThumb, darkScheme.surfaceContainer)
+        assertNotEquals(darkColors.checkedTrack, darkColors.uncheckedTrack)
+    }
+
+    @Test
+    fun switchColorsDefineSeparateDisabledCheckedAndUncheckedStates() {
         val colors = ControlTintModels.switchColors(darkAppColorScheme())
 
-        assertNotEquals(colors.checkedThumb, colors.uncheckedThumb)
-        assertNotEquals(colors.checkedTrack, colors.uncheckedTrack)
-        assertNotEquals(colors.checkedTrack, darkAppColorScheme().background)
-        assertNotEquals(colors.uncheckedThumb, darkAppColorScheme().background)
-        assertNotEquals(colors.disabledThumb, colors.checkedThumb)
+        assertNotEquals(colors.disabledCheckedThumb, colors.checkedThumb)
+        assertNotEquals(colors.disabledUncheckedThumb, colors.uncheckedThumb)
+        assertNotEquals(colors.disabledCheckedTrack, colors.disabledUncheckedTrack)
     }
 
     @Test

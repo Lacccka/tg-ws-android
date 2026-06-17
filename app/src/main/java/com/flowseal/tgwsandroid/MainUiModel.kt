@@ -103,8 +103,10 @@ data class SwitchControlColors(
     val checkedTrack: Int,
     val uncheckedThumb: Int,
     val uncheckedTrack: Int,
-    val disabledThumb: Int,
-    val disabledTrack: Int,
+    val disabledCheckedThumb: Int,
+    val disabledCheckedTrack: Int,
+    val disabledUncheckedThumb: Int,
+    val disabledUncheckedTrack: Int,
 )
 
 data class CompoundControlColors(
@@ -121,12 +123,14 @@ data class SegmentedButtonColors(
 
 object ControlTintModels {
     fun switchColors(colorScheme: AppColorScheme): SwitchControlColors = SwitchControlColors(
-        checkedThumb = colorScheme.onPrimary,
+        checkedThumb = colorScheme.onPrimaryContainer,
         checkedTrack = colorScheme.primary,
         uncheckedThumb = colorScheme.onSurfaceVariant,
         uncheckedTrack = colorScheme.surfaceVariant,
-        disabledThumb = colorScheme.onSurfaceVariant.withAlpha(0.38f),
-        disabledTrack = colorScheme.surfaceVariant.withAlpha(0.38f),
+        disabledCheckedThumb = colorScheme.onSurfaceVariant.withAlpha(0.54f),
+        disabledCheckedTrack = colorScheme.primary.withAlpha(0.32f),
+        disabledUncheckedThumb = colorScheme.onSurfaceVariant.withAlpha(0.54f),
+        disabledUncheckedTrack = colorScheme.surfaceVariant.withAlpha(0.54f),
     )
 
     fun compoundButtonColors(colorScheme: AppColorScheme): CompoundControlColors = CompoundControlColors(
@@ -150,7 +154,7 @@ object ControlTintModels {
     }
 }
 
-private fun Int.withAlpha(alpha: Float): Int {
+internal fun Int.withAlpha(alpha: Float): Int {
     val boundedAlpha = (alpha.coerceIn(0f, 1f) * 255).toInt()
     return (this and 0x00FFFFFF) or (boundedAlpha shl 24)
 }

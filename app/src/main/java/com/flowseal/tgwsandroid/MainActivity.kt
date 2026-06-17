@@ -34,11 +34,11 @@ import android.widget.FrameLayout
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
+import com.google.android.material.materialswitch.MaterialSwitch
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import android.widget.Switch
 import androidx.core.widget.CompoundButtonCompat
 import androidx.core.content.res.use
 import androidx.core.view.ViewCompat
@@ -89,7 +89,7 @@ class MainActivity : Activity() {
     private lateinit var secretStateText: TextView
     private lateinit var diagnosticsSummaryText: TextView
     private lateinit var telemetryCheckBox: CheckBox
-    private lateinit var telemetrySwitch: Switch
+    private lateinit var telemetrySwitch: MaterialSwitch
     private lateinit var telemetryTestButton: Button
     private lateinit var developerModeCheckBox: CheckBox
     private lateinit var developerSection: LinearLayout
@@ -1159,7 +1159,7 @@ class MainActivity : Activity() {
         SettingsAdaptiveRow(title, description, topTrailing = createValueText().apply { text = "›"; textSize = 22f }, meta = null, onClick = onClick)
 
     private fun SettingsSwitchRow(title: String, description: String, status: TextView, badge: TextView? = null, onClick: () -> Unit): LinearLayout {
-        val switch = Switch(this).apply {
+        val switch = MaterialSwitch(this).apply {
             isClickable = false
             isFocusable = false
             applySwitchStyle(this)
@@ -1391,10 +1391,30 @@ class MainActivity : Activity() {
 
 
 
-    private fun applySwitchStyle(switchView: Switch) {
+    private fun applySwitchStyle(switchView: MaterialSwitch) {
         val colors = ControlTintModels.switchColors(currentColorScheme())
-        switchView.thumbTintList = statefulControlColorList(colors.checkedThumb, colors.uncheckedThumb, colors.disabledThumb)
-        switchView.trackTintList = statefulControlColorList(colors.checkedTrack, colors.uncheckedTrack, colors.disabledTrack)
+        switchView.minWidth = dp(52)
+        switchView.minimumWidth = dp(52)
+        switchView.minHeight = dp(32)
+        switchView.minimumHeight = dp(32)
+        switchView.thumbTintList = switchStateColorList(
+            checkedEnabled = colors.checkedThumb,
+            uncheckedEnabled = colors.uncheckedThumb,
+            checkedDisabled = colors.disabledCheckedThumb,
+            uncheckedDisabled = colors.disabledUncheckedThumb,
+        )
+        switchView.trackTintList = switchStateColorList(
+            checkedEnabled = colors.checkedTrack,
+            uncheckedEnabled = colors.uncheckedTrack,
+            checkedDisabled = colors.disabledCheckedTrack,
+            uncheckedDisabled = colors.disabledUncheckedTrack,
+        )
+        switchView.trackDecorationTintList = switchStateColorList(
+            checkedEnabled = colors.checkedTrack,
+            uncheckedEnabled = currentColorScheme().outline,
+            checkedDisabled = colors.disabledCheckedTrack,
+            uncheckedDisabled = currentColorScheme().outline.withAlpha(0.38f),
+        )
     }
 
     private fun applyCheckBoxStyle(checkBox: CheckBox) {
@@ -1427,6 +1447,23 @@ class MainActivity : Activity() {
         ),
         intArrayOf(checked, unchecked, disabled),
     )
+
+    private fun switchStateColorList(
+        checkedEnabled: Int,
+        uncheckedEnabled: Int,
+        checkedDisabled: Int,
+        uncheckedDisabled: Int,
+    ): ColorStateList = ColorStateList(
+        arrayOf(
+            intArrayOf(android.R.attr.state_checked, android.R.attr.state_enabled),
+            intArrayOf(-android.R.attr.state_checked, android.R.attr.state_enabled),
+            intArrayOf(android.R.attr.state_checked, -android.R.attr.state_enabled),
+            intArrayOf(-android.R.attr.state_checked, -android.R.attr.state_enabled),
+        ),
+        intArrayOf(checkedEnabled, uncheckedEnabled, checkedDisabled, uncheckedDisabled),
+    )
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun currentColorScheme(): AppColorScheme = if (isDarkTheme()) darkAppColorScheme() else lightAppColorScheme()
 
