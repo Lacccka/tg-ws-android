@@ -513,20 +513,55 @@ class ProxyServerTest {
         server.enqueue(client)
         waitUntil { proxy.stats().networkSettlingWaits == 1L }
         proxy.applyNetworkRouteImmediately("mobile")
-        waitUntil { events.contains("bridge") }
-        proxy.stop()
+        waitUntil(
+            message = {
+                transientNetworkRecoveryDiagnostics(
+                    generationAtNone = generationAtNone,
+                    stats = proxy.stats(),
+                    events = events,
+                    connectorDomains = connector.domains,
+                    logs = logs,
+                )
+            },
+        ) {
+            events.contains("bridge") && connector.domains.contains("kws2.cf.example")
+        }
 
         val stats = proxy.stats()
-        assertEquals(listOf("kws2.cf.example"), connector.domains)
-        assertTrue(stats.networkGeneration > generationAtNone)
+        proxy.stop()
+
+        val connectorDomains = connector.domains.toList()
+        assertTrue(
+            "Expected exactly one resumed CF route attempt after MOBILE within settling window, " +
+                "but connectorDomains=$connectorDomains. " +
+                transientNetworkRecoveryDiagnostics(generationAtNone, stats, events, connectorDomains, logs),
+            connectorDomains == listOf("kws2.cf.example"),
+        )
+        assertTrue(
+            "Expected MOBILE transition to advance network generation beyond $generationAtNone. " +
+                transientNetworkRecoveryDiagnostics(generationAtNone, stats, events, connectorDomains, logs),
+            stats.networkGeneration > generationAtNone,
+        )
         assertEquals(1L, stats.networkSettlingResumedAfterAvailable)
         assertEquals(1L, stats.networkSettlingStaleAttemptsIgnored)
         assertEquals(0L, stats.networkSettlingControlledFailures)
         assertTrue(stats.lastNetworkLostAtMs > 0L)
         assertTrue(stats.lastNetworkAvailableAtMs > 0L)
-        assertTrue(logs.any { it.contains("network settling started after network lost") })
-        assertTrue(logs.any { it.contains("client route waits") })
-        assertTrue(logs.any { it.contains("network appeared during settling") })
+        assertTrue(
+            "Expected network-lost settling log. " +
+                transientNetworkRecoveryDiagnostics(generationAtNone, stats, events, connectorDomains, logs),
+            logs.any { it.contains("network settling started after network lost") },
+        )
+        assertTrue(
+            "Expected route wait log. " +
+                transientNetworkRecoveryDiagnostics(generationAtNone, stats, events, connectorDomains, logs),
+            logs.any { it.contains("client route waits") },
+        )
+        assertTrue(
+            "Expected resumed-after-network-available log. " +
+                transientNetworkRecoveryDiagnostics(generationAtNone, stats, events, connectorDomains, logs),
+            logs.any { it.contains("network appeared during settling") },
+        )
     }
 
     @Test
@@ -3067,6 +3102,24 @@ class ProxyServerTest {
         throw AssertionError("Timed out waiting for ${message()}")
     }
 
+    private fun transientNetworkRecoveryDiagnostics(
+        generationAtNone: Long,
+        stats: ProxyServerStats,
+        events: List<String>,
+        connectorDomains: List<String>,
+        logs: List<String>,
+    ): String =
+        "generationAtNone=$generationAtNone, currentGeneration=${stats.networkGeneration}, " +
+            "settlingWaits=${stats.networkSettlingWaits}, settlingWaitMs=${stats.networkSettlingWaitMs}, " +
+            "resumedAfterAvailable=${stats.networkSettlingResumedAfterAvailable}, " +
+            "staleAttemptsIgnored=${stats.networkSettlingStaleAttemptsIgnored}, " +
+            "controlledFailures=${stats.networkSettlingControlledFailures}, " +
+            "settlingUntilMs=${stats.networkSettlingUntilMs}, " +
+            "lastNetworkLostAtMs=${stats.lastNetworkLostAtMs}, " +
+            "lastNetworkAvailableAtMs=${stats.lastNetworkAvailableAtMs}, " +
+            "effectiveRoute=${stats.effectiveRouteMode}, lastRouteUsed=${stats.lastRouteUsed}, " +
+            "events=$events, connectorDomains=$connectorDomains, logs=$logs"
+
     private object DeterministicRandomBytes : RelayInit.RandomBytes {
         override fun nextBytes(length: Int): ByteArray = ByteArray(length) { index -> (index + 1).toByte() }
     }
@@ -3229,9 +3282,9 @@ class ProxyServerTest {
     private class RecordingConnector(
         private val webSocket: FakeWebSocketBinaryStream,
     ) : RawWebSocketConnector {
-        val targetHosts = mutableListOf<String>()
-        val domains = mutableListOf<String>()
-        val paths = mutableListOf<String>()
+        val targetHosts = CopyOnWriteArrayList<String>()
+        val domains = CopyOnWriteArrayList<String>()
+        val paths = CopyOnWriteArrayList<String>()
 
         override fun connect(
             targetHost: String,
