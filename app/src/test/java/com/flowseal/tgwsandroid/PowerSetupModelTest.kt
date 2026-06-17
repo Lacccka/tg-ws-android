@@ -1,8 +1,11 @@
 package com.flowseal.tgwsandroid
 
+import android.app.StatusBarManager
 import android.os.Build
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PowerSetupModelTest {
@@ -10,8 +13,16 @@ class PowerSetupModelTest {
         assertEquals("Без ограничений", PowerSetupUiMapper.batteryStatus(BatteryOptimizationStatus.Granted))
     }
 
+    @Test fun batteryOptimizationGrantedRemainsActionable() {
+        assertTrue(PowerSetupUiMapper.isBatteryActionEnabled(BatteryOptimizationStatus.Granted))
+    }
+
     @Test fun batteryOptimizationNotGrantedShowsNeedsAction() {
         assertEquals("Нужно разрешить", PowerSetupUiMapper.batteryStatus(BatteryOptimizationStatus.NeedsAction))
+    }
+
+    @Test fun batteryOptimizationNotGrantedRemainsActionable() {
+        assertTrue(PowerSetupUiMapper.isBatteryActionEnabled(BatteryOptimizationStatus.NeedsAction))
     }
 
     @Test fun backgroundRestrictedShowsWarning() {
@@ -35,17 +46,44 @@ class PowerSetupModelTest {
         assertEquals(0, AutostartIntentPlan.candidates("Google").size)
     }
 
-    @Test fun quickSettingsSupportedShowsSettingsActionState() {
-        assertEquals(QuickSettingsTileStatus.Available, PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION_CODES.TIRAMISU))
-        assertEquals("Можно добавить", PowerSetupUiMapper.quickSettingsStatus(QuickSettingsTileStatus.Available))
+    @Test fun quickSettingsApi33WithoutAddedPrefShowsCanAdd() {
+        assertEquals(QuickSettingsTileStatus.NeedsAction, PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION_CODES.TIRAMISU, false))
+        assertEquals("Можно добавить", PowerSetupUiMapper.quickSettingsStatus(QuickSettingsTileStatus.NeedsAction))
     }
 
-    @Test fun quickSettingsUnsupportedShowsUnavailableOrManualState() {
-        assertEquals(QuickSettingsTileStatus.Unsupported, PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION_CODES.M))
-        assertEquals("Недоступно на этой версии Android", PowerSetupUiMapper.quickSettingsStatus(QuickSettingsTileStatus.Unsupported))
+    @Test fun quickSettingsApi33WithAddedPrefShowsAdded() {
+        assertEquals(QuickSettingsTileStatus.AlreadyAddedOrLikelyAvailable, PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION_CODES.TIRAMISU, true))
+        assertEquals("Добавлено", PowerSetupUiMapper.quickSettingsStatus(QuickSettingsTileStatus.AlreadyAddedOrLikelyAvailable))
+    }
+
+    @Test fun quickSettingsApi24To32WithoutAddedPrefShowsManualAdd() {
+        assertEquals(QuickSettingsTileStatus.AvailableManualAdd, PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION_CODES.N, false))
+        assertEquals("Добавьте вручную", PowerSetupUiMapper.quickSettingsStatus(QuickSettingsTileStatus.AvailableManualAdd))
+        assertEquals(QuickSettingsTileStatus.AvailableManualAdd, PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION_CODES.S_V2, false))
+    }
+
+    @Test fun quickSettingsUnsupportedShowsUnavailableState() {
+        assertEquals(QuickSettingsTileStatus.Unsupported, PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION_CODES.M, false))
+        assertEquals("Недоступно", PowerSetupUiMapper.quickSettingsStatus(QuickSettingsTileStatus.Unsupported))
     }
 
     @Test fun quickSettingsClickDoesNotBlindlyMarkAdded() {
-        assertNotEquals("Уже добавлено", PowerSetupUiMapper.quickSettingsStatus(QuickSettingsTileStatus.Available))
+        assertNotEquals("Добавлено", PowerSetupUiMapper.quickSettingsStatus(QuickSettingsTileStatus.NeedsAction))
+    }
+
+    @Test fun quickSettingsAddedCallbackPersistsAdded() {
+        assertTrue(QuickSettingsTileAddResultMapper.shouldPersistAdded(StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED))
+    }
+
+    @Test fun quickSettingsAlreadyAddedCallbackPersistsAdded() {
+        assertTrue(QuickSettingsTileAddResultMapper.shouldPersistAdded(StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED))
+    }
+
+    @Test fun quickSettingsNotAddedCallbackDoesNotPersistAdded() {
+        assertFalse(QuickSettingsTileAddResultMapper.shouldPersistAdded(StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_NOT_ADDED))
+    }
+
+    @Test fun recommendationCooldownAloneMustNotMarkTileAsAdded() {
+        assertEquals(QuickSettingsTileStatus.NeedsAction, PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION_CODES.TIRAMISU, tileAddedOrLikelyAdded = false))
     }
 }

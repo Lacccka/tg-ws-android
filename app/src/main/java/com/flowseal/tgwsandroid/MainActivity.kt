@@ -660,7 +660,6 @@ class MainActivity : Activity() {
             if (!prefs.getBoolean(PREF_RECOMMENDATION_QS_DONE, false) && !recommendationInCooldown(RECOMMENDATION_QS)) {
                 add(recommendation(RECOMMENDATION_QS, RecommendationUiText.ADD_ACTION) {
                     onAddQuickSettingsTile()
-                    coolDownRecommendation(RECOMMENDATION_QS)
                 })
             }
             if (!config.telemetryEnabled && !recommendationInCooldown(RECOMMENDATION_TELEMETRY)) {
@@ -1291,13 +1290,20 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun openBatterySettings() = onRequestBatteryUnrestricted()
+    private fun openBatterySettings() = onOpenBatterySetupAction()
 
-    private fun onRequestBatteryUnrestricted() {
-        val result = PowerSettingsNavigator(this).requestIgnoreBatteryOptimizations(this)
+    private fun onOpenBatterySetupAction() {
+        val navigator = PowerSettingsNavigator(this)
+        val result = if (detectBatteryOptimizationStatus() == "unrestricted") {
+            navigator.openBatteryOptimizationSettings()
+        } else {
+            navigator.requestIgnoreBatteryOptimizations(this)
+        }
         if (result == PowerSettingsOpenResult.Failed) Toast.makeText(this, "Не удалось открыть настройки батареи", Toast.LENGTH_LONG).show()
         refreshState()
     }
+
+    private fun onRequestBatteryUnrestricted() = onOpenBatterySetupAction()
 
     private fun onOpenAutostartSettings() {
         val result = PowerSettingsNavigator(this).openAutostartSettings()
@@ -1384,9 +1390,7 @@ class MainActivity : Activity() {
                     Icon.createWithResource(this, R.drawable.ic_qs_tg_proxy),
                     mainExecutor,
                 ) { result ->
-                    if (result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ||
-                        result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED
-                    ) {
+                    if (QuickSettingsTileAddResultMapper.shouldPersistAdded(result)) {
                         prefs.edit().putBoolean(PREF_RECOMMENDATION_QS_DONE, true).apply()
                     }
                     if (!isFinishing && !isDestroyed) refreshState()
@@ -1454,7 +1458,10 @@ class MainActivity : Activity() {
             "not_supported" -> OemAutostartStatus.NotSupportedOrUnavailable
             else -> OemAutostartStatus.Unknown
         },
-        quickSettingsTile = PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION.SDK_INT),
+        quickSettingsTile = PowerSetupUiMapper.quickSettingsStatusForSdk(
+            Build.VERSION.SDK_INT,
+            prefs.getBoolean(PREF_RECOMMENDATION_QS_DONE, false),
+        ),
     )
 
     private fun detectBackgroundRestrictionStatus(): BackgroundRestrictionStatus = try {

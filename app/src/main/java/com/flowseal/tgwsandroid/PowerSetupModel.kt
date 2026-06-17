@@ -1,12 +1,13 @@
 package com.flowseal.tgwsandroid
 
+import android.app.StatusBarManager
 import android.os.Build
 
 enum class BatteryOptimizationStatus { Granted, NeedsAction, UnsupportedOrUnknown }
 enum class BackgroundRestrictionStatus { Allowed, Restricted, UnsupportedOrUnknown }
 enum class AppBootPreferenceStatus { EnabledInApp, DisabledInApp }
 enum class OemAutostartStatus { Unknown, NeedsManualCheck, OpenedSettingsButNotVerified, NotSupportedOrUnavailable }
-enum class QuickSettingsTileStatus { Available, AlreadyAddedOrLikelyAvailable, NeedsAction, Unsupported, Unknown }
+enum class QuickSettingsTileStatus { NeedsAction, AvailableManualAdd, AlreadyAddedOrLikelyAvailable, Unsupported, Unknown }
 enum class PowerSettingsAction { Battery, Autostart, BackgroundData, AppSettings, QuickSettingsTile, None }
 enum class PowerSettingsOpenResult { Exact, Fallback, Failed, AlreadyGranted }
 
@@ -18,7 +19,19 @@ data class PowerSetupStatus(
     val quickSettingsTile: QuickSettingsTileStatus,
 )
 
+object QuickSettingsTileAddResultMapper {
+    fun shouldPersistAdded(result: Int): Boolean =
+        result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ADDED ||
+            result == StatusBarManager.TILE_ADD_REQUEST_RESULT_TILE_ALREADY_ADDED
+}
+
 object PowerSetupUiMapper {
+    fun isBatteryActionEnabled(status: BatteryOptimizationStatus): Boolean = when (status) {
+        BatteryOptimizationStatus.Granted,
+        BatteryOptimizationStatus.NeedsAction,
+        BatteryOptimizationStatus.UnsupportedOrUnknown -> true
+    }
+
     fun batteryStatus(status: BatteryOptimizationStatus): String = when (status) {
         BatteryOptimizationStatus.Granted -> "Без ограничений"
         BatteryOptimizationStatus.NeedsAction -> "Нужно разрешить"
@@ -39,16 +52,17 @@ object PowerSetupUiMapper {
     }
 
     fun quickSettingsStatus(status: QuickSettingsTileStatus): String = when (status) {
-        QuickSettingsTileStatus.Available -> "Можно добавить"
-        QuickSettingsTileStatus.AlreadyAddedOrLikelyAvailable -> "Уже добавлено"
-        QuickSettingsTileStatus.NeedsAction -> "Откройте шторку и добавьте TG WS"
-        QuickSettingsTileStatus.Unsupported -> "Недоступно на этой версии Android"
+        QuickSettingsTileStatus.Unsupported -> "Недоступно"
+        QuickSettingsTileStatus.NeedsAction -> "Можно добавить"
+        QuickSettingsTileStatus.AvailableManualAdd -> "Добавьте вручную"
+        QuickSettingsTileStatus.AlreadyAddedOrLikelyAvailable -> "Добавлено"
         QuickSettingsTileStatus.Unknown -> "Неизвестно"
     }
 
-    fun quickSettingsStatusForSdk(sdk: Int): QuickSettingsTileStatus = when {
-        sdk >= Build.VERSION_CODES.TIRAMISU -> QuickSettingsTileStatus.Available
-        sdk >= Build.VERSION_CODES.N -> QuickSettingsTileStatus.NeedsAction
-        else -> QuickSettingsTileStatus.Unsupported
+    fun quickSettingsStatusForSdk(sdk: Int, tileAddedOrLikelyAdded: Boolean = false): QuickSettingsTileStatus = when {
+        sdk < Build.VERSION_CODES.N -> QuickSettingsTileStatus.Unsupported
+        tileAddedOrLikelyAdded -> QuickSettingsTileStatus.AlreadyAddedOrLikelyAvailable
+        sdk >= Build.VERSION_CODES.TIRAMISU -> QuickSettingsTileStatus.NeedsAction
+        else -> QuickSettingsTileStatus.AvailableManualAdd
     }
 }
