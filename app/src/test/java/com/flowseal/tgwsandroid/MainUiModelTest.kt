@@ -440,6 +440,49 @@ class MainUiModelTest {
         assertEquals("тёмная тема", AppearanceUiModels.compactHelper(Appearance.DARK))
     }
 
+
+    @Test
+    fun darkSwitchColorsDistinguishCheckedUncheckedAndDisabledStates() {
+        val colors = ControlTintModels.switchColors(darkAppColorScheme())
+
+        assertNotEquals(colors.checkedThumb, colors.uncheckedThumb)
+        assertNotEquals(colors.checkedTrack, colors.uncheckedTrack)
+        assertNotEquals(colors.checkedTrack, darkAppColorScheme().background)
+        assertNotEquals(colors.uncheckedThumb, darkAppColorScheme().background)
+        assertNotEquals(colors.disabledThumb, colors.checkedThumb)
+    }
+
+    @Test
+    fun darkCompoundControlTintsStayVisibleAgainstBackground() {
+        val scheme = darkAppColorScheme()
+        val colors = ControlTintModels.compoundButtonColors(scheme)
+
+        assertNotEquals(colors.checked, scheme.background)
+        assertNotEquals(colors.unchecked, scheme.background)
+        assertNotEquals(colors.checked, colors.unchecked)
+    }
+
+    @Test
+    fun darkRadioUsesVisibleCompoundTints() {
+        val scheme = darkAppColorScheme()
+        val colors = ControlTintModels.compoundButtonColors(scheme)
+
+        assertNotEquals(colors.checked, scheme.background)
+        assertNotEquals(colors.unchecked, scheme.background)
+    }
+
+    @Test
+    fun darkThemeSelectorSelectedAndUnselectedColorsDiffer() {
+        val scheme = darkAppColorScheme()
+        val selected = ControlTintModels.segmentedButtonColors(scheme, selected = true)
+        val unselected = ControlTintModels.segmentedButtonColors(scheme, selected = false)
+
+        assertNotEquals(selected.background, unselected.background)
+        assertNotEquals(selected.text, unselected.text)
+        assertNotEquals(selected.stroke, unselected.stroke)
+        assertEquals(listOf("Авто", "Светлая", "Тёмная"), SettingsUiText.themeOptions)
+    }
+
     @Test
     fun stoppedProxyTelegramStatusSaysProxyStopped() {
         assertEquals("Прокси остановлен", ConnectionStatusMapper.status(running = false, networkStatus = "Wi-Fi", stats = stats()))

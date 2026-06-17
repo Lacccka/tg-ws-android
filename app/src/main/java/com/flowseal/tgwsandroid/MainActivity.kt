@@ -29,6 +29,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.CompoundButton
 import android.widget.FrameLayout
 import com.google.android.material.bottomnavigation.BottomNavigationView
 import com.google.android.material.button.MaterialButton
@@ -38,6 +39,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import android.widget.Switch
+import androidx.core.widget.CompoundButtonCompat
 import androidx.core.content.res.use
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -278,6 +280,7 @@ class MainActivity : Activity() {
         portStatusText = createValueText()
         secretStateText = createValueText().apply { setTextColor(currentColorScheme().success) }
         telemetryCheckBox = CheckBox(this).apply {
+            applyCheckBoxStyle(this)
             text = "Отправлять анонимную диагностику"
             isAllCaps = false
             setTextColor(currentColorScheme().onSurface)
@@ -291,6 +294,7 @@ class MainActivity : Activity() {
         }
         telemetryTestButton = createButton("Отправить тестовую телеметрию") { sendTestTelemetry() }
         developerModeCheckBox = CheckBox(this).apply {
+            applyCheckBoxStyle(this)
             text = "Режим разработчика"
             isAllCaps = false
             isChecked = developerModeEnabled()
@@ -397,14 +401,51 @@ class MainActivity : Activity() {
         val options = UserRouteModes.normalOptions
         val labels = options.map { it.title }.toTypedArray()
         val current = ProxyRuntimeConfig.appConfig(applicationContext).routeMode
-        AlertDialog.Builder(this)
-            .setTitle(SettingsUiText.CONNECTION_MODE_TITLE)
-            .setSingleChoiceItems(labels, options.indexOfFirst { it.routeMode == current }.coerceAtLeast(0)) { dialog, index ->
-                setRouteMode(options[index].routeMode)
-                dialog.dismiss()
+        showThemeAwareSingleChoiceDialog(
+            title = SettingsUiText.CONNECTION_MODE_TITLE,
+            labels = labels,
+            checkedIndex = options.indexOfFirst { it.routeMode == current }.coerceAtLeast(0),
+        ) { index ->
+            setRouteMode(options[index].routeMode)
+        }
+    }
+
+
+    private fun showThemeAwareSingleChoiceDialog(
+        title: String,
+        labels: Array<String>,
+        checkedIndex: Int,
+        onSelected: (Int) -> Unit,
+    ) {
+        val density = resources.displayMetrics.density
+        val colors = currentColorScheme()
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(colors.surface)
+            setPadding((8 * density).toInt(), (8 * density).toInt(), (8 * density).toInt(), (4 * density).toInt())
+        }
+        lateinit var dialog: AlertDialog
+        labels.forEachIndexed { index, label ->
+            val radioButton = android.widget.RadioButton(this).apply {
+                text = label
+                isChecked = index == checkedIndex
+                setTextColor(colors.onSurface)
+                textSize = 16f
+                applyRadioButtonStyle(this)
+                setPadding((16 * density).toInt(), (10 * density).toInt(), (16 * density).toInt(), (10 * density).toInt())
+                setOnClickListener {
+                    onSelected(index)
+                    dialog.dismiss()
+                }
             }
+            list.addView(radioButton, matchWrapParams())
+        }
+        dialog = AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(list)
             .setNegativeButton("Отмена", null)
             .show()
+        dialog.window?.decorView?.setBackgroundColor(colors.surface)
     }
 
     private fun refreshState() {
@@ -888,14 +929,13 @@ class MainActivity : Activity() {
         val options = Appearance.entries
         val labels = options.map { appearanceDialogText(it) }.toTypedArray()
         val current = ProxyRuntimeConfig.appConfig(applicationContext).appearance
-        AlertDialog.Builder(this)
-            .setTitle(SettingsUiText.THEME_TITLE)
-            .setSingleChoiceItems(labels, options.indexOf(current).coerceAtLeast(0)) { dialog, index ->
-                setAppearance(options[index])
-                dialog.dismiss()
-            }
-            .setNegativeButton("Отмена", null)
-            .show()
+        showThemeAwareSingleChoiceDialog(
+            title = SettingsUiText.THEME_TITLE,
+            labels = labels,
+            checkedIndex = options.indexOf(current).coerceAtLeast(0),
+        ) { index ->
+            setAppearance(options[index])
+        }
     }
 
     private fun setAppearance(appearance: Appearance) {
@@ -1119,7 +1159,11 @@ class MainActivity : Activity() {
         SettingsAdaptiveRow(title, description, topTrailing = createValueText().apply { text = "›"; textSize = 22f }, meta = null, onClick = onClick)
 
     private fun SettingsSwitchRow(title: String, description: String, status: TextView, badge: TextView? = null, onClick: () -> Unit): LinearLayout {
-        val switch = Switch(this).apply { isClickable = false; isFocusable = false }
+        val switch = Switch(this).apply {
+            isClickable = false
+            isFocusable = false
+            applySwitchStyle(this)
+        }
         telemetrySwitch = switch
         status.visibility = View.GONE
         return SettingsAdaptiveRow(title, description, topTrailing = switch, meta = metaLine(badge, status), onClick = onClick)
@@ -1226,6 +1270,7 @@ class MainActivity : Activity() {
                 insetBottom = 0
                 setPadding((12 * density).toInt(), 0, (12 * density).toInt(), 0)
                 tag = option.appearance
+                applySegmentedButtonStyle(this, option.appearance == appearance)
             }
             themeButtons[option.appearance] = button
             group.addView(button, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
@@ -1261,10 +1306,7 @@ class MainActivity : Activity() {
         }
         themeButtons.forEach { (buttonAppearance, button) ->
             val selected = buttonAppearance == appearance
-            button.backgroundTintList = ColorStateList.valueOf(if (selected) currentColorScheme().primary else currentColorScheme().surfaceVariant)
-            button.setTextColor(if (selected) currentColorScheme().onPrimary else currentColorScheme().onSurface)
-            button.strokeColor = ColorStateList.valueOf(if (selected) currentColorScheme().primary else currentColorScheme().outline)
-            button.strokeWidth = (1 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+            applySegmentedButtonStyle(button, selected)
         }
     }
 
@@ -1347,6 +1389,44 @@ class MainActivity : Activity() {
         }
     }
 
+
+
+    private fun applySwitchStyle(switchView: Switch) {
+        val colors = ControlTintModels.switchColors(currentColorScheme())
+        switchView.thumbTintList = statefulControlColorList(colors.checkedThumb, colors.uncheckedThumb, colors.disabledThumb)
+        switchView.trackTintList = statefulControlColorList(colors.checkedTrack, colors.uncheckedTrack, colors.disabledTrack)
+    }
+
+    private fun applyCheckBoxStyle(checkBox: CheckBox) {
+        applyCompoundButtonTint(checkBox)
+    }
+
+    @Suppress("unused")
+    private fun applyRadioButtonStyle(radioButton: android.widget.RadioButton) {
+        applyCompoundButtonTint(radioButton)
+    }
+
+    private fun applyCompoundButtonTint(button: CompoundButton) {
+        val colors = ControlTintModels.compoundButtonColors(currentColorScheme())
+        CompoundButtonCompat.setButtonTintList(button, statefulControlColorList(colors.checked, colors.unchecked, colors.disabled))
+    }
+
+    private fun applySegmentedButtonStyle(button: MaterialButton, selected: Boolean) {
+        val colors = ControlTintModels.segmentedButtonColors(currentColorScheme(), selected)
+        button.backgroundTintList = ColorStateList.valueOf(colors.background)
+        button.setTextColor(colors.text)
+        button.strokeColor = ColorStateList.valueOf(colors.stroke)
+        button.strokeWidth = (1 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
+    }
+
+    private fun statefulControlColorList(checked: Int, unchecked: Int, disabled: Int): ColorStateList = ColorStateList(
+        arrayOf(
+            intArrayOf(android.R.attr.state_enabled, android.R.attr.state_checked),
+            intArrayOf(android.R.attr.state_enabled, -android.R.attr.state_checked),
+            intArrayOf(-android.R.attr.state_enabled),
+        ),
+        intArrayOf(checked, unchecked, disabled),
+    )
 
     private fun currentColorScheme(): AppColorScheme = if (isDarkTheme()) darkAppColorScheme() else lightAppColorScheme()
 

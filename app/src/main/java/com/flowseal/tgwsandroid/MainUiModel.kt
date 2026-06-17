@@ -97,6 +97,64 @@ fun bottomNavColorModel(colorScheme: AppColorScheme): BottomNavColorModel = Bott
     activeIndicator = colorScheme.primaryContainer,
 )
 
+
+data class SwitchControlColors(
+    val checkedThumb: Int,
+    val checkedTrack: Int,
+    val uncheckedThumb: Int,
+    val uncheckedTrack: Int,
+    val disabledThumb: Int,
+    val disabledTrack: Int,
+)
+
+data class CompoundControlColors(
+    val checked: Int,
+    val unchecked: Int,
+    val disabled: Int,
+)
+
+data class SegmentedButtonColors(
+    val background: Int,
+    val text: Int,
+    val stroke: Int,
+)
+
+object ControlTintModels {
+    fun switchColors(colorScheme: AppColorScheme): SwitchControlColors = SwitchControlColors(
+        checkedThumb = colorScheme.onPrimary,
+        checkedTrack = colorScheme.primary,
+        uncheckedThumb = colorScheme.onSurfaceVariant,
+        uncheckedTrack = colorScheme.surfaceVariant,
+        disabledThumb = colorScheme.onSurfaceVariant.withAlpha(0.38f),
+        disabledTrack = colorScheme.surfaceVariant.withAlpha(0.38f),
+    )
+
+    fun compoundButtonColors(colorScheme: AppColorScheme): CompoundControlColors = CompoundControlColors(
+        checked = colorScheme.primary,
+        unchecked = colorScheme.onSurfaceVariant,
+        disabled = colorScheme.onSurfaceVariant.withAlpha(0.38f),
+    )
+
+    fun segmentedButtonColors(colorScheme: AppColorScheme, selected: Boolean): SegmentedButtonColors = if (selected) {
+        SegmentedButtonColors(
+            background = colorScheme.primaryContainer,
+            text = colorScheme.onPrimaryContainer,
+            stroke = colorScheme.primary,
+        )
+    } else {
+        SegmentedButtonColors(
+            background = colorScheme.surface,
+            text = colorScheme.onSurfaceVariant,
+            stroke = colorScheme.outline,
+        )
+    }
+}
+
+private fun Int.withAlpha(alpha: Float): Int {
+    val boundedAlpha = (alpha.coerceIn(0f, 1f) * 255).toInt()
+    return (this and 0x00FFFFFF) or (boundedAlpha shl 24)
+}
+
 object RussianUiText {
     const val ROUTE_AUTO = "Авто"
     const val ROUTE_AUTO_SUBTITLE = "Рекомендуется. Приложение само выбирает подходящий режим."
