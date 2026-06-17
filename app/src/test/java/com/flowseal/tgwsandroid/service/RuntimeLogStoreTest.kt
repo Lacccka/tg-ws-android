@@ -16,6 +16,7 @@ import java.time.Instant
 import java.time.ZoneId
 import java.time.ZoneOffset
 import java.io.File
+import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -208,7 +209,7 @@ class RuntimeLogStoreTest {
 
     @Test
     fun filePersistenceTrimsToBoundedSize() {
-        val file = createTempFile(prefix = "runtime", suffix = ".log")
+        val file = Files.createTempFile("runtime", ".log").toFile()
         try {
             val persistence = FileRuntimeLogPersistence(file, maxBytes = 80)
 

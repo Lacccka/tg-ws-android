@@ -85,8 +85,14 @@ class ForegroundServiceManifestTest {
         return substring(start, nextBlock)
     }
 
-    private fun repoRoot(): File = generateSequence(File(System.getProperty("user.dir"))) { it.parentFile }
-        .first { File(it, "app/build.gradle.kts").isFile }
+    private fun repoRoot(): File {
+        val userDir = requireNotNull(System.getProperty("user.dir")) { "Missing user.dir system property" }
+        return generateSequence(File(userDir)) { current ->
+            current.parentFile
+        }.first { candidate ->
+            File(candidate, "app/build.gradle.kts").isFile
+        }
+    }
 
     companion object {
         private const val SPECIAL_USE_SUBTYPE_DESCRIPTION =

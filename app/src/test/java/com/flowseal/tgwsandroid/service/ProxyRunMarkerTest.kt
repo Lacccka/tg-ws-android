@@ -7,13 +7,14 @@ import org.junit.Test
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.nio.file.Files
 
 class ProxyRunMarkerTest {
     private val fixedClock = Clock.fixed(Instant.parse("2026-06-04T02:45:30Z"), ZoneOffset.UTC)
 
     @Test
     fun markerRecordsRunningOnStart() {
-        val marker = ProxyRunMarker(createTempFile(), fixedClock) { "run-1" }
+        val marker = ProxyRunMarker(Files.createTempFile("proxy-run-marker", ".json").toFile(), fixedClock) { "run-1" }
 
         marker.markStarted()
         val previous = marker.inspectPreviousRun()
@@ -28,7 +29,7 @@ class ProxyRunMarkerTest {
 
     @Test
     fun markerRecordsGracefulStopReason() {
-        val marker = ProxyRunMarker(createTempFile(), fixedClock) { "run-1" }
+        val marker = ProxyRunMarker(Files.createTempFile("proxy-run-marker", ".json").toFile(), fixedClock) { "run-1" }
 
         marker.markStarted()
         marker.markStopped("ui")
@@ -42,7 +43,7 @@ class ProxyRunMarkerTest {
 
     @Test
     fun markerRecordsForegroundAndHeartbeat() {
-        val marker = ProxyRunMarker(createTempFile(), fixedClock) { "run-1" }
+        val marker = ProxyRunMarker(Files.createTempFile("proxy-run-marker", ".json").toFile(), fixedClock) { "run-1" }
 
         marker.markStarted()
         marker.markForegroundStarted()
@@ -56,7 +57,7 @@ class ProxyRunMarkerTest {
 
     @Test
     fun previousRunningMarkerIsUnexpectedOnNextInit() {
-        val file = createTempFile()
+        val file = Files.createTempFile("proxy-run-marker", ".json").toFile()
         ProxyRunMarker(file, fixedClock) { "run-1" }.markStarted()
 
         val previous = ProxyRunMarker(file, fixedClock) { "run-2" }.inspectPreviousRun()
@@ -67,7 +68,7 @@ class ProxyRunMarkerTest {
 
     @Test
     fun newRunDoesNotReusePreviousRunHeartbeat() {
-        val file = createTempFile()
+        val file = Files.createTempFile("proxy-run-marker", ".json").toFile()
         val marker = ProxyRunMarker(file, fixedClock) { "run-1" }
 
         marker.markStarted()
@@ -83,7 +84,7 @@ class ProxyRunMarkerTest {
 
     @Test
     fun completedTimeoutRunKeepsStopReasonAndIsNotUnexpected() {
-        val marker = ProxyRunMarker(createTempFile(), fixedClock) { "run-1" }
+        val marker = ProxyRunMarker(Files.createTempFile("proxy-run-marker", ".json").toFile(), fixedClock) { "run-1" }
 
         marker.markStarted()
         marker.markStopped("foreground_service_timeout")
@@ -97,7 +98,7 @@ class ProxyRunMarkerTest {
 
     @Test
     fun cleanStopDoesNotSetPreviousRunUnexpected() {
-        val file = createTempFile()
+        val file = Files.createTempFile("proxy-run-marker", ".json").toFile()
         ProxyRunMarker(file, fixedClock) { "run-1" }.apply {
             markStarted()
             markStopped("ui")

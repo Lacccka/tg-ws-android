@@ -12,6 +12,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.graphics.drawable.Icon
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
@@ -268,8 +269,20 @@ class ProxyForegroundService : Service() {
             .setContentText("Прокси работает: ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
             .setContentIntent(activityPendingIntent)
             .setOngoing(true)
-            .addAction(android.R.drawable.ic_menu_view, "Открыть", activityPendingIntent)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Остановить", stopPendingIntent)
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(this, android.R.drawable.ic_menu_view),
+                    "Открыть",
+                    activityPendingIntent,
+                ).build(),
+            )
+            .addAction(
+                Notification.Action.Builder(
+                    Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel),
+                    "Остановить",
+                    stopPendingIntent,
+                ).build(),
+            )
             .build()
     }
 
