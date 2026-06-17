@@ -312,7 +312,7 @@ class MainActivity : Activity() {
         directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         developerSection = SettingsSection("Для разработчика") {
             addView(createValueText().apply {
-                text = "Технические диагностические данные и служебные действия перенесены во вкладку «Диагностика»."
+                text = "Показывает технические разделы во вкладке «Диагностика»."
                 setTextColor(currentColorScheme().onSurfaceVariant)
             }, matchWrapParams())
         }
@@ -512,7 +512,10 @@ class MainActivity : Activity() {
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
             telemetryCheckBox.isChecked = config.telemetryEnabled
             if (::telemetrySwitch.isInitialized) telemetrySwitch.isChecked = config.telemetryEnabled
-            if (::telemetryTestButton.isInitialized) telemetryTestButton.isEnabled = config.telemetryEnabled
+            if (::telemetryTestButton.isInitialized) {
+                telemetryTestButton.isEnabled = config.telemetryEnabled
+                telemetryTestButton.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+            }
             secretStateText.text = ProxyRuntimeConfig.partialTelegramSecret(applicationContext)
         }
 
@@ -521,14 +524,15 @@ class MainActivity : Activity() {
             rawRouteDetailsText.text = routeDetailsLine()
             cfDetailsText.text = cfDetailsLine()
             directDetailsText.text = directDetailsLine()
+            if (::telemetryStatusText.isInitialized) {
+                val enabled = ProxyRuntimeConfig.appConfig(applicationContext).telemetryEnabled
+                telemetryStatusText.text = "Анонимная диагностика: ${if (enabled) "включена" else "выключена"}"
+            }
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
         }
         if (::logsText.isInitialized) {
-            logsText.text = ProxyForegroundService.State.recentLogs()
-                .takeLast(MAX_VISIBLE_LOG_LINES)
-                .takeIf { it.isNotEmpty() }
-                ?.joinToString("\n")
-                ?: "Логов пока нет"
+            val logCount = ProxyForegroundService.State.recentLogs().size
+            logsText.text = if (logCount > 0) "Логи доступны: $logCount записей. Откройте лог из карточки «Действия»." else "Логов пока нет"
         }
     }
 
@@ -540,12 +544,13 @@ class MainActivity : Activity() {
         diagnosticsSummaryText = createValueText()
         telemetryStatusText = createValueText()
         telemetryTestButton = createButton("Отправить тестовую телеметрию") { sendTestTelemetry() }
-        logsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        logsText = createValueText(textSize = 13f)
         rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
-        developerSection = SettingsSection("Служебные действия") {
-            addView(telemetryTestButton, matchWrapParams())
+        developerSection = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -558,7 +563,18 @@ class MainActivity : Activity() {
                     text = "Последняя проблема: ${lastProblemText()}"
                     setTextColor(currentColorScheme().onSurfaceVariant)
                 }, matchWrapParams(topMargin = rowGap))
+                if (lastProblemText() != "Нет недавних ошибок") {
+                    addView(createButton("Переподключить") { restartProxyService() }, matchWrapParams(topMargin = rowGap))
+                }
             }, cardParams())
+            addView(SettingsSection("Действия") {
+                addView(createButton("Копировать диагностику") { copyDiagnostics() }, matchWrapParams())
+                addView(createButton("Поделиться диагностикой") { shareDiagnostics() }, matchWrapParams(topMargin = rowGap))
+                addView(createButton("Открыть лог") { showLogsDialog() }, matchWrapParams(topMargin = rowGap))
+                addView(createButton("Очистить логи") { confirmClearLogs() }, matchWrapParams(topMargin = rowGap))
+                telemetryTestButton.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+                addView(telemetryTestButton, matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding))
             addView(SettingsSection("Состояние маршрута") {
                 addView(SettingsRow("Текущий маршрут", createValueText().apply { text = userRouteLabel() }), matchWrapParams())
             }, cardParams(topMargin = padding))
@@ -572,30 +588,17 @@ class MainActivity : Activity() {
                 }, matchWrapParams())
             }, cardParams(topMargin = padding))
             addView(SettingsSection("Логи") {
-                addView(Badge("Последние события"), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-                addView(logsText, matchWrapParams(topMargin = rowGap))
-                addView(createButton("Открыть лог") { showLogsDialog() }, matchWrapParams(topMargin = rowGap))
-                addView(createButton("Очистить логи") { confirmClearLogs() }, matchWrapParams(topMargin = rowGap))
+                addView(logsText.apply { setTextColor(currentColorScheme().onSurfaceVariant) }, matchWrapParams())
             }, cardParams(topMargin = padding))
-            addView(SettingsSection("Анонимная диагностика") {
-                addView(SettingsSwitchRow("Анонимная диагностика", "Помогает улучшать стабильность без личных данных.", telemetryStatusText, Badge("Рекомендуется")) { toggleTelemetry() }, matchWrapParams())
+            addView(SettingsSection("Анонимная диагностика", "Настраивается в разделе Настройки.") {
+                addView(telemetryStatusText, matchWrapParams())
             }, cardParams(topMargin = padding))
-            addView(SettingsSection("Действия диагностики") {
-                addView(createButton("Копировать диагностику") { copyDiagnostics() }, matchWrapParams())
-                addView(createButton("Поделиться диагностикой") { shareDiagnostics() }, matchWrapParams(topMargin = rowGap))
-            }, cardParams(topMargin = padding))
-            developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
-            listOf(
-                SettingsSection("Маршрут: детали") { addView(rawRouteDetailsText, matchWrapParams()) },
-                SettingsSection("Cloudflare: детали") { addView(cfDetailsText, matchWrapParams()) },
-                SettingsSection("Direct/pool: детали") { addView(directDetailsText, matchWrapParams()) },
-                SettingsSection("Handshake: детали") { addView(createValueText().apply { text = directDetailsLine() }, matchWrapParams()) },
-                SettingsSection("Счётчики") { addView(createValueText().apply { text = ProxyForegroundService.State.diagnosticReport() }, matchWrapParams()) },
-            ).forEach { detailsSection ->
-                detailsSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
-                addView(detailsSection, cardParams(topMargin = padding))
-            }
-            addView(developerSection, cardParams(topMargin = padding, bottomMargin = padding))
+            developerSection.addView(CollapsibleSettingsSection("Маршрут: детали", rawRouteDetailsText), cardParams(topMargin = padding))
+            developerSection.addView(CollapsibleSettingsSection("Cloudflare: детали", cfDetailsText), cardParams(topMargin = padding))
+            developerSection.addView(CollapsibleSettingsSection("Direct/pool: детали", directDetailsText), cardParams(topMargin = padding))
+            developerSection.addView(CollapsibleSettingsSection("Handshake: детали", createValueText(textSize = 13f).apply { text = directDetailsLine(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
+            developerSection.addView(CollapsibleSettingsSection("Счётчики", createValueText(textSize = 13f).apply { text = ProxyForegroundService.State.diagnosticReport(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
+            addView(developerSection, matchWrapParams())
         }
         return ScrollView(this).apply {
             setBackgroundColor(currentColorScheme().background)
@@ -798,6 +801,7 @@ class MainActivity : Activity() {
         val logText = ProxyForegroundService.State.recentLogs().takeIf { it.isNotEmpty() }?.joinToString("\n") ?: "Логов пока нет"
         val textView = createValueText(textSize = 13f).apply {
             text = logText
+            typeface = Typeface.MONOSPACE
             setTextIsSelectable(true)
             setPadding((16 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt())
         }
@@ -1358,6 +1362,20 @@ class MainActivity : Activity() {
         body()
     }
 
+
+    private fun CollapsibleSettingsSection(title: String, content: TextView): LinearLayout = SettingsSection(title) {
+        val details = content.apply {
+            visibility = View.GONE
+            setTextColor(currentColorScheme().onSurfaceVariant)
+        }
+        val toggle = createOutlinedButton("Показать") { buttonView ->
+            val expanded = details.visibility != View.VISIBLE
+            details.visibility = if (expanded) View.VISIBLE else View.GONE
+            (buttonView as? Button)?.text = if (expanded) "Скрыть" else "Показать"
+        }
+        addView(toggle, matchWrapParams())
+        addView(details, matchWrapParams(topMargin = (8 * resources.displayMetrics.density).toInt()))
+    }
     private fun createSectionTitle(title: String): TextView = TextView(this).apply {
         text = title
         textSize = 17f

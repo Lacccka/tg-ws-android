@@ -127,6 +127,15 @@ class MainUiModelTest {
         assertFalse(UserRouteModes.normalOptions.any { it.routeMode == NetworkRouteMode.CF_ONLY })
     }
 
+
+    @Test
+    fun settingsDeveloperModeDoesNotUseMovedToDiagnosticsMessage() {
+        val source = java.io.File("src/main/java/com/flowseal/tgwsandroid/MainActivity.kt").readText()
+        assertFalse(source.contains("данные перенесены", ignoreCase = true))
+        assertFalse(source.contains("перенесены во вкладку"))
+        assertFalse(source.contains("Технические диагностические данные и служебные действия перенесены"))
+    }
+
     @Test
     fun developerDiagnosticsMayExposeRawRouteMode() {
         assertEquals("CF_ONLY", DeveloperUiModel.routeModeValue(NetworkRouteMode.CF_ONLY, developerModeEnabled = true))
@@ -171,6 +180,49 @@ class MainUiModelTest {
         assertFalse(SettingsScreenUiModel.actions.contains("Копировать ссылку прокси"))
     }
 
+
+    @Test
+    fun developerModeControlsDiagnosticsSectionsAndTelemetryAction() {
+        val offSections = DiagnosticsScreenUiModel.sections(developerModeEnabled = false)
+        assertFalse(offSections.any { it.developerOnly })
+        assertFalse(DiagnosticsScreenUiModel.actions(developerModeEnabled = false).contains("Отправить тестовую телеметрию"))
+
+        val onSections = DiagnosticsScreenUiModel.sections(developerModeEnabled = true)
+        DiagnosticsScreenUiModel.developerSections.forEach { title ->
+            assertTrue(onSections.any { it.title == title && it.developerOnly && it.collapsedByDefault })
+        }
+        assertTrue(DiagnosticsScreenUiModel.actions(developerModeEnabled = true).contains("Отправить тестовую телеметрию"))
+    }
+
+    @Test
+    fun diagnosticsActionsAreSingleTopActionsCard() {
+        val sections = DiagnosticsScreenUiModel.sections(developerModeEnabled = true)
+        assertEquals("Состояние", sections[0].title)
+        assertEquals("Действия", sections[1].title)
+        val actionSections = sections.filter { it.actions.isNotEmpty() }
+        assertEquals(1, actionSections.size)
+        assertEquals(DiagnosticsScreenUiModel.actions(developerModeEnabled = true), actionSections.single().actions)
+        assertTrue(sections.indexOfFirst { it.title == "Действия" } < sections.indexOfFirst { it.title == "Логи" })
+        assertTrue(actionSections.single().actions.containsAll(listOf("Копировать диагностику", "Поделиться диагностикой", "Открыть лог", "Очистить логи")))
+    }
+
+    @Test
+    fun diagnosticsAnonymousDiagnosticsIsReadOnlyAndLogsAreCompact() {
+        val sections = DiagnosticsScreenUiModel.sections(developerModeEnabled = false)
+        val anonymous = sections.single { it.title == "Анонимная диагностика" }
+        assertTrue(anonymous.readOnly)
+        assertTrue(anonymous.interactiveSwitches.isEmpty())
+        val logSections = sections.filter { it.title == "Логи" }
+        assertEquals(1, logSections.size)
+        assertFalse(logSections.single().containsRawLogBlock)
+    }
+
+    @Test
+    fun diagnosticsExportAndDeveloperRawDetailsRemainModeled() {
+        assertTrue(DiagnosticsScreenUiModel.actions.contains("Копировать диагностику"))
+        assertTrue(DiagnosticsScreenUiModel.actions.contains("Поделиться диагностикой"))
+        assertTrue(DiagnosticsScreenUiModel.developerSections.containsAll(listOf("Маршрут: детали", "Cloudflare: детали", "Direct/pool: детали", "Handshake: детали", "Счётчики")))
+    }
     @Test
     fun telemetryActionIsRussianOnly() {
         assertTrue(DiagnosticsScreenUiModel.actions.contains("Отправить тестовую телеметрию"))

@@ -508,14 +508,27 @@ object SettingsScreenUiModel {
     )
 }
 
+data class DiagnosticsSectionModel(
+    val title: String,
+    val developerOnly: Boolean = false,
+    val collapsedByDefault: Boolean = false,
+    val containsRawLogBlock: Boolean = false,
+    val actions: List<String> = emptyList(),
+    val interactiveSwitches: List<String> = emptyList(),
+    val readOnly: Boolean = true,
+)
+
 object DiagnosticsScreenUiModel {
-    val actions: List<String> = listOf(
-        "Отправить тестовую телеметрию",
+    val normalActions: List<String> = listOf(
         "Копировать диагностику",
         "Поделиться диагностикой",
         "Открыть лог",
         "Очистить логи",
     )
+
+    const val TEST_TELEMETRY_ACTION = "Отправить тестовую телеметрию"
+
+    val actions: List<String> = normalActions + TEST_TELEMETRY_ACTION
 
     val developerSections: List<String> = listOf(
         "Маршрут: детали",
@@ -523,8 +536,28 @@ object DiagnosticsScreenUiModel {
         "Direct/pool: детали",
         "Handshake: детали",
         "Счётчики",
-        "Служебные действия",
     )
+
+    fun actions(developerModeEnabled: Boolean): List<String> = if (developerModeEnabled) {
+        normalActions + TEST_TELEMETRY_ACTION
+    } else {
+        normalActions
+    }
+
+    fun sections(developerModeEnabled: Boolean): List<DiagnosticsSectionModel> = buildList {
+        add(DiagnosticsSectionModel("Состояние"))
+        add(DiagnosticsSectionModel("Действия", actions = actions(developerModeEnabled)))
+        add(DiagnosticsSectionModel("Состояние маршрута"))
+        add(DiagnosticsSectionModel("Состояние сети"))
+        add(DiagnosticsSectionModel("Ошибки за последнее время"))
+        add(DiagnosticsSectionModel("Логи", actions = emptyList(), containsRawLogBlock = false))
+        add(DiagnosticsSectionModel("Анонимная диагностика", readOnly = true))
+        if (developerModeEnabled) {
+            developerSections.forEach { title ->
+                add(DiagnosticsSectionModel(title, developerOnly = true, collapsedByDefault = true))
+            }
+        }
+    }
 }
 
 object DeveloperUiModel {
