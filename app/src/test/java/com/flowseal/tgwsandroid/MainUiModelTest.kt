@@ -234,6 +234,60 @@ class MainUiModelTest {
         assertTrue(DiagnosticsScreenUiModel.actions.contains("Поделиться диагностикой"))
         assertTrue(DiagnosticsScreenUiModel.developerSections.containsAll(listOf("Маршрут: детали", "Cloudflare: детали", "Direct/pool: детали", "Handshake: детали", "Счётчики")))
     }
+
+    @Test
+    fun diagnosticsCheckNowRemainsAvailableWhenProxyIsOff() {
+        val sections = DiagnosticsScreenUiModel.sections(developerModeEnabled = false)
+        val checkSection = sections.single { it.title == "Проверка подключения" }
+        assertTrue(checkSection.actions.contains(DiagnosticsScreenUiModel.CHECK_NOW_ACTION))
+
+        val source = java.io.File("src/main/java/com/flowseal/tgwsandroid/MainActivity.kt").readText()
+        assertTrue(source.contains("diagnosticsCheckButton.isEnabled = !diagnosticsCheckInProgress"))
+        assertFalse(source.contains("Сначала включите прокси на главном экране"))
+        val checkBody = source.substringAfter("private fun runDiagnosticsAvailabilityCheck()").substringBefore("private fun updateDiagnosticsDashboard()")
+        assertFalse(checkBody.contains("startProxyService"))
+        assertFalse(checkBody.contains("Toast.makeText"))
+    }
+
+    @Test
+    fun diagnosticsProxyOffTextIsNeutralAndActionable() {
+        assertEquals("Прокси выключен", DiagnosticsScreenUiModel.PROXY_OFF_STATUS)
+        assertEquals("Не проверено", DiagnosticsScreenUiModel.PROXY_OFF_AVAILABILITY)
+        assertEquals("Включите прокси на главном экране.", DiagnosticsScreenUiModel.PROXY_OFF_RECOMMENDATION)
+
+        val source = java.io.File("src/main/java/com/flowseal/tgwsandroid/MainActivity.kt").readText()
+        assertTrue(source.contains("!running -> \"Прокси выключен\""))
+        assertTrue(source.contains("!running -> \"Не проверено\""))
+        assertTrue(source.contains("if (!running) add(\"Включите прокси на главном экране.\")"))
+        assertTrue(source.contains("}.take(3)"))
+    }
+
+    @Test
+    fun diagnosticsCountersAreCompactGroupedSummaryOnly() {
+        assertEquals(listOf("Подключения", "Маршруты", "Сеть", "Handshake", "Очереди и пул"), DiagnosticsScreenUiModel.compactCounterGroups)
+        val sections = DiagnosticsScreenUiModel.sections(developerModeEnabled = true)
+        assertTrue(sections.any { it.title == "Счётчики" && it.developerOnly })
+        assertFalse(DiagnosticsScreenUiModel.sections(developerModeEnabled = false).any { it.title == "Счётчики" })
+
+        val source = java.io.File("src/main/java/com/flowseal/tgwsandroid/MainActivity.kt").readText()
+        assertTrue(source.contains("developerCountersSummary()"))
+        assertTrue(source.contains("Нет заметных событий."))
+        assertTrue(source.contains("rows.take(5)"))
+        assertFalse(source.contains("Показать все счётчики"))
+        assertFalse(source.contains("setTitle(\"Счётчики\")"))
+    }
+
+    @Test
+    fun diagnosticsRawDataStaysInExportAndLogsOnly() {
+        val source = java.io.File("src/main/java/com/flowseal/tgwsandroid/MainActivity.kt").readText()
+        assertTrue(source.contains("ProxyForegroundService.State.diagnosticReport()"))
+        assertTrue(DiagnosticsScreenUiModel.actions.contains("Копировать диагностику"))
+        assertTrue(DiagnosticsScreenUiModel.actions.contains("Поделиться диагностикой"))
+        assertTrue(DiagnosticsScreenUiModel.actions.contains("Открыть лог"))
+        assertFalse(source.contains("raw counter", ignoreCase = true))
+        assertFalse(source.contains("Показать все счётчики"))
+    }
+
     @Test
     fun telemetryActionIsRussianOnly() {
         assertTrue(DiagnosticsScreenUiModel.actions.contains("Отправить тестовую телеметрию"))

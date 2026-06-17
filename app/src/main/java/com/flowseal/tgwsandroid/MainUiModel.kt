@@ -528,6 +528,17 @@ object DiagnosticsScreenUiModel {
 
     const val CHECK_NOW_ACTION = "Проверить сейчас"
     const val TEST_TELEMETRY_ACTION = "Отправить тестовую телеметрию"
+    const val PROXY_OFF_STATUS = "Прокси выключен"
+    const val PROXY_OFF_AVAILABILITY = "Не проверено"
+    const val PROXY_OFF_RECOMMENDATION = "Включите прокси на главном экране."
+
+    val compactCounterGroups: List<String> = listOf(
+        "Подключения",
+        "Маршруты",
+        "Сеть",
+        "Handshake",
+        "Очереди и пул",
+    )
 
     val actions: List<String> = developerActions + TEST_TELEMETRY_ACTION
 
@@ -543,7 +554,6 @@ object DiagnosticsScreenUiModel {
         "Direct/pool: детали",
         "Handshake: детали",
         "Счётчики",
-        "Недавние ошибки",
     )
 
     fun actions(developerModeEnabled: Boolean): List<String> = if (developerModeEnabled) {

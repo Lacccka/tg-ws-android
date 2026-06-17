@@ -603,8 +603,7 @@ class MainActivity : Activity() {
             developerSection.addView(CollapsibleSettingsSection("Cloudflare: детали", cfDetailsText), cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Direct/pool: детали", directDetailsText), cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Handshake: детали", createValueText(textSize = 13f).apply { text = directDetailsLine(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
-            developerSection.addView(CollapsibleSettingsSection("Счётчики", createValueText(textSize = 13f).apply { text = ProxyForegroundService.State.diagnosticReport(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
-            developerSection.addView(CollapsibleSettingsSection("Недавние ошибки", createValueText(textSize = 13f).apply { text = lastProblemText(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
+            developerSection.addView(CollapsibleSettingsSection("Счётчики", createValueText(textSize = 13f).apply { text = developerCountersSummary(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
             addView(developerSection, matchWrapParams())
         }
         updateDiagnosticsDashboard()
@@ -807,13 +806,6 @@ class MainActivity : Activity() {
 
 
     private fun runDiagnosticsAvailabilityCheck() {
-        if (!ProxyForegroundService.State.running) {
-            diagnosticsLastCheckAtMs = System.currentTimeMillis()
-            diagnosticsLastCheckDurationMs = null
-            Toast.makeText(this, "Сначала включите прокси на главном экране", Toast.LENGTH_SHORT).show()
-            updateDiagnosticsDashboard()
-            return
-        }
         diagnosticsCheckInProgress = true
         val started = SystemClock.elapsedRealtime()
         updateDiagnosticsDashboard()
@@ -821,7 +813,7 @@ class MainActivity : Activity() {
             diagnosticsLastCheckDurationMs = (SystemClock.elapsedRealtime() - started).coerceAtLeast(0L)
             diagnosticsLastCheckAtMs = System.currentTimeMillis()
             diagnosticsCheckInProgress = false
-            refreshLocalDiagnostics()
+            if (ProxyForegroundService.State.running) refreshLocalDiagnostics()
             updateDiagnosticsDashboard()
         }, 150L)
     }
@@ -851,7 +843,7 @@ class MainActivity : Activity() {
         }
         diagnosticsDurationText.text = diagnosticsLastCheckDurationMs?.let { "$it мс" } ?: "—"
         diagnosticsLastCheckText.text = diagnosticsLastCheckAtMs?.let { relativeCheckTime(it) } ?: "не выполнялась"
-        diagnosticsCheckButton.isEnabled = running && !diagnosticsCheckInProgress
+        diagnosticsCheckButton.isEnabled = !diagnosticsCheckInProgress
         diagnosticsRouteText.text = userRouteLabel()
         diagnosticsLastConnectionText.text = if (connected) "сейчас" else "Недостаточно данных"
         diagnosticsGuidanceText.text = diagnosticsRecommendations(running, networkAvailable, connected).joinToString("\n") { "• $it" }
@@ -921,6 +913,49 @@ class MainActivity : Activity() {
             "Invalid MTProto handshake storm=${stats.badHandshakeStormRecent}, badHandshakeRatio=${String.format(java.util.Locale.US, "%.3f", stats.badHandshakeRatio)}, " +
             "handshakeDiagnosticState=${stats.handshakeDiagnosticState}, handshakeDiagnosticReason=${stats.handshakeDiagnosticReason}, " +
             "badHandshakeRecommendation=${stats.badHandshakeRecommendation}"
+    }
+
+
+    private fun developerCountersSummary(): String {
+        val stats = ProxyForegroundService.State.stats() ?: return "Нет заметных событий."
+        val groups = buildList {
+            addCounterGroup("Подключения", listOfNotNull(
+                "Активные сессии: ${stats.connectionsActive}".takeIf { stats.connectionsActive > 0 },
+                "Всего подключений: ${stats.connectionsTotal}".takeIf { stats.connectionsTotal > 0 },
+                "Сбои подключений: ${stats.connectionsBad}".takeIf { stats.connectionsBad > 0 },
+                "Сбросы соединений: ${stats.sessionEndDiagnostics.connectionReset.count}".takeIf { stats.sessionEndDiagnostics.connectionReset.count > 0 },
+            ))
+            addCounterGroup("Маршруты", listOfNotNull(
+                "Последний маршрут: ${stats.lastRouteUsed}".takeIf { !stats.lastRouteUsed.isNullOrBlank() && !stats.lastRouteUsed.equals("none", ignoreCase = true) },
+                "Direct успешно/сбоев: ${stats.directHealthSuccesses}/${stats.directHealthFailures}".takeIf { stats.directHealthSuccesses > 0 || stats.directHealthFailures > 0 },
+                "CF успешно/сбоев: ${stats.cfProxyConnections}/${stats.cfProxyErrors}".takeIf { stats.cfProxyConnections > 0 || stats.cfProxyErrors > 0 },
+                "Восстановления CF-first: ${stats.recoveryDiagnostics.cfFirst.successes}/${stats.recoveryDiagnostics.cfFirst.failures}".takeIf { stats.recoveryDiagnostics.cfFirst.successes > 0 || stats.recoveryDiagnostics.cfFirst.failures > 0 },
+                "Экстренный direct: ${stats.recoveryDiagnostics.emergencyDirectFallback.successes}/${stats.recoveryDiagnostics.emergencyDirectFallback.failures}".takeIf { stats.recoveryDiagnostics.emergencyDirectFallback.successes > 0 || stats.recoveryDiagnostics.emergencyDirectFallback.failures > 0 },
+            ))
+            addCounterGroup("Сеть", listOfNotNull(
+                "Смены сети: ${stats.mobileNetworkGenerationChanges}".takeIf { stats.mobileNetworkGenerationChanges > 0 },
+                "События без сети: ${stats.networkNoneEvents}".takeIf { stats.networkNoneEvents > 0 },
+                "Mobile восстановление: ${stats.noneToMobileRecoverySuccesses}/${stats.noneToMobileRecoveryAttempts}".takeIf { stats.noneToMobileRecoverySuccesses > 0 || stats.noneToMobileRecoveryAttempts > 0 },
+                "Wi‑Fi восстановление: ${stats.wifiDirectRecoverySuccesses}/${stats.wifiDirectRecoveryFailures}".takeIf { stats.wifiDirectRecoverySuccesses > 0 || stats.wifiDirectRecoveryFailures > 0 },
+            ))
+            addCounterGroup("Handshake", listOfNotNull(
+                "Принято: ${stats.recentAcceptedHandshakeCount}".takeIf { stats.recentAcceptedHandshakeCount > 0 },
+                "Отклонено: ${stats.recentInvalidHandshakeCount}".takeIf { stats.recentInvalidHandshakeCount > 0 },
+                "Всего отклонено: ${stats.connectionsBad}".takeIf { stats.connectionsBad > 0 },
+            ))
+            addCounterGroup("Очереди и пул", listOfNotNull(
+                "Пул попадания/промахи: ${stats.poolHits}/${stats.poolMisses}".takeIf { stats.poolHits > 0 || stats.poolMisses > 0 },
+                "Устаревшие записи пула: ${stats.poolStale}".takeIf { stats.poolStale > 0 },
+                "Ошибки пополнения пула: ${stats.poolRefillErrors}".takeIf { stats.poolRefillErrors > 0 },
+                "CF очередь: ${stats.cfQueueControlledFailures}".takeIf { stats.cfQueueControlledFailures > 0 },
+                "CF тайм-ауты очереди: ${stats.cfConnectQueueTimeouts}".takeIf { stats.cfConnectQueueTimeouts > 0 },
+            ))
+        }
+        return groups.takeIf { it.isNotEmpty() }?.joinToString("\n\n") ?: "Нет заметных событий."
+    }
+
+    private fun MutableList<String>.addCounterGroup(title: String, rows: List<String>) {
+        if (rows.isNotEmpty()) add((listOf(title) + rows.take(5).map { "• $it" }).joinToString("\n"))
     }
 
     private fun secretStateLine(): String = "Secret: ${ProxyRuntimeConfig.partialTelegramSecret(applicationContext)}"
