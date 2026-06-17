@@ -25,6 +25,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.app.ActivityManager
 import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
@@ -81,6 +82,8 @@ class MainActivity : Activity() {
     private lateinit var routeModeDescriptionText: TextView
     private lateinit var notificationStatusText: TextView
     private lateinit var autostartStatusText: TextView
+    private lateinit var quickSettingsStatusText: TextView
+    private lateinit var backgroundDataStatusText: TextView
     private lateinit var telemetryStatusText: TextView
     private lateinit var themeStatusText: TextView
     private lateinit var themeHelperText: TextView
@@ -142,6 +145,7 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        refreshLocalDiagnostics()
         handler.post(refreshRunnable)
     }
 
@@ -286,6 +290,8 @@ class MainActivity : Activity() {
         notificationStatusText = createValueText()
         batteryStatusText = createValueText()
         autostartStatusText = createValueText()
+        quickSettingsStatusText = createValueText()
+        backgroundDataStatusText = createValueText()
         telemetryStatusText = createValueText()
         themeStatusText = createValueText()
         themeHelperText = createValueText(textSize = 13f)
@@ -336,8 +342,10 @@ class MainActivity : Activity() {
             addHeader()
             addView(SettingsSection("Важное для стабильной работы", "Эти параметры помогают прокси не отключаться в фоне.") {
                 addView(SettingsStatusRow("Уведомления", "Показывают состояние подключения.", notificationStatusText, Badge("Рекомендуется")) { openNotificationSettingsFlow() }, matchWrapParams())
-                addView(SettingsStatusRow("Работа в фоне", "Помогает сохранять подключение после блокировки экрана.", batteryStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { openBatterySettings() }, matchWrapParams(topMargin = rowGap))
-                addView(SettingsStatusRow("Автозапуск", "Позволяет запускать прокси после перезагрузки устройства.", autostartStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { openAutostartSettings() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsStatusRow("Батарея без ограничений", "Разрешите TG WS работать в фоне, чтобы прокси не отключался при заблокированном экране.", batteryStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { onRequestBatteryUnrestricted() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsStatusRow("Автозапуск", "Разрешите запуск после перезагрузки телефона.", autostartStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { onOpenAutostartSettings() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsStatusRow("Кнопка в шторке", "Добавьте быстрый переключатель, чтобы включать и останавливать прокси без открытия приложения.", quickSettingsStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { onAddQuickSettingsTile() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsStatusRow("Фоновые данные", "Если фоновые данные запрещены, прокси может работать только при открытом приложении.", backgroundDataStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { onOpenBackgroundDataSettings() }, matchWrapParams(topMargin = rowGap))
                 addView(SettingsSwitchRow("Анонимная диагностика", "Помогает улучшать стабильность без личных данных.", telemetryStatusText, Badge("Рекомендуется")) { toggleTelemetry() }, matchWrapParams(topMargin = rowGap))
             }, cardParams())
             addView(SettingsSection("Подключение") {
@@ -514,8 +522,11 @@ class MainActivity : Activity() {
             val config = ProxyRuntimeConfig.appConfig(applicationContext)
             routeModeValueText.text = UserRouteModes.labelFor(config.routeMode)
             notificationStatusText.text = if (notificationPermissionMissing()) "Выключено" else "Включено"
-            batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
-            autostartStatusText.text = if (config.autostart) "Включено" else "Не проверено"
+            val powerStatus = currentPowerSetupStatus(config.autostart)
+            batteryStatusText.text = PowerSetupUiMapper.batteryStatus(powerStatus.batteryOptimization)
+            autostartStatusText.text = PowerSetupUiMapper.autostartStatus(powerStatus.appBootPreference, powerStatus.oemAutostart)
+            quickSettingsStatusText.text = PowerSetupUiMapper.quickSettingsStatus(powerStatus.quickSettingsTile)
+            backgroundDataStatusText.text = PowerSetupUiMapper.backgroundStatus(powerStatus.backgroundRestriction)
             telemetryStatusText.text = if (config.telemetryEnabled) "Включено" else "Выключено"
             updateConnectionModeRow(config.routeMode)
             updateThemeSelectorState(config.appearance)
@@ -636,19 +647,19 @@ class MainActivity : Activity() {
             }
             if (detectBatteryOptimizationStatus() != "unrestricted" && !recommendationInCooldown(RECOMMENDATION_BATTERY)) {
                 add(recommendation(RECOMMENDATION_BATTERY, RecommendationUiText.OPEN_ACTION) {
-                    openBatterySettings()
+                    onRequestBatteryUnrestricted()
                     coolDownRecommendation(RECOMMENDATION_BATTERY)
                 })
             }
             if (!config.autostart && !recommendationInCooldown(RECOMMENDATION_AUTOSTART)) {
                 add(recommendation(RECOMMENDATION_AUTOSTART, RecommendationUiText.OPEN_ACTION) {
-                    openBatterySettings()
+                    onOpenAutostartSettings()
                     coolDownRecommendation(RECOMMENDATION_AUTOSTART)
                 })
             }
             if (!prefs.getBoolean(PREF_RECOMMENDATION_QS_DONE, false) && !recommendationInCooldown(RECOMMENDATION_QS)) {
                 add(recommendation(RECOMMENDATION_QS, RecommendationUiText.ADD_ACTION) {
-                    requestQuickSettingsTile()
+                    onAddQuickSettingsTile()
                     coolDownRecommendation(RECOMMENDATION_QS)
                 })
             }
@@ -1280,20 +1291,28 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun openBatterySettings() {
-        if (!BatterySettingsNavigator(this).open()) {
-            Toast.makeText(this, "Не удалось открыть настройки батареи", Toast.LENGTH_LONG).show()
-        }
-    }
+    private fun openBatterySettings() = onRequestBatteryUnrestricted()
 
-    private fun openAutostartSettings() {
-        val config = AppConfigStore.from(applicationContext).loadConfig()
-        AppConfigStore.from(applicationContext).saveConfig(config.copy(autostart = true))
-        ProxyRuntimeConfig.initialize(applicationContext)
-        openBatterySettings()
-        Toast.makeText(this, "Проверьте автозапуск в настройках устройства", Toast.LENGTH_LONG).show()
+    private fun onRequestBatteryUnrestricted() {
+        val result = PowerSettingsNavigator(this).requestIgnoreBatteryOptimizations(this)
+        if (result == PowerSettingsOpenResult.Failed) Toast.makeText(this, "Не удалось открыть настройки батареи", Toast.LENGTH_LONG).show()
         refreshState()
     }
+
+    private fun onOpenAutostartSettings() {
+        val result = PowerSettingsNavigator(this).openAutostartSettings()
+        prefs.edit().putString(PREF_OEM_AUTOSTART_STATUS, if (result == PowerSettingsOpenResult.Exact) "opened" else "not_supported").apply()
+        Toast.makeText(this, if (result == PowerSettingsOpenResult.Failed) "Не удалось открыть автозапуск" else "Проверьте автозапуск вручную", Toast.LENGTH_LONG).show()
+        refreshState()
+    }
+
+    private fun onOpenBackgroundDataSettings() {
+        val result = PowerSettingsNavigator(this).openBackgroundDataSettings()
+        if (result == PowerSettingsOpenResult.Failed) Toast.makeText(this, "Не удалось открыть фоновые данные", Toast.LENGTH_LONG).show()
+        refreshState()
+    }
+
+    private fun onAddQuickSettingsTile() = requestQuickSettingsTile()
 
     private fun toggleTelemetry() {
         val store = AppConfigStore.from(applicationContext)
@@ -1377,7 +1396,6 @@ class MainActivity : Activity() {
             }
         } else {
             showQuickSettingsTileHelp()
-            prefs.edit().putBoolean(PREF_RECOMMENDATION_QS_DONE, true).apply()
         }
     }
 
@@ -1420,6 +1438,33 @@ class MainActivity : Activity() {
     private fun refreshLocalDiagnostics() {
         ProxyForegroundService.State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
         if (!ProxyForegroundService.State.running) ProxyForegroundService.State.setNetworkStatus(detectNetworkStatus())
+    }
+
+
+    private fun currentPowerSetupStatus(appAutostart: Boolean): PowerSetupStatus = PowerSetupStatus(
+        batteryOptimization = when (detectBatteryOptimizationStatus()) {
+            "unrestricted" -> BatteryOptimizationStatus.Granted
+            "optimized" -> BatteryOptimizationStatus.NeedsAction
+            else -> BatteryOptimizationStatus.UnsupportedOrUnknown
+        },
+        backgroundRestriction = detectBackgroundRestrictionStatus(),
+        appBootPreference = if (appAutostart) AppBootPreferenceStatus.EnabledInApp else AppBootPreferenceStatus.DisabledInApp,
+        oemAutostart = when (prefs.getString(PREF_OEM_AUTOSTART_STATUS, "unknown")) {
+            "opened" -> OemAutostartStatus.OpenedSettingsButNotVerified
+            "not_supported" -> OemAutostartStatus.NotSupportedOrUnavailable
+            else -> OemAutostartStatus.Unknown
+        },
+        quickSettingsTile = PowerSetupUiMapper.quickSettingsStatusForSdk(Build.VERSION.SDK_INT),
+    )
+
+    private fun detectBackgroundRestrictionStatus(): BackgroundRestrictionStatus = try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            if (getSystemService(ActivityManager::class.java)?.isBackgroundRestricted == true) BackgroundRestrictionStatus.Restricted else BackgroundRestrictionStatus.Allowed
+        } else {
+            BackgroundRestrictionStatus.UnsupportedOrUnknown
+        }
+    } catch (_: Throwable) {
+        BackgroundRestrictionStatus.UnsupportedOrUnknown
     }
 
     private fun detectBatteryOptimizationStatus(): String = try {
@@ -1894,6 +1939,7 @@ class MainActivity : Activity() {
         private const val RECOMMENDATION_BATTERY = "battery"
         private const val RECOMMENDATION_AUTOSTART = "autostart"
         private const val RECOMMENDATION_QS = "quick_settings"
+        private const val PREF_OEM_AUTOSTART_STATUS = "oem_autostart_status"
         private const val RECOMMENDATION_TELEMETRY = "telemetry"
         private const val RECOMMENDATION_COOLDOWN_MS = 7L * 24L * 60L * 60L * 1000L
         private const val MAX_HINTS = 2

@@ -311,7 +311,7 @@ class MainUiModelTest {
 
     @Test
     fun batteryAndQuickSettingsInstructionsAreRussianAndCompact() {
-        assertEquals("Работа в фоне", SettingsUiText.BATTERY_BACKGROUND_TITLE)
+        assertEquals("Батарея без ограничений", SettingsUiText.BATTERY_BACKGROUND_TITLE)
         assertTrue(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("автозапуск"))
         assertTrue(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("Без ограничений"))
         assertTrue(SettingsUiText.BATTERY_BUTTON_HELP_TEXT.contains("Без ограничений"))
@@ -319,7 +319,7 @@ class MainUiModelTest {
         assertFalse(SettingsUiText.BATTERY_XIAOMI_AUTOSTART_TEXT.contains("Чтобы прокси не останавливался"))
         assertFalse(SettingsUiText.BATTERY_BUTTON_HELP_TEXT.contains("Чтобы прокси не останавливался"))
         assertEquals("Кнопка в шторке", SettingsUiText.QS_TILE_TITLE)
-        assertTrue(SettingsUiText.QS_TILE_TEXT.contains("быстрые настройки Android"))
+        assertTrue(SettingsUiText.QS_TILE_TEXT.contains("быстрый переключатель"))
     }
 
 
@@ -328,9 +328,9 @@ class MainUiModelTest {
         assertEquals("Позже", RecommendationUiText.DISMISS_ACTION)
         assertEquals("Включить уведомления", RecommendationUiText.cards.getValue("notifications").first)
         assertEquals("Так будет проще видеть состояние подключения", RecommendationUiText.cards.getValue("notifications").second)
-        assertEquals("Разрешить работу в фоне", RecommendationUiText.cards.getValue("battery").first)
-        assertEquals("Помогает сохранять подключение после блокировки экрана", RecommendationUiText.cards.getValue("battery").second)
-        assertEquals("Добавить кнопку в шторку", RecommendationUiText.cards.getValue("quick_settings").first)
+        assertEquals("Батарея без ограничений", RecommendationUiText.cards.getValue("battery").first)
+        assertEquals("Разрешите TG WS работать в фоне", RecommendationUiText.cards.getValue("battery").second)
+        assertEquals("Кнопка в шторке", RecommendationUiText.cards.getValue("quick_settings").first)
         assertFalse(RecommendationUiText.cards.values.any { (title, subtitle) ->
             listOf(title, subtitle).any { text ->
                 text.contains("Cloudflare", ignoreCase = true) ||
@@ -612,8 +612,8 @@ class MainUiModelTest {
     fun adaptiveSettingsRowsKeepTextFieldsSeparate() {
         val rows = SettingsScreenModel.normalRows.associateBy { it.title }
         val battery = rows.getValue(SettingsUiText.BATTERY_BACKGROUND_TITLE)
-        assertEquals("Помогает сохранять подключение после блокировки экрана.", battery.description)
-        assertEquals("Может ограничиваться", battery.status)
+        assertEquals("Разрешите TG WS работать в фоне, чтобы прокси не отключался при заблокированном экране.", battery.description)
+        assertEquals("Нужно разрешить", battery.status)
         assertEquals(SettingsBadge.IMPORTANT, battery.badge)
         assertFalse(battery.title.contains(battery.description.orEmpty()))
 

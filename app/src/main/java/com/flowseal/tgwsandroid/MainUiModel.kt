@@ -196,14 +196,14 @@ object SettingsUiText {
         RussianUiText.ROUTE_FAST_WIFI_HELPER,
         RussianUiText.ROUTE_COMPATIBLE_HELPER,
     )
-    const val BATTERY_BACKGROUND_TITLE = "Работа в фоне"
+    const val BATTERY_BACKGROUND_TITLE = "Батарея без ограничений"
     const val BATTERY_XIAOMI_AUTOSTART_TEXT = "Откройте «Питание» или «Батарея» и выберите «Без ограничений». На Xiaomi также проверьте автозапуск."
     const val BATTERY_BUTTON_HELP_TEXT = "Откройте «Питание» или «Батарея» и выберите «Без ограничений»."
     const val QS_TILE_TITLE = "Кнопка в шторке"
-    const val QS_TILE_TEXT = "Добавьте «TG Proxy» в быстрые настройки Android, чтобы запускать и останавливать прокси из шторки."
-    const val QS_TILE_HELP_BUTTON = "Как добавить"
+    const val QS_TILE_TEXT = "Добавьте быстрый переключатель, чтобы включать и останавливать прокси без открытия приложения."
+    const val QS_TILE_HELP_BUTTON = "Добавить кнопку"
     const val QS_TILE_HELP_TITLE = "Как добавить кнопку"
-    const val QS_TILE_HELP_MESSAGE = "Откройте шторку быстрых настроек, нажмите «Изменить» или значок карандаша, найдите «TG Proxy» и перетащите её наверх."
+    const val QS_TILE_HELP_MESSAGE = "Откройте шторку быстрых настроек, нажмите изменить и добавьте TG WS."
 
     fun batteryStatusLine(status: String): String = "Статус: $status"
 }
@@ -385,8 +385,9 @@ object SettingsScreenModel {
 
     val normalRows: List<SettingsRowModel> = listOf(
         SettingsRowModel("Уведомления", SettingsRowKind.STATUS, description = "Показывают состояние подключения.", status = "Включено", badge = SettingsBadge.RECOMMENDED),
-        SettingsRowModel(SettingsUiText.BATTERY_BACKGROUND_TITLE, SettingsRowKind.STATUS, description = "Помогает сохранять подключение после блокировки экрана.", status = "Может ограничиваться", badge = SettingsBadge.IMPORTANT),
-        SettingsRowModel("Автозапуск", SettingsRowKind.STATUS, description = "Позволяет запускать прокси после перезагрузки устройства.", status = "Не проверено", badge = SettingsBadge.IMPORTANT),
+        SettingsRowModel(SettingsUiText.BATTERY_BACKGROUND_TITLE, SettingsRowKind.STATUS, description = "Разрешите TG WS работать в фоне, чтобы прокси не отключался при заблокированном экране.", status = "Нужно разрешить", badge = SettingsBadge.IMPORTANT),
+        SettingsRowModel("Автозапуск", SettingsRowKind.STATUS, description = "Разрешите запуск после перезагрузки телефона.", status = "В приложении включено, проверьте в системе", badge = SettingsBadge.IMPORTANT),
+        SettingsRowModel(SettingsUiText.QS_TILE_TITLE, SettingsRowKind.STATUS, description = SettingsUiText.QS_TILE_TEXT, status = "Можно добавить", badge = SettingsBadge.IMPORTANT),
         SettingsRowModel("Анонимная диагностика", SettingsRowKind.SWITCH, description = "Помогает улучшать стабильность без личных данных.", status = "Выключено", badge = SettingsBadge.RECOMMENDED),
         SettingsRowModel(SettingsUiText.CONNECTION_MODE_TITLE, SettingsRowKind.VALUE, description = RussianUiText.ROUTE_AUTO_HELPER, selectedValue = SettingsUiText.connectionModeOptions.first()),
         SettingsRowModel(SettingsUiText.THEME_TITLE, SettingsRowKind.VALUE, description = AppearanceUiModels.uiModel(Appearance.AUTO).description, selectedValue = AppearanceUiModels.uiModel(Appearance.AUTO).label),
@@ -712,9 +713,9 @@ object RecommendationUiText {
 
     val cards: Map<String, Pair<String, String>> = mapOf(
         "notifications" to ("Включить уведомления" to "Так будет проще видеть состояние подключения"),
-        "battery" to ("Разрешить работу в фоне" to "Помогает сохранять подключение после блокировки экрана"),
-        "autostart" to ("Включить автозапуск" to "Прокси сможет запускаться после перезагрузки"),
-        "quick_settings" to ("Добавить кнопку в шторку" to "Быстрый запуск и остановка прокси"),
+        "battery" to ("Батарея без ограничений" to "Разрешите TG WS работать в фоне"),
+        "autostart" to ("Автозапуск" to "Разрешите запуск после перезагрузки телефона"),
+        "quick_settings" to ("Кнопка в шторке" to "Добавьте быстрый переключатель"),
         "telemetry" to ("Включить анонимную диагностику" to "Помогает улучшать стабильность без личных данных"),
     )
 }
