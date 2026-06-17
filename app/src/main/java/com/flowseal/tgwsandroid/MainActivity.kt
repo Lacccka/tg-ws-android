@@ -13,7 +13,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.content.res.Configuration
-import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import android.graphics.drawable.GradientDrawable
@@ -141,11 +140,11 @@ class MainActivity : Activity() {
     }
 
     private fun buildRootView(): LinearLayout {
-        contentHost = FrameLayout(this).apply { setBackgroundColor(COLOR_BACKGROUND) }
+        contentHost = FrameLayout(this).apply { setBackgroundColor(currentColorScheme().background) }
         navigationBar = createNavigationBar()
         return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(COLOR_BACKGROUND)
+            setBackgroundColor(currentColorScheme().background)
             applySystemInsetsPadding(basePadding = 0)
             addView(contentHost, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
             addView(navigationBar, matchWrapParams())
@@ -215,18 +214,18 @@ class MainActivity : Activity() {
         val rowGap = (8 * density).toInt()
         val chipGap = (6 * density).toInt()
         statusText = createValueText(textSize = 30f, bold = true)
-        heroSubtitleText = createValueText(textSize = 17f).apply { setTextColor(COLOR_TEXT_SECONDARY) }
+        heroSubtitleText = createValueText(textSize = 17f).apply { setTextColor(currentColorScheme().onSurfaceVariant) }
         networkText = Badge("Wi-Fi")
         routeText = Badge("Авто")
         qualityText = Badge("Проверка…")
         restartRequiredText = createValueText().apply {
             text = PendingRestartModel.RESTART_WARNING
-            setTextColor(COLOR_WARNING)
+            setTextColor(currentColorScheme().warning)
             typeface = Typeface.DEFAULT_BOLD
         }
         telegramCleanupHintText = createValueText().apply {
             text = ""
-            setTextColor(COLOR_TEXT_SECONDARY)
+            setTextColor(currentColorScheme().onSurfaceVariant)
         }
         primaryControlButton = createFilledButton("Включить") { handleMainPrimaryAction() }
         connectTelegramButton = createOutlinedButton("Перезапустить") { restartProxyService() }
@@ -241,7 +240,7 @@ class MainActivity : Activity() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, padding)
-            setBackgroundColor(COLOR_BACKGROUND)
+            setBackgroundColor(currentColorScheme().background)
             addHeader()
             addView(SettingsSection("") {
                 addView(statusText, matchWrapParams())
@@ -256,7 +255,7 @@ class MainActivity : Activity() {
             addView(hintsContainer, matchWrapParams(topMargin = padding))
         }
         return ScrollView(this).apply {
-            setBackgroundColor(COLOR_BACKGROUND)
+            setBackgroundColor(currentColorScheme().background)
             addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
     }
@@ -277,11 +276,11 @@ class MainActivity : Activity() {
         themeButtons.clear()
         hostStatusText = createValueText()
         portStatusText = createValueText()
-        secretStateText = createValueText().apply { setTextColor(COLOR_SUCCESS) }
+        secretStateText = createValueText().apply { setTextColor(currentColorScheme().success) }
         telemetryCheckBox = CheckBox(this).apply {
             text = "Отправлять анонимную диагностику"
             isAllCaps = false
-            setTextColor(COLOR_TEXT_PRIMARY)
+            setTextColor(currentColorScheme().onSurface)
             setOnCheckedChangeListener { _, enabled ->
                 val store = AppConfigStore.from(applicationContext)
                 store.saveConfig(store.loadConfig().copy(telemetryEnabled = enabled))
@@ -295,7 +294,7 @@ class MainActivity : Activity() {
             text = "Режим разработчика"
             isAllCaps = false
             isChecked = developerModeEnabled()
-            setTextColor(COLOR_TEXT_PRIMARY)
+            setTextColor(currentColorScheme().onSurface)
             setOnCheckedChangeListener { _, enabled ->
                 prefs.edit().putBoolean(PREF_DEVELOPER_MODE, enabled).apply()
                 developerSection.visibility = if (enabled) View.VISIBLE else View.GONE
@@ -328,12 +327,12 @@ class MainActivity : Activity() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, bottomContentPadding)
-            setBackgroundColor(COLOR_BACKGROUND)
+            setBackgroundColor(currentColorScheme().background)
             addHeader()
             addView(SettingsSection("Важное для стабильной работы", "Эти параметры помогают прокси не отключаться в фоне.") {
                 addView(SettingsStatusRow("Уведомления", "Показывают состояние подключения.", notificationStatusText, Badge("Рекомендуется")) { openNotificationSettingsFlow() }, matchWrapParams())
-                addView(SettingsStatusRow("Работа в фоне", "Помогает сохранять подключение после блокировки экрана.", batteryStatusText, Badge("Важно", COLOR_WARNING, Color.WHITE)) { openBatterySettings() }, matchWrapParams(topMargin = rowGap))
-                addView(SettingsStatusRow("Автозапуск", "Позволяет запускать прокси после перезагрузки устройства.", autostartStatusText, Badge("Важно", COLOR_WARNING, Color.WHITE)) { openAutostartSettings() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsStatusRow("Работа в фоне", "Помогает сохранять подключение после блокировки экрана.", batteryStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { openBatterySettings() }, matchWrapParams(topMargin = rowGap))
+                addView(SettingsStatusRow("Автозапуск", "Позволяет запускать прокси после перезагрузки устройства.", autostartStatusText, Badge("Важно", currentColorScheme().warningContainer, currentColorScheme().onWarningContainer)) { openAutostartSettings() }, matchWrapParams(topMargin = rowGap))
                 addView(SettingsSwitchRow("Анонимная диагностика", "Помогает улучшать стабильность без личных данных.", telemetryStatusText, Badge("Рекомендуется")) { toggleTelemetry() }, matchWrapParams(topMargin = rowGap))
             }, cardParams())
             addView(SettingsSection("Подключение") {
@@ -357,7 +356,7 @@ class MainActivity : Activity() {
         }
         return ScrollView(this).apply {
             settingsScrollView = this
-            setBackgroundColor(COLOR_BACKGROUND)
+            setBackgroundColor(currentColorScheme().background)
             addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
     }
@@ -368,12 +367,12 @@ class MainActivity : Activity() {
             text = "TG WS"
             textSize = 26f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(COLOR_TEXT_PRIMARY)
+            setTextColor(currentColorScheme().onSurface)
         }, matchWrapParams())
         addView(TextView(this@MainActivity).apply {
             text = "Локальный прокси для Telegram"
             textSize = 15f
-            setTextColor(COLOR_TEXT_SECONDARY)
+            setTextColor(currentColorScheme().onSurfaceVariant)
             setPadding(0, smallPadding / 2, 0, smallPadding)
         }, matchWrapParams())
     }
@@ -520,7 +519,7 @@ class MainActivity : Activity() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, padding)
-            setBackgroundColor(COLOR_BACKGROUND)
+            setBackgroundColor(currentColorScheme().background)
             addHeader()
             addView(SettingsSection("Диагностика") {
                 addView(StatusChip("Сводка"), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
@@ -536,7 +535,7 @@ class MainActivity : Activity() {
             addView(developerSection, cardParams(topMargin = padding, bottomMargin = padding))
         }
         return ScrollView(this).apply {
-            setBackgroundColor(COLOR_BACKGROUND)
+            setBackgroundColor(currentColorScheme().background)
             addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
     }
@@ -608,7 +607,7 @@ class MainActivity : Activity() {
         val card = SettingsSection(model.title) {
             addView(createValueText().apply {
                 text = model.subtitle
-                setTextColor(COLOR_TEXT_SECONDARY)
+                setTextColor(currentColorScheme().onSurfaceVariant)
             }, matchWrapParams())
             val actions = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.HORIZONTAL
@@ -1038,9 +1037,9 @@ class MainActivity : Activity() {
         orientation = LinearLayout.VERTICAL
         background = GradientDrawable().apply {
             shape = GradientDrawable.RECTANGLE
-            setColor(Color.WHITE)
+            setColor(currentColorScheme().surfaceContainer)
             cornerRadius = 16 * resources.displayMetrics.density
-            setStroke((1 * resources.displayMetrics.density).toInt().coerceAtLeast(1), COLOR_CARD_STROKE)
+            setStroke((1 * resources.displayMetrics.density).toInt().coerceAtLeast(1), currentColorScheme().outline)
         }
         val innerPadding = (16 * resources.displayMetrics.density).toInt()
         setPadding(innerPadding, innerPadding, innerPadding, innerPadding)
@@ -1049,7 +1048,7 @@ class MainActivity : Activity() {
             if (subtitle != null) {
                 addView(createValueText().apply {
                     text = subtitle
-                    setTextColor(COLOR_TEXT_SECONDARY)
+                    setTextColor(currentColorScheme().onSurfaceVariant)
                 }, matchWrapParams(topMargin = (4 * resources.displayMetrics.density).toInt(), bottomMargin = (8 * resources.displayMetrics.density).toInt()))
             } else {
                 addView(View(this@MainActivity), LinearLayout.LayoutParams(1, (8 * resources.displayMetrics.density).toInt()))
@@ -1062,7 +1061,7 @@ class MainActivity : Activity() {
         text = title
         textSize = 17f
         typeface = Typeface.DEFAULT_BOLD
-        setTextColor(COLOR_TEXT_PRIMARY)
+        setTextColor(currentColorScheme().onSurface)
     }
 
     private fun createButton(label: String, onClick: (View) -> Unit = {}): Button = createFilledButton(label, onClick)
@@ -1070,29 +1069,33 @@ class MainActivity : Activity() {
     private fun createFilledButton(label: String, onClick: (View) -> Unit = {}): Button = MaterialButton(this).apply {
         text = label
         isAllCaps = false
-        backgroundTintList = ColorStateList.valueOf(COLOR_ACCENT)
-        setTextColor(Color.WHITE)
+        backgroundTintList = ColorStateList.valueOf(currentColorScheme().primary)
+        setTextColor(currentColorScheme().onPrimary)
         setOnClickListener(onClick)
     }
 
     private fun createOutlinedButton(label: String, onClick: (View) -> Unit = {}): Button = MaterialButton(this).apply {
         text = label
         isAllCaps = false
-        backgroundTintList = ColorStateList.valueOf(Color.TRANSPARENT)
-        strokeColor = ColorStateList.valueOf(COLOR_ACCENT)
+        backgroundTintList = ColorStateList.valueOf(currentColorScheme().surface)
+        strokeColor = ColorStateList.valueOf(currentColorScheme().primary)
         strokeWidth = (1 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
-        setTextColor(COLOR_ACCENT)
+        setTextColor(currentColorScheme().primary)
         setOnClickListener(onClick)
     }
 
     private fun createNavigationBar(): BottomNavigationView = BottomNavigationView(this).apply {
-        setBackgroundColor(COLOR_BACKGROUND_ALT)
-        itemTextColor = ColorStateList.valueOf(COLOR_TEXT_PRIMARY)
-        itemIconTintList = ColorStateList.valueOf(COLOR_TEXT_PRIMARY)
+        val colors = bottomNavColorModel(currentColorScheme())
+        val selectedState = intArrayOf(android.R.attr.state_checked)
+        val navItemColors = ColorStateList(arrayOf(selectedState, intArrayOf()), intArrayOf(colors.selected, colors.unselected))
+        setBackgroundColor(colors.background)
+        itemTextColor = navItemColors
+        itemIconTintList = navItemColors
+        itemActiveIndicatorColor = ColorStateList.valueOf(colors.activeIndicator)
         labelVisibilityMode = com.google.android.material.navigation.NavigationBarView.LABEL_VISIBILITY_LABELED
-        menu.add(0, Screen.HOME.itemId, 0, "Главная")
-        menu.add(0, Screen.SETTINGS.itemId, 1, "Настройки")
-        menu.add(0, Screen.DIAGNOSTICS.itemId, 2, "Диагностика")
+        menu.add(0, Screen.HOME.itemId, 0, "Главная").setIcon(R.drawable.ic_nav_home)
+        menu.add(0, Screen.SETTINGS.itemId, 1, "Настройки").setIcon(R.drawable.ic_nav_settings)
+        menu.add(0, Screen.DIAGNOSTICS.itemId, 2, "Диагностика").setIcon(R.drawable.ic_nav_diagnostics)
         selectedItemId = currentScreen.itemId
         setOnItemSelectedListener { item ->
             val selected = Screen.fromItemId(item.itemId) ?: return@setOnItemSelectedListener false
@@ -1147,7 +1150,7 @@ class MainActivity : Activity() {
                 text = title
                 textSize = 15f
                 typeface = Typeface.DEFAULT_BOLD
-                setTextColor(COLOR_TEXT_PRIMARY)
+                setTextColor(currentColorScheme().onSurface)
                 maxLines = 2
             }
             val titleParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
@@ -1161,7 +1164,7 @@ class MainActivity : Activity() {
                     addView(topTrailing.apply {
                         if (this is TextView) {
                             textSize = 14f
-                            setTextColor(COLOR_TEXT_PRIMARY)
+                            setTextColor(currentColorScheme().onSurface)
                             typeface = Typeface.DEFAULT_BOLD
                             maxLines = 2
                         }
@@ -1173,7 +1176,7 @@ class MainActivity : Activity() {
 
             addView(createValueText().apply {
                 text = description
-                setTextColor(COLOR_TEXT_SECONDARY)
+                setTextColor(currentColorScheme().onSurfaceVariant)
             }, matchWrapParams(topMargin = (3 * density).toInt()))
 
             if (meta != null) addView(meta, matchWrapParams(topMargin = gap))
@@ -1242,10 +1245,10 @@ class MainActivity : Activity() {
                 text = SettingsUiText.THEME_TITLE
                 textSize = 15f
                 typeface = Typeface.DEFAULT_BOLD
-                setTextColor(COLOR_TEXT_PRIMARY)
+                setTextColor(currentColorScheme().onSurface)
             }, matchWrapParams())
             addView(group, matchWrapParams(topMargin = gap))
-            addView(themeHelperText.apply { setTextColor(COLOR_TEXT_SECONDARY) }, matchWrapParams(topMargin = (4 * density).toInt()))
+            addView(themeHelperText.apply { setTextColor(currentColorScheme().onSurfaceVariant) }, matchWrapParams(topMargin = (4 * density).toInt()))
         }
     }
 
@@ -1258,9 +1261,9 @@ class MainActivity : Activity() {
         }
         themeButtons.forEach { (buttonAppearance, button) ->
             val selected = buttonAppearance == appearance
-            button.backgroundTintList = ColorStateList.valueOf(if (selected) COLOR_ACCENT else COLOR_BACKGROUND_ALT)
-            button.setTextColor(if (selected) Color.WHITE else COLOR_TEXT_PRIMARY)
-            button.strokeColor = ColorStateList.valueOf(if (selected) COLOR_ACCENT else COLOR_CARD_STROKE)
+            button.backgroundTintList = ColorStateList.valueOf(if (selected) currentColorScheme().primary else currentColorScheme().surfaceVariant)
+            button.setTextColor(if (selected) currentColorScheme().onPrimary else currentColorScheme().onSurface)
+            button.strokeColor = ColorStateList.valueOf(if (selected) currentColorScheme().primary else currentColorScheme().outline)
             button.strokeWidth = (1 * resources.displayMetrics.density).toInt().coerceAtLeast(1)
         }
     }
@@ -1270,7 +1273,7 @@ class MainActivity : Activity() {
         val routeModeUi = UserRouteModes.uiModel(config.routeMode)
         routeModeDescriptionText = createValueText().apply {
             text = routeModeUi.description
-            setTextColor(COLOR_TEXT_SECONDARY)
+            setTextColor(currentColorScheme().onSurfaceVariant)
         }
         val row = SettingsValueRow(
             title = SettingsUiText.CONNECTION_MODE_TITLE,
@@ -1288,9 +1291,9 @@ class MainActivity : Activity() {
         if (::routeModeDescriptionText.isInitialized) routeModeDescriptionText.text = routeModeUi.description
     }
 
-    private fun StatusChip(text: String): TextView = Badge(text, COLOR_ACCENT, Color.WHITE)
+    private fun StatusChip(text: String): TextView = Badge(text, currentColorScheme().primaryContainer, currentColorScheme().onPrimaryContainer)
 
-    private fun Badge(text: String, backgroundColor: Int = COLOR_BACKGROUND_ALT, textColor: Int = COLOR_TEXT_PRIMARY): TextView = TextView(this).apply {
+    private fun Badge(text: String, backgroundColor: Int = currentColorScheme().surfaceVariant, textColor: Int = currentColorScheme().onSurfaceVariant): TextView = TextView(this).apply {
         this.text = text
         textSize = 13f
         typeface = Typeface.DEFAULT_BOLD
@@ -1310,7 +1313,7 @@ class MainActivity : Activity() {
         addView(TextView(this@MainActivity).apply {
             text = label
             textSize = 12f
-            setTextColor(COLOR_TEXT_MUTED)
+            setTextColor(currentColorScheme().onSurfaceVariant)
             typeface = Typeface.DEFAULT_BOLD
         }, matchWrapParams())
         addView(value, matchWrapParams(topMargin = 2))
@@ -1318,7 +1321,7 @@ class MainActivity : Activity() {
 
     private fun createValueText(textSize: Float = 14f, bold: Boolean = false): TextView = TextView(this).apply {
         this.textSize = textSize
-        setTextColor(COLOR_TEXT_PRIMARY)
+        setTextColor(currentColorScheme().onSurface)
         if (bold) typeface = Typeface.DEFAULT_BOLD
     }
 
@@ -1345,15 +1348,7 @@ class MainActivity : Activity() {
     }
 
 
-    private val COLOR_BACKGROUND: Int get() = if (isDarkTheme()) 0xFF111827.toInt() else 0xFFF6F7FB.toInt()
-    private val COLOR_BACKGROUND_ALT: Int get() = if (isDarkTheme()) 0xFF1F2937.toInt() else 0xFFEFF6FF.toInt()
-    private val COLOR_CARD_STROKE: Int get() = if (isDarkTheme()) 0xFF374151.toInt() else 0xFFE5E7EB.toInt()
-    private val COLOR_TEXT_PRIMARY: Int get() = if (isDarkTheme()) 0xFFF9FAFB.toInt() else 0xFF111827.toInt()
-    private val COLOR_TEXT_SECONDARY: Int get() = if (isDarkTheme()) 0xFFD1D5DB.toInt() else 0xFF4B5563.toInt()
-    private val COLOR_TEXT_MUTED: Int get() = if (isDarkTheme()) 0xFF9CA3AF.toInt() else 0xFF6B7280.toInt()
-    private val COLOR_WARNING: Int get() = if (isDarkTheme()) 0xFFF59E0B.toInt() else 0xFFB45309.toInt()
-    private val COLOR_ACCENT: Int get() = if (isDarkTheme()) 0xFF60A5FA.toInt() else 0xFF2563EB.toInt()
-    private val COLOR_SUCCESS: Int get() = if (isDarkTheme()) 0xFF34D399.toInt() else 0xFF047857.toInt()
+    private fun currentColorScheme(): AppColorScheme = if (isDarkTheme()) darkAppColorScheme() else lightAppColorScheme()
 
     private enum class Screen(val itemId: Int) {
         HOME(1),

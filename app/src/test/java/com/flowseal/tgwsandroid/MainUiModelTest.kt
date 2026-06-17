@@ -79,6 +79,41 @@ class MainUiModelTest {
         assertEquals(ResolvedNightMode.DARK, AppearanceUiModels.nightMode(Appearance.DARK))
     }
 
+
+    @Test
+    fun appColorSchemesSeparateLightAndDarkSurfaces() {
+        val light = lightAppColorScheme()
+        val dark = darkAppColorScheme()
+
+        assertNotEquals(light.background, dark.background)
+        assertNotEquals(light.surface, dark.surface)
+        assertNotEquals(0xFFFFFFFF.toInt(), dark.surface)
+        assertNotEquals(0xFFFFFFFF.toInt(), dark.surfaceContainer)
+    }
+
+    @Test
+    fun darkSchemeAvoidsInvalidCardTextContrastPairs() {
+        val dark = darkAppColorScheme()
+
+        assertNotEquals(dark.surface, dark.onSurface)
+        assertNotEquals(0xFFFFFFFF.toInt(), dark.surface)
+        assertNotEquals(0xFF000000.toInt(), dark.onSurface)
+        assertNotEquals(dark.surfaceVariant, dark.onSurfaceVariant)
+    }
+
+    @Test
+    fun bottomNavColorModelDefinesSelectedAndUnselectedStates() {
+        listOf(lightAppColorScheme(), darkAppColorScheme()).forEach { scheme ->
+            val nav = bottomNavColorModel(scheme)
+
+            assertEquals(scheme.surfaceContainer, nav.background)
+            assertEquals(scheme.primary, nav.selected)
+            assertEquals(scheme.onSurfaceVariant, nav.unselected)
+            assertEquals(scheme.primaryContainer, nav.activeIndicator)
+            assertNotEquals(nav.selected, nav.unselected)
+        }
+    }
+
     @Test
     fun themeRowsUseClearDescriptions() {
         assertEquals("Следует системной теме.", AppearanceUiModels.description(Appearance.AUTO))

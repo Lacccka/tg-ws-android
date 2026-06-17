@@ -4,6 +4,99 @@ import com.flowseal.tgwsandroid.config.Appearance
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 
+
+data class AppColorScheme(
+    val background: Int,
+    val surface: Int,
+    val surfaceVariant: Int,
+    val surfaceContainer: Int,
+    val primary: Int,
+    val onPrimary: Int,
+    val primaryContainer: Int,
+    val onPrimaryContainer: Int,
+    val secondary: Int,
+    val onSecondary: Int,
+    val error: Int,
+    val onError: Int,
+    val onBackground: Int,
+    val onSurface: Int,
+    val onSurfaceVariant: Int,
+    val outline: Int,
+    val divider: Int,
+    val success: Int,
+    val warning: Int,
+    val successContainer: Int,
+    val onSuccessContainer: Int,
+    val warningContainer: Int,
+    val onWarningContainer: Int,
+)
+
+fun lightAppColorScheme(): AppColorScheme = AppColorScheme(
+    background = 0xFFF6F7FB.toInt(),
+    surface = 0xFFFFFFFF.toInt(),
+    surfaceVariant = 0xFFEFF6FF.toInt(),
+    surfaceContainer = 0xFFFFFFFF.toInt(),
+    primary = 0xFF2563EB.toInt(),
+    onPrimary = 0xFFFFFFFF.toInt(),
+    primaryContainer = 0xFFDCEBFF.toInt(),
+    onPrimaryContainer = 0xFF0B3A75.toInt(),
+    secondary = 0xFF475569.toInt(),
+    onSecondary = 0xFFFFFFFF.toInt(),
+    error = 0xFFB42318.toInt(),
+    onError = 0xFFFFFFFF.toInt(),
+    onBackground = 0xFF111827.toInt(),
+    onSurface = 0xFF111827.toInt(),
+    onSurfaceVariant = 0xFF4B5563.toInt(),
+    outline = 0xFFE5E7EB.toInt(),
+    divider = 0xFFE5E7EB.toInt(),
+    success = 0xFF047857.toInt(),
+    warning = 0xFFB45309.toInt(),
+    successContainer = 0xFFD1FAE5.toInt(),
+    onSuccessContainer = 0xFF064E3B.toInt(),
+    warningContainer = 0xFFFEF3C7.toInt(),
+    onWarningContainer = 0xFF78350F.toInt(),
+)
+
+fun darkAppColorScheme(): AppColorScheme = AppColorScheme(
+    background = 0xFF111827.toInt(),
+    surface = 0xFF1F2937.toInt(),
+    surfaceVariant = 0xFF374151.toInt(),
+    surfaceContainer = 0xFF1F2937.toInt(),
+    primary = 0xFF60A5FA.toInt(),
+    onPrimary = 0xFF0B1220.toInt(),
+    primaryContainer = 0xFF1D4ED8.toInt(),
+    onPrimaryContainer = 0xFFEFF6FF.toInt(),
+    secondary = 0xFFCBD5E1.toInt(),
+    onSecondary = 0xFF0F172A.toInt(),
+    error = 0xFFF87171.toInt(),
+    onError = 0xFF1F0A0A.toInt(),
+    onBackground = 0xFFF9FAFB.toInt(),
+    onSurface = 0xFFF9FAFB.toInt(),
+    onSurfaceVariant = 0xFFD1D5DB.toInt(),
+    outline = 0xFF4B5563.toInt(),
+    divider = 0xFF374151.toInt(),
+    success = 0xFF34D399.toInt(),
+    warning = 0xFFF59E0B.toInt(),
+    successContainer = 0xFF064E3B.toInt(),
+    onSuccessContainer = 0xFFD1FAE5.toInt(),
+    warningContainer = 0xFF78350F.toInt(),
+    onWarningContainer = 0xFFFFF7ED.toInt(),
+)
+
+data class BottomNavColorModel(
+    val background: Int,
+    val selected: Int,
+    val unselected: Int,
+    val activeIndicator: Int,
+)
+
+fun bottomNavColorModel(colorScheme: AppColorScheme): BottomNavColorModel = BottomNavColorModel(
+    background = colorScheme.surfaceContainer,
+    selected = colorScheme.primary,
+    unselected = colorScheme.onSurfaceVariant,
+    activeIndicator = colorScheme.primaryContainer,
+)
+
 object RussianUiText {
     const val ROUTE_AUTO = "Авто"
     const val ROUTE_AUTO_SUBTITLE = "Рекомендуется. Приложение само выбирает подходящий режим."
