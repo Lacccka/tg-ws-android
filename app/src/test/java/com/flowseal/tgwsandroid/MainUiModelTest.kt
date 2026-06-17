@@ -178,8 +178,8 @@ class MainUiModelTest {
         )
 
         assertEquals("Подключение нестабильно", hero.title)
-        assertEquals("Переподключить", hero.primaryAction)
-        assertEquals("Диагностика", hero.secondaryAction)
+        assertEquals("Отключить", hero.primaryAction)
+        assertEquals("Перезапустить", hero.secondaryAction)
     }
 
     @Test
@@ -194,8 +194,8 @@ class MainUiModelTest {
         )
 
         assertEquals("Подключаемся…", hero.title)
-        assertEquals(null, hero.primaryAction)
-        assertEquals(null, hero.secondaryAction)
+        assertEquals("Отключить", hero.primaryAction)
+        assertEquals("Перезапустить", hero.secondaryAction)
     }
 
     @Test
@@ -210,8 +210,8 @@ class MainUiModelTest {
         )
 
         assertEquals("Почти готово", hero.title)
-        assertEquals("Подключить Telegram", hero.primaryAction)
-        assertEquals("Остановить", hero.secondaryAction)
+        assertEquals("Отключить", hero.primaryAction)
+        assertEquals("Перезапустить", hero.secondaryAction)
     }
 
     @Test
@@ -226,8 +226,37 @@ class MainUiModelTest {
         )
 
         assertEquals("Всё готово", hero.title)
-        assertEquals(null, hero.primaryAction)
-        assertEquals("Остановить", hero.secondaryAction)
+        assertEquals("Отключить", hero.primaryAction)
+        assertEquals("Перезапустить", hero.secondaryAction)
+    }
+
+    @Test
+    fun mainHeroDoesNotExposeDiagnosticsAction() {
+        val scenarios = listOf(
+            MainHeroStateMapper.state(false, false, false, "Нестабильно", false, false),
+            MainHeroStateMapper.state(true, false, false, "Стабильно", false, true),
+            MainHeroStateMapper.state(true, false, false, "Нестабильно", false, false),
+        )
+
+        assertFalse(scenarios.any { it.primaryAction == "Диагностика" || it.secondaryAction == "Диагностика" })
+    }
+
+    @Test
+    fun settingsLabelsUseSecretAndNoPermanentRestartAction() {
+        assertEquals("Обновить secret", SettingsUiText.RESET_SECRET_TITLE)
+        assertFalse(SettingsUiText.RESET_SECRET_TITLE.contains("Обновить подключение"))
+        assertFalse(SettingsUiText.RESET_SECRET_TITLE.contains("Перезапустить прокси"))
+    }
+
+    @Test
+    fun settingsConnectionModeOptionsAreExactlyUserFacingLabels() {
+        assertEquals(listOf("Авто", "Быстрый Wi-Fi", "Совместимый"), SettingsUiText.connectionModeOptions)
+        assertFalse(SettingsUiText.connectionModeOptions.any { it in listOf("direct_first", "cf_first", "cf_only", "pool", "fallback") })
+    }
+
+    @Test
+    fun settingsThemeOptionsAreExactlyUserFacingLabels() {
+        assertEquals(listOf("Авто", "Светлая", "Тёмная"), SettingsUiText.themeOptions)
     }
 
     @Test

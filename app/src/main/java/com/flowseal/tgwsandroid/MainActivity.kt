@@ -77,8 +77,6 @@ class MainActivity : Activity() {
     private lateinit var themeStatusText: TextView
     private lateinit var secretStateText: TextView
     private lateinit var diagnosticsSummaryText: TextView
-    private lateinit var restartProxyButton: Button
-    private lateinit var restartProxyHintText: TextView
     private lateinit var telemetryCheckBox: CheckBox
     private lateinit var telemetryTestButton: Button
     private lateinit var developerModeCheckBox: CheckBox
@@ -185,8 +183,8 @@ class MainActivity : Activity() {
             setTextColor(COLOR_TEXT_SECONDARY)
         }
         primaryControlButton = createFilledButton("Включить") { handleHeroPrimaryAction() }
-        connectTelegramButton = createOutlinedButton("Остановить") { confirmStopProxy() }
-        restartPendingButton = createOutlinedButton("Перезагрузить прокси") { restartProxyService() }
+        connectTelegramButton = createOutlinedButton("Перезапустить") { restartProxyService() }
+        restartPendingButton = createOutlinedButton("Перезапустить") { restartProxyService() }
         hintsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val chipsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -228,8 +226,6 @@ class MainActivity : Activity() {
         telemetryStatusText = createValueText()
         themeStatusText = createValueText()
         secretStateText = createValueText().apply { setTextColor(COLOR_SUCCESS) }
-        restartProxyHintText = createValueText().apply { setTextColor(COLOR_TEXT_SECONDARY) }
-        restartProxyButton = createButton("Перезагрузить прокси") { restartProxyService() }
         telemetryCheckBox = CheckBox(this).apply {
             text = "Отправлять анонимную диагностику"
             isAllCaps = false
@@ -314,23 +310,23 @@ class MainActivity : Activity() {
             }, cardParams())
             addView(SettingsSection("Подключение") {
                 addView(ConnectionModeSelector(), matchWrapParams())
-                addView(routeModeValueText, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
             addView(SettingsSection("Внешний вид") {
                 addView(SettingsRow(
-                    title = "Тема",
+                    title = SettingsUiText.THEME_TITLE,
                     description = "Выберите оформление приложения.",
                     value = themeStatusText,
                     onClick = { showThemeDialog() },
                 ), matchWrapParams())
             }, cardParams(topMargin = padding))
             addView(SettingsSection("Telegram") {
-                addView(createButton("Обновить подключение") { confirmResetSecret() }, matchWrapParams())
-                addView(secretStateText, matchWrapParams(topMargin = rowGap))
-            }, cardParams(topMargin = padding))
-            addView(SettingsSection("Сервис") {
-                addView(restartProxyButton, matchWrapParams())
-                addView(restartProxyHintText, matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow(
+                    title = SettingsUiText.RESET_SECRET_TITLE,
+                    description = "После обновления нужно заново подключить Telegram.",
+                    value = secretStateText,
+                    badge = Badge("Важно", COLOR_WARNING, Color.WHITE),
+                    onClick = { confirmResetSecret() },
+                ), matchWrapParams())
             }, cardParams(topMargin = padding))
             addView(SettingsSection("Для разработчика") {
                 addView(developerModeCheckBox, matchWrapParams())
@@ -381,7 +377,7 @@ class MainActivity : Activity() {
         val labels = options.map { it.title }.toTypedArray()
         val current = ProxyRuntimeConfig.appConfig(applicationContext).routeMode
         AlertDialog.Builder(this)
-            .setTitle("Режим подключения")
+            .setTitle(SettingsUiText.CONNECTION_MODE_TITLE)
             .setSingleChoiceItems(labels, options.indexOfFirst { it.routeMode == current }.coerceAtLeast(0)) { dialog, index ->
                 setRouteMode(options[index].routeMode)
                 dialog.dismiss()
@@ -424,9 +420,10 @@ class MainActivity : Activity() {
 
             primaryControlButton.text = hero.primaryAction.orEmpty()
             primaryControlButton.visibility = if (hero.primaryAction == null) View.GONE else View.VISIBLE
-            primaryControlButton.isEnabled = hero.primaryAction != null && !starting
+            primaryControlButton.isEnabled = hero.primaryAction != null
             connectTelegramButton.text = hero.secondaryAction.orEmpty()
             connectTelegramButton.visibility = if (hero.secondaryAction == null) View.GONE else View.VISIBLE
+            connectTelegramButton.isEnabled = hero.secondaryAction != MainHeroStateMapper.RESTART_ACTION || running
             connectTelegramButton.setOnClickListener { handleHeroSecondaryAction(hero.secondaryAction) }
 
             val showRestartWarning = pendingRestartRequired && running
@@ -440,7 +437,7 @@ class MainActivity : Activity() {
 
         if (::routeModeValueText.isInitialized) {
             val config = ProxyRuntimeConfig.appConfig(applicationContext)
-            routeModeValueText.text = UserRouteModes.helperFor(config.routeMode)
+            routeModeValueText.text = UserRouteModes.labelFor(config.routeMode)
             notificationStatusText.text = if (notificationPermissionMissing()) "Выключены" else "Включены"
             batteryStatusText.text = userBatteryLabel(ProxyForegroundService.State.batteryOptimizationStatus)
             autostartStatusText.text = if (config.autostart) "Включён" else "Не проверено"
@@ -448,11 +445,9 @@ class MainActivity : Activity() {
             themeStatusText.text = appearanceLabel(config.appearance)
             developerModeCheckBox.isChecked = developerModeEnabled()
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
-            restartProxyButton.isEnabled = PendingRestartModel.restartActionEnabled(running)
-            restartProxyHintText.text = if (running) "" else PendingRestartModel.RESTART_DISABLED_HINT
             telemetryCheckBox.isChecked = config.telemetryEnabled
             telemetryTestButton.isEnabled = config.telemetryEnabled
-            secretStateText.text = "Telegram потребуется переподключить после обновления."
+            secretStateText.text = "Secret скрыт"
         }
 
         if (::diagnosticsSummaryText.isInitialized) {
@@ -610,7 +605,8 @@ class MainActivity : Activity() {
                 startProxyService()
             }
             MainHeroStateMapper.CONNECT_TELEGRAM_ACTION -> openTelegramProxyLink()
-            MainHeroStateMapper.RECONNECT_ACTION -> restartProxyService()
+            MainHeroStateMapper.STOP_ACTION -> confirmStopProxy()
+            MainHeroStateMapper.RESTART_ACTION -> restartProxyService()
         }
         refreshState()
     }
@@ -618,16 +614,15 @@ class MainActivity : Activity() {
     private fun handleHeroSecondaryAction(action: String?) {
         if (isFinishing || isDestroyed) return
         when (action) {
-            MainHeroStateMapper.STOP_ACTION -> confirmStopProxy()
-            MainHeroStateMapper.DIAGNOSTICS_ACTION -> showScreen(Screen.DIAGNOSTICS)
+            MainHeroStateMapper.RESTART_ACTION -> restartProxyService()
         }
     }
 
     private fun confirmStopProxy() {
         AlertDialog.Builder(this)
-            .setTitle("Остановить прокси?")
+            .setTitle("Отключить прокси?")
             .setMessage("Telegram потеряет подключение через локальный прокси.")
-            .setPositiveButton("Остановить") { _, _ ->
+            .setPositiveButton("Отключить") { _, _ ->
                 transitionStatus = TransitionStatus.STOPPING
                 startService(ProxyForegroundService.stopIntent(this))
                 refreshState()
@@ -741,8 +736,8 @@ class MainActivity : Activity() {
 
     private fun confirmResetSecret() {
         AlertDialog.Builder(this)
-            .setTitle("Обновить секрет?")
-            .setMessage("После обновления секрета нужно заново подключить Telegram. Старое подключение перестанет работать.")
+            .setTitle(SettingsUiText.RESET_SECRET_DIALOG_TITLE)
+            .setMessage(SettingsUiText.RESET_SECRET_DIALOG_MESSAGE)
             .setPositiveButton("Обновить") { _, _ -> resetSecret() }
             .setNegativeButton("Отмена", null)
             .show()
@@ -867,7 +862,7 @@ class MainActivity : Activity() {
         val labels = options.map(::appearanceLabel).toTypedArray()
         val current = ProxyRuntimeConfig.appConfig(applicationContext).appearance
         AlertDialog.Builder(this)
-            .setTitle("Тема")
+            .setTitle(SettingsUiText.THEME_TITLE)
             .setSingleChoiceItems(labels, options.indexOf(current).coerceAtLeast(0)) { dialog, index ->
                 val store = AppConfigStore.from(applicationContext)
                 store.saveConfig(store.loadConfig().copy(appearance = options[index]))
@@ -1110,8 +1105,8 @@ class MainActivity : Activity() {
         val current = UserRouteModes.normalOptions.firstOrNull { it.routeMode == config.routeMode }
             ?: UserRouteModes.normalOptions.first()
         return SettingsRow(
-            title = "Режим подключения",
-            description = current.subtitle ?: "",
+            title = SettingsUiText.CONNECTION_MODE_TITLE,
+            description = UserRouteModes.helperFor(current.routeMode),
             value = createValueText().apply { text = current.title },
             onClick = { showConnectionModeDialog() },
         )
