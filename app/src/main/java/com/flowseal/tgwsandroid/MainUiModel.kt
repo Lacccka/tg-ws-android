@@ -519,16 +519,23 @@ data class DiagnosticsSectionModel(
 )
 
 object DiagnosticsScreenUiModel {
-    val normalActions: List<String> = listOf(
+    val developerActions: List<String> = listOf(
         "Копировать диагностику",
         "Поделиться диагностикой",
         "Открыть лог",
         "Очистить логи",
     )
 
+    const val CHECK_NOW_ACTION = "Проверить сейчас"
     const val TEST_TELEMETRY_ACTION = "Отправить тестовую телеметрию"
 
-    val actions: List<String> = normalActions + TEST_TELEMETRY_ACTION
+    val actions: List<String> = developerActions + TEST_TELEMETRY_ACTION
+
+    val normalSections: List<String> = listOf(
+        "Проверка подключения",
+        "Что можно сделать",
+        "Сеть и маршрут",
+    )
 
     val developerSections: List<String> = listOf(
         "Маршрут: детали",
@@ -536,23 +543,21 @@ object DiagnosticsScreenUiModel {
         "Direct/pool: детали",
         "Handshake: детали",
         "Счётчики",
+        "Недавние ошибки",
     )
 
     fun actions(developerModeEnabled: Boolean): List<String> = if (developerModeEnabled) {
-        normalActions + TEST_TELEMETRY_ACTION
+        developerActions + TEST_TELEMETRY_ACTION
     } else {
-        normalActions
+        emptyList()
     }
 
     fun sections(developerModeEnabled: Boolean): List<DiagnosticsSectionModel> = buildList {
-        add(DiagnosticsSectionModel("Состояние"))
-        add(DiagnosticsSectionModel("Действия", actions = actions(developerModeEnabled)))
-        add(DiagnosticsSectionModel("Состояние маршрута"))
-        add(DiagnosticsSectionModel("Состояние сети"))
-        add(DiagnosticsSectionModel("Ошибки за последнее время"))
-        add(DiagnosticsSectionModel("Логи", actions = emptyList(), containsRawLogBlock = false))
-        add(DiagnosticsSectionModel("Анонимная диагностика", readOnly = true))
+        add(DiagnosticsSectionModel("Проверка подключения", actions = listOf(CHECK_NOW_ACTION)))
+        add(DiagnosticsSectionModel("Что можно сделать"))
+        add(DiagnosticsSectionModel("Сеть и маршрут"))
         if (developerModeEnabled) {
+            add(DiagnosticsSectionModel("Инструменты разработчика", developerOnly = true, actions = actions(true)))
             developerSections.forEach { title ->
                 add(DiagnosticsSectionModel(title, developerOnly = true, collapsedByDefault = true))
             }

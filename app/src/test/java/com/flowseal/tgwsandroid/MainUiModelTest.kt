@@ -185,7 +185,7 @@ class MainUiModelTest {
     fun developerModeControlsDiagnosticsSectionsAndTelemetryAction() {
         val offSections = DiagnosticsScreenUiModel.sections(developerModeEnabled = false)
         assertFalse(offSections.any { it.developerOnly })
-        assertFalse(DiagnosticsScreenUiModel.actions(developerModeEnabled = false).contains("Отправить тестовую телеметрию"))
+        assertTrue(DiagnosticsScreenUiModel.actions(developerModeEnabled = false).isEmpty())
 
         val onSections = DiagnosticsScreenUiModel.sections(developerModeEnabled = true)
         DiagnosticsScreenUiModel.developerSections.forEach { title ->
@@ -197,24 +197,35 @@ class MainUiModelTest {
     @Test
     fun diagnosticsActionsAreSingleTopActionsCard() {
         val sections = DiagnosticsScreenUiModel.sections(developerModeEnabled = true)
-        assertEquals("Состояние", sections[0].title)
-        assertEquals("Действия", sections[1].title)
+        assertEquals("Проверка подключения", sections[0].title)
+        assertEquals("Что можно сделать", sections[1].title)
         val actionSections = sections.filter { it.actions.isNotEmpty() }
-        assertEquals(1, actionSections.size)
-        assertEquals(DiagnosticsScreenUiModel.actions(developerModeEnabled = true), actionSections.single().actions)
-        assertTrue(sections.indexOfFirst { it.title == "Действия" } < sections.indexOfFirst { it.title == "Логи" })
-        assertTrue(actionSections.single().actions.containsAll(listOf("Копировать диагностику", "Поделиться диагностикой", "Открыть лог", "Очистить логи")))
+        val developerActionSections = actionSections.filter { it.title == "Инструменты разработчика" }
+        assertEquals(1, developerActionSections.size)
+        assertEquals(DiagnosticsScreenUiModel.actions(developerModeEnabled = true), developerActionSections.single().actions)
+        assertTrue(sections.indexOfFirst { it.title == "Инструменты разработчика" } < sections.indexOfFirst { it.title == "Маршрут: детали" })
+        assertTrue(actionSections.single { it.title == "Инструменты разработчика" }.actions.containsAll(listOf("Копировать диагностику", "Поделиться диагностикой", "Открыть лог", "Очистить логи")))
     }
 
     @Test
-    fun diagnosticsAnonymousDiagnosticsIsReadOnlyAndLogsAreCompact() {
+    fun normalDiagnosticsIsAvailabilityDashboardWithoutDebugDump() {
         val sections = DiagnosticsScreenUiModel.sections(developerModeEnabled = false)
-        val anonymous = sections.single { it.title == "Анонимная диагностика" }
-        assertTrue(anonymous.readOnly)
-        assertTrue(anonymous.interactiveSwitches.isEmpty())
-        val logSections = sections.filter { it.title == "Логи" }
-        assertEquals(1, logSections.size)
-        assertFalse(logSections.single().containsRawLogBlock)
+        val titles = sections.map { it.title }
+        assertTrue(titles.contains("Проверка подключения"))
+        assertTrue(sections.first { it.title == "Проверка подключения" }.actions.contains("Проверить сейчас"))
+        assertTrue(titles.contains("Что можно сделать"))
+        assertFalse(titles.contains("Последняя ошибка"))
+        assertFalse(titles.contains("Ошибки за последнее время"))
+        assertFalse(titles.contains("Логи"))
+        assertFalse(titles.contains("Анонимная диагностика"))
+        assertFalse(sections.any { it.actions.contains("Переподключить") })
+        assertTrue(DiagnosticsScreenUiModel.actions(developerModeEnabled = false).isEmpty())
+    }
+
+    @Test
+    fun diagnosticsRecommendationsAreCappedInUiSource() {
+        val source = java.io.File("src/main/java/com/flowseal/tgwsandroid/MainActivity.kt").readText()
+        assertTrue(source.contains("}.take(3)"))
     }
 
     @Test

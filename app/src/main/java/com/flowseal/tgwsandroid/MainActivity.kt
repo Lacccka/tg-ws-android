@@ -25,6 +25,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
+import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
@@ -90,6 +91,15 @@ class MainActivity : Activity() {
     private lateinit var portStatusText: TextView
     private lateinit var secretStateText: TextView
     private lateinit var diagnosticsSummaryText: TextView
+    private lateinit var diagnosticsProxyText: TextView
+    private lateinit var diagnosticsNetworkText: TextView
+    private lateinit var diagnosticsAvailabilityText: TextView
+    private lateinit var diagnosticsDurationText: TextView
+    private lateinit var diagnosticsLastCheckText: TextView
+    private lateinit var diagnosticsGuidanceText: TextView
+    private lateinit var diagnosticsRouteText: TextView
+    private lateinit var diagnosticsLastConnectionText: TextView
+    private lateinit var diagnosticsCheckButton: Button
     private lateinit var telemetryCheckBox: CheckBox
     private lateinit var telemetrySwitch: MaterialSwitch
     private lateinit var telemetryTestButton: Button
@@ -104,6 +114,9 @@ class MainActivity : Activity() {
     private var renderingScreen: Boolean = false
     private var pendingRestartRequired: Boolean = false
     private var transitionStatus: TransitionStatus = TransitionStatus.NONE
+    private var diagnosticsLastCheckAtMs: Long? = null
+    private var diagnosticsLastCheckDurationMs: Long? = null
+    private var diagnosticsCheckInProgress: Boolean = false
 
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, MODE_PRIVATE) }
 
@@ -520,7 +533,7 @@ class MainActivity : Activity() {
         }
 
         if (::diagnosticsSummaryText.isInitialized) {
-            diagnosticsSummaryText.text = diagnosticsSummaryLine()
+            updateDiagnosticsDashboard()
             rawRouteDetailsText.text = routeDetailsLine()
             cfDetailsText.text = cfDetailsLine()
             directDetailsText.text = directDetailsLine()
@@ -530,10 +543,6 @@ class MainActivity : Activity() {
             }
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
         }
-        if (::logsText.isInitialized) {
-            val logCount = ProxyForegroundService.State.recentLogs().size
-            logsText.text = if (logCount > 0) "Логи доступны: $logCount записей. Откройте лог из карточки «Действия»." else "Логов пока нет"
-        }
     }
 
     private fun buildDiagnosticsScreen(): ScrollView {
@@ -542,9 +551,17 @@ class MainActivity : Activity() {
         val rowGap = (8 * density).toInt()
         val bottomContentPadding = (96 * density).toInt()
         diagnosticsSummaryText = createValueText()
+        diagnosticsProxyText = createValueText()
+        diagnosticsNetworkText = createValueText()
+        diagnosticsAvailabilityText = createValueText()
+        diagnosticsDurationText = createValueText()
+        diagnosticsLastCheckText = createValueText()
+        diagnosticsGuidanceText = createValueText()
+        diagnosticsRouteText = createValueText()
+        diagnosticsLastConnectionText = createValueText()
+        diagnosticsCheckButton = createButton("Проверить сейчас") { runDiagnosticsAvailabilityCheck() }
         telemetryStatusText = createValueText()
         telemetryTestButton = createButton("Отправить тестовую телеметрию") { sendTestTelemetry() }
-        logsText = createValueText(textSize = 13f)
         rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
@@ -557,17 +574,24 @@ class MainActivity : Activity() {
             setPadding(padding, padding, padding, bottomContentPadding)
             setBackgroundColor(currentColorScheme().background)
             addHeader()
-            addView(SettingsSection("Состояние") {
+            addView(SettingsSection("Проверка подключения") {
                 addView(diagnosticsSummaryText, matchWrapParams())
-                addView(createValueText().apply {
-                    text = "Последняя проблема: ${lastProblemText()}"
-                    setTextColor(currentColorScheme().onSurfaceVariant)
-                }, matchWrapParams(topMargin = rowGap))
-                if (lastProblemText() != "Нет недавних ошибок") {
-                    addView(createButton("Переподключить") { restartProxyService() }, matchWrapParams(topMargin = rowGap))
-                }
+                addView(SettingsRow("Прокси", diagnosticsProxyText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow("Сеть", diagnosticsNetworkText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow("Доступность", diagnosticsAvailabilityText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow("Время ответа", diagnosticsDurationText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow("Последняя проверка", diagnosticsLastCheckText), matchWrapParams(topMargin = rowGap))
+                addView(diagnosticsCheckButton, matchWrapParams(topMargin = rowGap))
             }, cardParams())
-            addView(SettingsSection("Действия") {
+            addView(SettingsSection("Что можно сделать") {
+                addView(diagnosticsGuidanceText, matchWrapParams())
+            }, cardParams(topMargin = padding))
+            addView(SettingsSection("Сеть и маршрут") {
+                addView(SettingsRow("Сеть", createValueText().apply { text = userNetworkLabel(ProxyForegroundService.State.networkStatus) }), matchWrapParams())
+                addView(SettingsRow("Режим", diagnosticsRouteText), matchWrapParams(topMargin = rowGap))
+                addView(SettingsRow("Последнее подключение", diagnosticsLastConnectionText), matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding))
+            developerSection.addView(SettingsSection("Инструменты разработчика") {
                 addView(createButton("Копировать диагностику") { copyDiagnostics() }, matchWrapParams())
                 addView(createButton("Поделиться диагностикой") { shareDiagnostics() }, matchWrapParams(topMargin = rowGap))
                 addView(createButton("Открыть лог") { showLogsDialog() }, matchWrapParams(topMargin = rowGap))
@@ -575,31 +599,15 @@ class MainActivity : Activity() {
                 telemetryTestButton.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
                 addView(telemetryTestButton, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
-            addView(SettingsSection("Состояние маршрута") {
-                addView(SettingsRow("Текущий маршрут", createValueText().apply { text = userRouteLabel() }), matchWrapParams())
-            }, cardParams(topMargin = padding))
-            addView(SettingsSection("Состояние сети") {
-                addView(SettingsRow("Сеть", createValueText().apply { text = userNetworkLabel(ProxyForegroundService.State.networkStatus) }), matchWrapParams())
-            }, cardParams(topMargin = padding))
-            addView(SettingsSection("Ошибки за последнее время") {
-                addView(createValueText().apply {
-                    text = lastProblemText()
-                    setTextColor(currentColorScheme().onSurfaceVariant)
-                }, matchWrapParams())
-            }, cardParams(topMargin = padding))
-            addView(SettingsSection("Логи") {
-                addView(logsText.apply { setTextColor(currentColorScheme().onSurfaceVariant) }, matchWrapParams())
-            }, cardParams(topMargin = padding))
-            addView(SettingsSection("Анонимная диагностика", "Настраивается в разделе Настройки.") {
-                addView(telemetryStatusText, matchWrapParams())
-            }, cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Маршрут: детали", rawRouteDetailsText), cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Cloudflare: детали", cfDetailsText), cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Direct/pool: детали", directDetailsText), cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Handshake: детали", createValueText(textSize = 13f).apply { text = directDetailsLine(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Счётчики", createValueText(textSize = 13f).apply { text = ProxyForegroundService.State.diagnosticReport(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
+            developerSection.addView(CollapsibleSettingsSection("Недавние ошибки", createValueText(textSize = 13f).apply { text = lastProblemText(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
             addView(developerSection, matchWrapParams())
         }
+        updateDiagnosticsDashboard()
         return ScrollView(this).apply {
             setBackgroundColor(currentColorScheme().background)
             addView(content, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -794,6 +802,78 @@ class MainActivity : Activity() {
             recent.contains("connect", ignoreCase = true) || recent.contains("failed", ignoreCase = true) -> "Не удалось подключиться"
             recent.contains("closed", ignoreCase = true) || recent.contains("reset", ignoreCase = true) -> "Подключение было прервано"
             else -> "Есть ошибки"
+        }
+    }
+
+
+    private fun runDiagnosticsAvailabilityCheck() {
+        if (!ProxyForegroundService.State.running) {
+            diagnosticsLastCheckAtMs = System.currentTimeMillis()
+            diagnosticsLastCheckDurationMs = null
+            Toast.makeText(this, "Сначала включите прокси на главном экране", Toast.LENGTH_SHORT).show()
+            updateDiagnosticsDashboard()
+            return
+        }
+        diagnosticsCheckInProgress = true
+        val started = SystemClock.elapsedRealtime()
+        updateDiagnosticsDashboard()
+        handler.postDelayed({
+            diagnosticsLastCheckDurationMs = (SystemClock.elapsedRealtime() - started).coerceAtLeast(0L)
+            diagnosticsLastCheckAtMs = System.currentTimeMillis()
+            diagnosticsCheckInProgress = false
+            refreshLocalDiagnostics()
+            updateDiagnosticsDashboard()
+        }, 150L)
+    }
+
+    private fun updateDiagnosticsDashboard() {
+        val running = ProxyForegroundService.State.running
+        val network = ProxyForegroundService.State.networkStatus
+        val networkAvailable = !network.equals("none", ignoreCase = true) && !network.equals("unknown", ignoreCase = true) && network.isNotBlank()
+        val stats = ProxyForegroundService.State.stats()
+        val connected = telegramConnected(running, stats)
+        diagnosticsSummaryText.text = when {
+            diagnosticsCheckInProgress -> "Проверяем..."
+            !running -> "Прокси выключен"
+            !networkAvailable -> "Есть проблема с подключением"
+            connected -> "Прокси работает"
+            diagnosticsLastCheckAtMs == null -> "Проверка не выполнялась"
+            else -> "Есть проблема с подключением"
+        }
+        diagnosticsProxyText.text = if (running) "Работает" else "Выключен"
+        diagnosticsNetworkText.text = if (networkAvailable) userNetworkLabel(network) else "Недоступна"
+        diagnosticsAvailabilityText.text = when {
+            !running -> "Не проверено"
+            diagnosticsCheckInProgress -> "Проверяем..."
+            diagnosticsLastCheckAtMs == null -> "Не проверено"
+            networkAvailable -> if (connected || stats != null) "Доступно" else "Недостаточно данных"
+            else -> "Недоступно"
+        }
+        diagnosticsDurationText.text = diagnosticsLastCheckDurationMs?.let { "$it мс" } ?: "—"
+        diagnosticsLastCheckText.text = diagnosticsLastCheckAtMs?.let { relativeCheckTime(it) } ?: "не выполнялась"
+        diagnosticsCheckButton.isEnabled = running && !diagnosticsCheckInProgress
+        diagnosticsRouteText.text = userRouteLabel()
+        diagnosticsLastConnectionText.text = if (connected) "сейчас" else "Недостаточно данных"
+        diagnosticsGuidanceText.text = diagnosticsRecommendations(running, networkAvailable, connected).joinToString("\n") { "• $it" }
+    }
+
+    private fun diagnosticsRecommendations(running: Boolean, networkAvailable: Boolean, connected: Boolean): List<String> = buildList {
+        if (!running) add("Включите прокси на главном экране.")
+        if (!networkAvailable) add("Проверьте Wi-Fi или мобильную сеть.")
+        if (running && networkAvailable && !connected) {
+            add("Попробуйте переподключить прокси на главном экране.")
+            add("Откройте Telegram и подключите прокси заново.")
+        }
+        if (running && networkAvailable && connected) add("Действия не требуются.")
+    }.take(3)
+
+    private fun relativeCheckTime(timeMs: Long): String {
+        val seconds = ((System.currentTimeMillis() - timeMs).coerceAtLeast(0L) / 1000L).toInt()
+        return when {
+            seconds < 30 -> "сейчас"
+            seconds < 60 -> "$seconds сек. назад"
+            seconds < 3600 -> "${seconds / 60} мин. назад"
+            else -> "давно"
         }
     }
 
