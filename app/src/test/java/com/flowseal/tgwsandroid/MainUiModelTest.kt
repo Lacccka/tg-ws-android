@@ -139,16 +139,52 @@ class MainUiModelTest {
     }
 
     @Test
-    fun developerModeActionsAreAvailableOnlyForEnabledSection() {
-        assertTrue(DeveloperUiModel.developerActions.contains("Логи"))
-        assertTrue(DeveloperUiModel.developerActions.contains("Копировать диагностику"))
-        assertTrue(DeveloperUiModel.developerActions.contains("Очистить логи"))
-        assertTrue(DeveloperUiModel.developerActions.contains("Копировать ссылку прокси"))
-        assertTrue(DeveloperUiModel.developerActions.contains("Подробности маршрута"))
-        assertTrue(DeveloperUiModel.developerActions.contains("Состояние резервных доменов"))
-        assertTrue(DeveloperUiModel.developerActions.contains("Состояние прямого маршрута"))
+    fun developerModeActionsAreAvailableOnlyForDiagnosticsSection() {
+        assertTrue(DeveloperUiModel.developerActions.contains("Маршрут: детали"))
+        assertTrue(DeveloperUiModel.developerActions.contains("Cloudflare: детали"))
+        assertTrue(DeveloperUiModel.developerActions.contains("Direct/pool: детали"))
+        assertTrue(DeveloperUiModel.developerActions.contains("Handshake: детали"))
+        assertTrue(DeveloperUiModel.developerActions.contains("Счётчики"))
+        assertFalse(DeveloperUiModel.developerActions.contains("Копировать ссылку прокси"))
+        assertFalse(DeveloperUiModel.developerActions.contains("Копировать диагностику"))
+        assertFalse(DeveloperUiModel.developerActions.contains("Очистить логи"))
     }
 
+
+
+    @Test
+    fun diagnosticsActionsArePlacedOnlyInDiagnosticsModel() {
+        val diagnosticsActions = listOf(
+            "Копировать диагностику",
+            "Поделиться диагностикой",
+            "Открыть лог",
+            "Очистить логи",
+            "Отправить тестовую телеметрию",
+        )
+        diagnosticsActions.forEach { action ->
+            assertTrue(DiagnosticsScreenUiModel.actions.contains(action))
+            assertFalse(MainScreenUiModel.actions.contains(action))
+            assertFalse(SettingsScreenUiModel.actions.contains(action))
+        }
+        assertFalse(MainScreenUiModel.actions.contains("Копировать ссылку прокси"))
+        assertFalse(MainScreenUiModel.actions.contains("Скопировать ссылку"))
+        assertFalse(SettingsScreenUiModel.actions.contains("Копировать ссылку прокси"))
+    }
+
+    @Test
+    fun telemetryActionIsRussianOnly() {
+        assertTrue(DiagnosticsScreenUiModel.actions.contains("Отправить тестовую телеметрию"))
+        assertFalse((MainScreenUiModel.actions + SettingsScreenUiModel.actions + DiagnosticsScreenUiModel.actions).contains("Send test telemetry"))
+    }
+
+    @Test
+    fun diagnosticsDeveloperSectionsPreserveRawDetails() {
+        assertTrue(DiagnosticsScreenUiModel.developerSections.contains("Маршрут: детали"))
+        assertTrue(DiagnosticsScreenUiModel.developerSections.contains("Cloudflare: детали"))
+        assertTrue(DiagnosticsScreenUiModel.developerSections.contains("Direct/pool: детали"))
+        assertTrue(DiagnosticsScreenUiModel.developerSections.contains("Счётчики"))
+        assertTrue(DiagnosticsScreenUiModel.actions.contains("Открыть лог"))
+    }
     @Test
     fun developerModeDoesNotExposeUpstreamManualCheckText() {
         assertFalse(DeveloperUiModel.developerActions.any { it.contains("upstream", ignoreCase = true) })

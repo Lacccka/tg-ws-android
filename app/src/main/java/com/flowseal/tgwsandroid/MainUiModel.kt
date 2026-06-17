@@ -488,17 +488,55 @@ object MainHeroStateMapper {
     }
 }
 
+object MainScreenUiModel {
+    val actions: List<String> = listOf(
+        "Включить",
+        "Отключить",
+        "Перезапустить",
+        "Переподключить",
+        "Подключить Telegram",
+    )
+}
+
+object SettingsScreenUiModel {
+    val actions: List<String> = listOf(
+        "Анонимная диагностика",
+        "Подключение",
+        "Telegram MTProto",
+        "Датацентры Telegram",
+        "Внешний вид",
+    )
+}
+
+object DiagnosticsScreenUiModel {
+    val actions: List<String> = listOf(
+        "Отправить тестовую телеметрию",
+        "Копировать диагностику",
+        "Поделиться диагностикой",
+        "Открыть лог",
+        "Очистить логи",
+    )
+
+    val developerSections: List<String> = listOf(
+        "Маршрут: детали",
+        "Cloudflare: детали",
+        "Direct/pool: детали",
+        "Handshake: детали",
+        "Счётчики",
+        "Служебные действия",
+    )
+}
+
 object DeveloperUiModel {
     const val DEFAULT_DEVELOPER_MODE_ENABLED = false
 
     val developerActions: List<String> = listOf(
-        "Логи",
-        "Копировать диагностику",
-        "Очистить логи",
-        "Копировать ссылку прокси",
-        "Подробности маршрута",
-        "Состояние резервных доменов",
-        "Состояние прямого маршрута",
+        "Маршрут: детали",
+        "Cloudflare: детали",
+        "Direct/pool: детали",
+        "Handshake: детали",
+        "Счётчики",
+        "Служебные действия",
     )
 
     fun routeModeValue(mode: NetworkRouteMode, developerModeEnabled: Boolean): String = if (developerModeEnabled) {

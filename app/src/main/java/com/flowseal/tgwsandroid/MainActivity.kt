@@ -294,7 +294,6 @@ class MainActivity : Activity() {
                 refreshState()
             }
         }
-        telemetryTestButton = createButton("Отправить тестовую телеметрию") { sendTestTelemetry() }
         developerModeCheckBox = CheckBox(this).apply {
             applyCheckBoxStyle(this)
             text = "Режим разработчика"
@@ -311,24 +310,11 @@ class MainActivity : Activity() {
         rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
-        developerSection = SettingsSection("Технические данные") {
-            addView(createTextRow("Подробности маршрута", rawRouteDetailsText), matchWrapParams())
-            addView(createTextRow("Состояние резервных доменов", cfDetailsText), matchWrapParams(topMargin = rowGap))
-            addView(createTextRow("Состояние прямого маршрута", directDetailsText), matchWrapParams(topMargin = rowGap))
-            addView(createSectionTitle("Действия"), matchWrapParams(topMargin = rowGap))
-            addView(telemetryTestButton, matchWrapParams(topMargin = rowGap))
-            addView(createButton("Копировать диагностику") { copyDiagnostics() }, matchWrapParams(topMargin = rowGap))
-            addView(createButton("Очистить логи") {
-                ProxyForegroundService.State.clearLogs()
-                refreshState()
-            }, matchWrapParams(topMargin = rowGap))
-            addView(createButton("Копировать ссылку прокси") {
-                copyProxyLink()
-                Toast.makeText(this@MainActivity, "Ссылка прокси скопирована", Toast.LENGTH_SHORT).show()
-            }, matchWrapParams(topMargin = rowGap))
-            addView(createButton("Поделиться диагностикой") { shareDiagnostics() }, matchWrapParams(topMargin = rowGap))
-            addView(createSectionTitle("Логи"), matchWrapParams(topMargin = rowGap))
-            addView(logsText, matchWrapParams(topMargin = rowGap))
+        developerSection = SettingsSection("Для разработчика") {
+            addView(createValueText().apply {
+                text = "Технические диагностические данные и служебные действия перенесены во вкладку «Диагностика»."
+                setTextColor(currentColorScheme().onSurfaceVariant)
+            }, matchWrapParams())
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -526,7 +512,7 @@ class MainActivity : Activity() {
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
             telemetryCheckBox.isChecked = config.telemetryEnabled
             if (::telemetrySwitch.isInitialized) telemetrySwitch.isChecked = config.telemetryEnabled
-            telemetryTestButton.isEnabled = config.telemetryEnabled
+            if (::telemetryTestButton.isInitialized) telemetryTestButton.isEnabled = config.telemetryEnabled
             secretStateText.text = ProxyRuntimeConfig.partialTelegramSecret(applicationContext)
         }
 
@@ -550,32 +536,65 @@ class MainActivity : Activity() {
         val density = resources.displayMetrics.density
         val padding = (16 * density).toInt()
         val rowGap = (8 * density).toInt()
+        val bottomContentPadding = (96 * density).toInt()
         diagnosticsSummaryText = createValueText()
+        telemetryStatusText = createValueText()
+        telemetryTestButton = createButton("Отправить тестовую телеметрию") { sendTestTelemetry() }
         logsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
-        developerSection = SettingsSection("Технические данные") {
-            addView(SettingsRow("Подробности маршрута", rawRouteDetailsText), matchWrapParams())
-            addView(SettingsRow("Состояние резервных доменов", cfDetailsText), matchWrapParams(topMargin = rowGap))
-            addView(SettingsRow("Состояние прямого маршрута", directDetailsText), matchWrapParams(topMargin = rowGap))
+        developerSection = SettingsSection("Служебные действия") {
+            addView(telemetryTestButton, matchWrapParams())
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(padding, padding, padding, padding)
+            setPadding(padding, padding, padding, bottomContentPadding)
             setBackgroundColor(currentColorScheme().background)
             addHeader()
-            addView(SettingsSection("Диагностика") {
-                addView(StatusChip("Сводка"), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-                addView(diagnosticsSummaryText, matchWrapParams(topMargin = rowGap))
-                addView(createButton("Копировать диагностику") { copyDiagnostics() }, matchWrapParams(topMargin = rowGap))
-                addView(createButton("Поделиться диагностикой") { shareDiagnostics() }, matchWrapParams(topMargin = rowGap))
+            addView(SettingsSection("Состояние") {
+                addView(diagnosticsSummaryText, matchWrapParams())
+                addView(createValueText().apply {
+                    text = "Последняя проблема: ${lastProblemText()}"
+                    setTextColor(currentColorScheme().onSurfaceVariant)
+                }, matchWrapParams(topMargin = rowGap))
             }, cardParams())
-            addView(SettingsSection("Журнал") {
+            addView(SettingsSection("Состояние маршрута") {
+                addView(SettingsRow("Текущий маршрут", createValueText().apply { text = userRouteLabel() }), matchWrapParams())
+            }, cardParams(topMargin = padding))
+            addView(SettingsSection("Состояние сети") {
+                addView(SettingsRow("Сеть", createValueText().apply { text = userNetworkLabel(ProxyForegroundService.State.networkStatus) }), matchWrapParams())
+            }, cardParams(topMargin = padding))
+            addView(SettingsSection("Ошибки за последнее время") {
+                addView(createValueText().apply {
+                    text = lastProblemText()
+                    setTextColor(currentColorScheme().onSurfaceVariant)
+                }, matchWrapParams())
+            }, cardParams(topMargin = padding))
+            addView(SettingsSection("Логи") {
                 addView(Badge("Последние события"), LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT))
                 addView(logsText, matchWrapParams(topMargin = rowGap))
+                addView(createButton("Открыть лог") { showLogsDialog() }, matchWrapParams(topMargin = rowGap))
+                addView(createButton("Очистить логи") { confirmClearLogs() }, matchWrapParams(topMargin = rowGap))
+            }, cardParams(topMargin = padding))
+            addView(SettingsSection("Анонимная диагностика") {
+                addView(SettingsSwitchRow("Анонимная диагностика", "Помогает улучшать стабильность без личных данных.", telemetryStatusText, Badge("Рекомендуется")) { toggleTelemetry() }, matchWrapParams())
+            }, cardParams(topMargin = padding))
+            addView(SettingsSection("Действия диагностики") {
+                addView(createButton("Копировать диагностику") { copyDiagnostics() }, matchWrapParams())
+                addView(createButton("Поделиться диагностикой") { shareDiagnostics() }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
             developerSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+            listOf(
+                SettingsSection("Маршрут: детали") { addView(rawRouteDetailsText, matchWrapParams()) },
+                SettingsSection("Cloudflare: детали") { addView(cfDetailsText, matchWrapParams()) },
+                SettingsSection("Direct/pool: детали") { addView(directDetailsText, matchWrapParams()) },
+                SettingsSection("Handshake: детали") { addView(createValueText().apply { text = directDetailsLine() }, matchWrapParams()) },
+                SettingsSection("Счётчики") { addView(createValueText().apply { text = ProxyForegroundService.State.diagnosticReport() }, matchWrapParams()) },
+            ).forEach { detailsSection ->
+                detailsSection.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+                addView(detailsSection, cardParams(topMargin = padding))
+            }
             addView(developerSection, cardParams(topMargin = padding, bottomMargin = padding))
         }
         return ScrollView(this).apply {
@@ -758,6 +777,47 @@ class MainActivity : Activity() {
         val running = ProxyForegroundService.State.running
         val logs = ProxyForegroundService.State.recentLogs().size
         return "Сервис ${if (running) "работает" else "остановлен"}. Доступно записей диагностики: $logs."
+    }
+
+    private fun lastProblemText(): String {
+        val recent = ProxyForegroundService.State.recentLogs().asReversed().firstOrNull { line ->
+            line.contains("ERROR", ignoreCase = true) ||
+                line.contains("WARN", ignoreCase = true) ||
+                line.contains("failed", ignoreCase = true) ||
+                line.contains("error", ignoreCase = true)
+        } ?: return "Нет недавних ошибок"
+        return when {
+            recent.contains("network", ignoreCase = true) -> "Сеть была недоступна"
+            recent.contains("connect", ignoreCase = true) || recent.contains("failed", ignoreCase = true) -> "Не удалось подключиться"
+            recent.contains("closed", ignoreCase = true) || recent.contains("reset", ignoreCase = true) -> "Подключение было прервано"
+            else -> "Есть ошибки"
+        }
+    }
+
+    private fun showLogsDialog() {
+        val logText = ProxyForegroundService.State.recentLogs().takeIf { it.isNotEmpty() }?.joinToString("\n") ?: "Логов пока нет"
+        val textView = createValueText(textSize = 13f).apply {
+            text = logText
+            setTextIsSelectable(true)
+            setPadding((16 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt())
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Открыть лог")
+            .setView(ScrollView(this).apply { addView(textView) })
+            .setPositiveButton("Закрыть", null)
+            .show()
+    }
+
+    private fun confirmClearLogs() {
+        AlertDialog.Builder(this)
+            .setTitle("Очистить логи?")
+            .setMessage("Последние записи диагностики будут удалены из локального журнала.")
+            .setPositiveButton("Очистить") { _, _ ->
+                ProxyForegroundService.State.clearLogs()
+                refreshState()
+            }
+            .setNegativeButton("Отмена", null)
+            .show()
     }
 
     private fun routeDetailsLine(): String {
