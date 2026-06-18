@@ -524,6 +524,7 @@ class ProxyServerTest {
             config = baseConfig().copy(
                 routeMode = NetworkRouteMode.AUTO,
                 networkStatus = "mobile",
+                cfPoolEnabled = false,
                 cfProxyDomains = listOf("cf.example"),
             ),
             runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
@@ -817,6 +818,112 @@ class ProxyServerTest {
         assertEquals(1L, proxy.stats().connectionsBad)
         assertTrue(logs.any { it.contains("DC5 CF proxy failed via one.example: IOException: cf boom for kws5.one.example") })
         assertTrue(logs.any { it.contains("DC5 all CF proxy fallback attempts failed") })
+    }
+
+    @Test
+    fun cfPoolRefillUsesSameConnectTupleAsNormalCfFallback() {
+        val server = FakeTcpServerTransport()
+        val connector = TupleRecordingConnector()
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_FIRST,
+                networkStatus = "mobile",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, counters, _ -> counters.finish("completed") },
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(buildClientHandshake(dcIdx = 2, protoTag = RelayInit.PROTO_TAG_ABRIDGED)))
+        waitUntil { proxy.stats().cfProxyConnections == 1L }
+        waitUntil { proxy.stats().cfPoolRefillSuccesses == 1L }
+        proxy.stop()
+
+        val expected = ConnectTuple(
+            targetHost = "kws2.cf.example",
+            domain = "kws2.cf.example",
+            path = ProxyServer.DEFAULT_WS_PATH,
+            timeoutMs = RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS,
+        )
+        assertTrue("expected normal CF connect and CF pool refill tuples, got ${connector.tuples}", connector.tuples.size >= 2)
+        assertEquals(expected, connector.tuples[0])
+        assertEquals(expected, connector.tuples[1])
+    }
+
+    @Test
+    fun retrySafeStaleCfPoolFallsThroughToNormalCfFlow() {
+        val server = FakeTcpServerTransport()
+        val connector = SequencedConnector(
+            FakeWebSocketBinaryStream(),
+            FakeWebSocketBinaryStream(sendError = EOFException("stale pool")),
+            FakeWebSocketBinaryStream(),
+        )
+        val bridgedRoutes = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_FIRST,
+                networkStatus = "mobile",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            runner = ProxyBridgeRunner { _, webSocket, _, _, counters, _ ->
+                bridgedRoutes.add(if (webSocket === connector.sockets[0]) "first-cf" else "retry-cf")
+                counters.finish("completed")
+            },
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(buildClientHandshake(dcIdx = 2, protoTag = RelayInit.PROTO_TAG_ABRIDGED)))
+        waitUntil { proxy.stats().cfPoolRefillSuccesses == 1L }
+        server.enqueue(FakeTcpClientTransport(buildClientHandshake(dcIdx = 2, protoTag = RelayInit.PROTO_TAG_ABRIDGED)))
+        waitUntil { proxy.stats().cfPoolStale == 1L && proxy.stats().cfProxyConnections >= 2L }
+        proxy.stop()
+
+        assertEquals(1L, proxy.stats().cfPoolHits)
+        assertEquals(1L, proxy.stats().cfPoolStale)
+        assertEquals(2L, proxy.stats().cfProxyConnections)
+        assertTrue("normal CF retry should bridge after retry-safe stale pool", bridgedRoutes.contains("retry-cf"))
+    }
+
+    @Test
+    fun nonRetrySafeStaleCfPoolIsHandledWithoutReplay() {
+        val server = FakeTcpServerTransport()
+        val connector = SequencedConnector(
+            FakeWebSocketBinaryStream(),
+            FakeWebSocketBinaryStream(),
+        )
+        val bridgeCalls = AtomicInteger(0)
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_FIRST,
+                networkStatus = "mobile",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, counters, _ ->
+                if (bridgeCalls.incrementAndGet() == 2) {
+                    counters.recordDown(1)
+                    throw EOFException("partial frame")
+                }
+                counters.finish("completed")
+            },
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(buildClientHandshake(dcIdx = 2, protoTag = RelayInit.PROTO_TAG_ABRIDGED)))
+        waitUntil { proxy.stats().cfPoolRefillSuccesses == 1L }
+        server.enqueue(FakeTcpClientTransport(buildClientHandshake(dcIdx = 2, protoTag = RelayInit.PROTO_TAG_ABRIDGED)))
+        waitUntil { proxy.stats().cfPoolStale == 1L }
+        proxy.stop()
+
+        assertEquals(1L, proxy.stats().cfPoolHits)
+        assertEquals(1L, proxy.stats().cfPoolStale)
+        assertEquals("non-retry-safe stale pool must not open another CF socket", 2, connector.tuples.size)
+        assertEquals(1L, proxy.stats().cfProxyConnections)
     }
 
     @Test
@@ -1782,6 +1889,7 @@ class ProxyServerTest {
                 routeMode = NetworkRouteMode.AUTO,
                 networkStatus = "mobile",
                 poolSize = 1,
+                cfPoolEnabled = false,
                 cfProxyDomains = listOf("cf.example"),
             ),
             logger = ProxyLogger { logs.add(it) },
@@ -2204,6 +2312,7 @@ class ProxyServerTest {
                 poolSize = 1,
                 routeMode = NetworkRouteMode.AUTO,
                 networkStatus = "Wi-Fi",
+                cfPoolEnabled = false,
                 cfProxyDomains = listOf("cf.example"),
             ),
         )
@@ -3497,6 +3606,45 @@ class ProxyServerTest {
             domains.add(domain)
             paths.add(path)
             return fixedSocket ?: FakeWebSocketBinaryStream().also { sockets.add(it) }
+        }
+    }
+
+    private data class ConnectTuple(
+        val targetHost: String,
+        val domain: String,
+        val path: String,
+        val timeoutMs: Int,
+    )
+
+    private class TupleRecordingConnector : RawWebSocketConnector {
+        val tuples = CopyOnWriteArrayList<ConnectTuple>()
+
+        override fun connect(
+            targetHost: String,
+            domain: String,
+            path: String,
+            timeoutMs: Int,
+        ): WebSocketBinaryStream {
+            tuples.add(ConnectTuple(targetHost, domain, path, timeoutMs))
+            return FakeWebSocketBinaryStream()
+        }
+    }
+
+    private class SequencedConnector(
+        vararg webSockets: FakeWebSocketBinaryStream,
+    ) : RawWebSocketConnector {
+        val tuples = CopyOnWriteArrayList<ConnectTuple>()
+        val sockets = webSockets.toList()
+        private val index = AtomicInteger(0)
+
+        override fun connect(
+            targetHost: String,
+            domain: String,
+            path: String,
+            timeoutMs: Int,
+        ): WebSocketBinaryStream {
+            tuples.add(ConnectTuple(targetHost, domain, path, timeoutMs))
+            return sockets.getOrElse(index.getAndIncrement()) { FakeWebSocketBinaryStream() }
         }
     }
 

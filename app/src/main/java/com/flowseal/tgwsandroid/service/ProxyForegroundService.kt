@@ -527,6 +527,11 @@ class ProxyForegroundService : Service() {
             "directPoolMissesByKey=${compactMap(stats.directPoolDiagnostics.missesByKey)} " +
             "directPoolRefillErrorsByKey=${compactMap(stats.directPoolDiagnostics.refillErrorsByKey)} " +
             "directPoolStaleByKey=${compactMap(stats.directPoolDiagnostics.staleByKey)} " +
+            "cfPoolReadyByKey=${compactMap(stats.cfPoolDiagnostics.readyByKey)} " +
+            "cfPoolHits=${stats.cfPoolHits} cfPoolMisses=${stats.cfPoolMisses} " +
+            "cfPoolRefillAttempts=${stats.cfPoolRefillAttempts} cfPoolRefillSuccesses=${stats.cfPoolRefillSuccesses} " +
+            "cfPoolRefillErrors=${stats.cfPoolRefillErrors} cfPoolStale=${stats.cfPoolStale} " +
+            "cfPoolLastDomainByKey=${compactMap(stats.cfPoolLastDomainByKey)} " +
             "directHealth=${stats.directHealthState} route=${stats.effectiveRouteMode} lastRoute=${stats.lastRouteUsed ?: "none"}"
     }
 

@@ -285,6 +285,21 @@ class CfDomainHealth(
     fun acquireConnect(dcId: Int, isMedia: Boolean, baseDomain: String, waitMs: Long = CONNECT_QUEUE_WAIT_MS): Boolean =
         acquireConnectDecision(dcId, isMedia, baseDomain, waitMs) == CfConnectAcquireResult.ACQUIRED
 
+    @Synchronized
+    fun acquirePrewarmConnectDecision(
+        dcId: Int,
+        isMedia: Boolean,
+        baseDomain: String,
+    ): CfConnectAcquireResult {
+        val normalized = normalizeKnownDomain(baseDomain) ?: return CfConnectAcquireResult.UNAVAILABLE
+        val key = CfDomainKey(dcId, isMedia, normalized)
+        val state = states[key]
+        if (state != null && state.cooldownUntilMs > nowMs()) return CfConnectAcquireResult.UNAVAILABLE
+        if ((inFlightByDomain[key] ?: 0) > 0) return CfConnectAcquireResult.DOMAIN_IN_FLIGHT
+        return acquireConnectDecision(dcId, isMedia, normalized, waitMs = 0L)
+    }
+
+
     fun acquireConnectDecision(
         dcId: Int,
         isMedia: Boolean,

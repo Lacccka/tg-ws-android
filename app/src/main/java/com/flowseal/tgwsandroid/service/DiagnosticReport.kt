@@ -693,6 +693,16 @@ object DiagnosticReportFormatter {
         appendLine("  lastRefillTimeMsByKey: ${stats?.directPoolDiagnostics?.lastRefillTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
         appendLine("  lastHitTimeMsByKey: ${stats?.directPoolDiagnostics?.lastHitTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
         appendLine("  lastMissTimeMsByKey: ${stats?.directPoolDiagnostics?.lastMissTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("CF Pool:")
+        appendLine("  readyByKey: ${stats?.cfPoolDiagnostics?.readyByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  inFlightRefillsByKey: ${stats?.cfPoolDiagnostics?.inFlightRefillsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  hits: ${stats?.cfPoolHits ?: "unknown"}")
+        appendLine("  misses: ${stats?.cfPoolMisses ?: "unknown"}")
+        appendLine("  refillAttempts: ${stats?.cfPoolRefillAttempts ?: "unknown"}")
+        appendLine("  refillSuccesses: ${stats?.cfPoolRefillSuccesses ?: "unknown"}")
+        appendLine("  refillErrors: ${stats?.cfPoolRefillErrors ?: "unknown"}")
+        appendLine("  stale: ${stats?.cfPoolStale ?: "unknown"}")
+        appendLine("  lastDomainByKey: ${stats?.cfPoolLastDomainByKey?.let(::formatCompactMap) ?: "unknown"}")
     }
 
     private fun formatDouble(value: Double): String =

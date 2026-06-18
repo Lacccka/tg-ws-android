@@ -32,6 +32,8 @@ data class ProxyServerConfig(
     val poolSize: Int = 0,
     /** Enables bundled Cloudflare-proxy fallback when direct WebSocket routing is unavailable. */
     val cfproxyEnabled: Boolean = false,
+    /** Enables conservative mobile cf_first CF WebSocket prewarm pooling. */
+    val cfPoolEnabled: Boolean = true,
     /** Bundled or caller-provided CF proxy base domains. Remote refresh is intentionally not ported yet. */
     val cfProxyDomains: List<String> = CfProxyDomains.defaults,
     val routeMode: NetworkRouteMode = NetworkRouteMode.AUTO,
@@ -56,6 +58,7 @@ data class ProxyServerConfig(
             bufferSizeBytes = appConfig.bufKb * 1024,
             poolSize = appConfig.poolSize,
             cfproxyEnabled = appConfig.cfproxy,
+            cfPoolEnabled = true,
             cfProxyDomains = appConfig.cfproxyUserDomain.ifEmpty { CfProxyDomains.defaults },
             routeMode = appConfig.routeMode,
             networkStatus = networkStatus,
@@ -252,6 +255,14 @@ class ProxyServerStats {
     var poolRefillErrors: Long = 0
     var poolStale: Long = 0
     var directPoolDiagnostics: DirectPoolDiagnosticsSnapshot = DirectPoolDiagnosticsSnapshot()
+    var cfPoolDiagnostics: DirectPoolDiagnosticsSnapshot = DirectPoolDiagnosticsSnapshot()
+    var cfPoolHits: Long = 0
+    var cfPoolMisses: Long = 0
+    var cfPoolRefillAttempts: Long = 0
+    var cfPoolRefillSuccesses: Long = 0
+    var cfPoolRefillErrors: Long = 0
+    var cfPoolStale: Long = 0
+    var cfPoolLastDomainByKey: Map<String, String> = emptyMap()
     var sessionTimeouts: Long = 0
     var sessionEof: Long = 0
     var sessionClientClosed: Long = 0
@@ -711,6 +722,25 @@ private data class WebSocketRouteResult(
     val retryableStalePooled: Boolean,
 )
 
+internal data class CfProxyConnectTarget(
+    val targetHost: String,
+    val domain: String,
+    val path: String,
+    val timeoutMs: Int,
+) {
+    companion object {
+        fun forDcBaseDomain(dcId: Int, baseDomain: String): CfProxyConnectTarget {
+            val fullDomain = "kws$dcId.$baseDomain"
+            return CfProxyConnectTarget(
+                targetHost = fullDomain,
+                domain = fullDomain,
+                path = ProxyServer.DEFAULT_WS_PATH,
+                timeoutMs = RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS,
+            )
+        }
+    }
+}
+
 fun interface ProxyBridgeRunner {
     fun run(
         client: TcpClientTransport,
@@ -859,6 +889,15 @@ class ProxyServer(
     private val poolLastRefillTimeMsByKey = ConcurrentHashMap<String, AtomicLong>()
     private val poolLastHitTimeMsByKey = ConcurrentHashMap<String, AtomicLong>()
     private val poolLastMissTimeMsByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val cfPoolHits = AtomicLong(0)
+    private val cfPoolMisses = AtomicLong(0)
+    private val cfPoolRefillAttempts = AtomicLong(0)
+    private val cfPoolRefillSuccesses = AtomicLong(0)
+    private val cfPoolRefillErrors = AtomicLong(0)
+    private val cfPoolStale = AtomicLong(0)
+    private val cfPoolRefillAttemptsByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val cfPoolRefillSuccessesByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val cfPoolRefillErrorsByKey = ConcurrentHashMap<String, AtomicLong>()
     private val directTimeouts = AtomicLong(0)
     private val directAttempts = AtomicLong(0)
     private val directAttemptsSkippedBecauseRoute = AtomicLong(0)
@@ -961,6 +1000,23 @@ class ProxyServer(
         onRefillCancelled = { count -> poolRefillsCancelled.addAndGet(count.toLong()) },
         onResultDiscardedAfterRouteChange = { poolResultsDiscardedAfterRouteChange.incrementAndGet() },
     )
+    private val cfWebSocketPool = CfWebSocketPool(
+        connector = webSocketConnector,
+        cfDomainHealth = cfDomainHealth,
+        logger = logger,
+        onAttempt = { key, _ ->
+            cfPoolRefillAttempts.incrementAndGet()
+            incrementPoolCounter(cfPoolRefillAttemptsByKey, key)
+        },
+        onSuccess = { key, _ ->
+            cfPoolRefillSuccesses.incrementAndGet()
+            incrementPoolCounter(cfPoolRefillSuccessesByKey, key)
+        },
+        onError = { key, _, _ ->
+            cfPoolRefillErrors.incrementAndGet()
+            incrementPoolCounter(cfPoolRefillErrorsByKey, key)
+        },
+    )
     private val directRouteHealth = DirectRouteHealth(
         connector = webSocketConnector,
         dcRedirects = config.dcRedirects,
@@ -1002,6 +1058,7 @@ class ProxyServer(
             closeClient(client)
         }
         webSocketPool.closeAll()
+        cfWebSocketPool.closeAll()
         joinAcceptThreadBestEffort()
         joinIdlePoolMaintenanceThreadBestEffort()
         logger.log("ProxyServer stopped")
@@ -1075,6 +1132,20 @@ class ProxyServer(
                 lastRefillTimeMsByKey = snapshotPoolLongMap(poolLastRefillTimeMsByKey),
                 lastHitTimeMsByKey = snapshotPoolLongMap(poolLastHitTimeMsByKey),
                 lastMissTimeMsByKey = snapshotPoolLongMap(poolLastMissTimeMsByKey),
+            )
+            snapshot.cfPoolHits = cfPoolHits.get()
+            snapshot.cfPoolMisses = cfPoolMisses.get()
+            snapshot.cfPoolRefillAttempts = cfPoolRefillAttempts.get()
+            snapshot.cfPoolRefillSuccesses = cfPoolRefillSuccesses.get()
+            snapshot.cfPoolRefillErrors = cfPoolRefillErrors.get()
+            snapshot.cfPoolStale = cfPoolStale.get()
+            snapshot.cfPoolLastDomainByKey = cfWebSocketPool.lastDomainSnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap()
+            snapshot.cfPoolDiagnostics = DirectPoolDiagnosticsSnapshot(
+                readyByKey = cfWebSocketPool.readySnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap(),
+                inFlightRefillsByKey = cfWebSocketPool.pendingSnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap(),
+                refillAttemptsByKey = snapshotPoolLongMap(cfPoolRefillAttemptsByKey),
+                refillSuccessesByKey = snapshotPoolLongMap(cfPoolRefillSuccessesByKey),
+                refillErrorsByKey = snapshotPoolLongMap(cfPoolRefillErrorsByKey),
             )
             snapshot.routeMode = routeSnapshot.configuredRouteMode.configValue
             snapshot.effectiveRouteMode = routeSnapshot.effectiveRouteMode.configValue
@@ -1493,6 +1564,8 @@ class ProxyServer(
                 logger.log("DC${parsed.dcId} no route available after CF-only attempts")
             }
             NetworkRouteMode.CF_FIRST -> {
+                val cfPooled = tryCfPoolRoute(client, parsed, relayInit, cryptoContext, splitter)
+                if (cfPooled) return true
                 if (shouldAttemptActiveWifiDirectRecoveryBeforeCf()) {
                     if (tryWifiDirectRecoveryRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return true
                 }
@@ -2051,6 +2124,42 @@ class ProxyServer(
         return null
     }
 
+        private fun tryCfPoolRoute(
+        client: TcpClientTransport,
+        parsed: MtprotoHandshake.Result,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+    ): Boolean {
+        if (!isCfPoolEligible()) return false
+        val pooled = cfWebSocketPool.get(parsed.dcId, parsed.isMedia)
+        if (pooled == null) {
+            cfPoolMisses.incrementAndGet()
+            logger.log("DC${parsed.dcId} CF pool miss")
+            return false
+        }
+        cfPoolHits.incrementAndGet()
+        logger.log("DC${parsed.dcId} CF pool hit")
+        val result = runWebSocketRoute(client, parsed, WebSocketRoute(pooled, "cf-pool"), relayInit, cryptoContext, splitter)
+        if (!result.failed) return true
+        if (result.stalePooled && result.retryableStalePooled) {
+            logger.log("DC${parsed.dcId} retrying normal CF flow after stale CF pool")
+            return false
+        }
+        return !result.failedBeforeBridge
+    }
+
+    private fun maybeScheduleCfPoolRefill(parsed: MtprotoHandshake.Result, baseDomain: String) {
+        // This runs only after the demand route has completed successfully. That deliberately
+        // makes the CF pool help the next demand wave instead of adding another CF connection
+        // during the current parallel burst.
+        if (!isCfPoolEligible()) return
+        cfWebSocketPool.scheduleRefill(parsed.dcId, parsed.isMedia, baseDomain)
+    }
+
+    private fun isCfPoolEligible(): Boolean =
+        config.cfproxyEnabled && config.cfPoolEnabled && effectiveRouteMode() == NetworkRouteMode.CF_FIRST && isMobile(currentNetworkStatus)
+
 
     private fun tryCfProxyFallback(
         client: TcpClientTransport,
@@ -2157,7 +2266,8 @@ class ProxyServer(
             val baseDomain = selection.domain
             attempted = true
             pressureAttempts += 1
-            val domain = "kws${parsed.dcId}.$baseDomain"
+            val cfConnectTarget = CfProxyConnectTarget.forDcBaseDomain(parsed.dcId, baseDomain)
+            val domain = cfConnectTarget.domain
             when (cfDomainHealth.acquireConnectDecision(parsed.dcId, parsed.isMedia, baseDomain, pressureDecision.connectQueueWaitMs)) {
                 CfConnectAcquireResult.ACQUIRED -> Unit
                 CfConnectAcquireResult.QUEUE_TIMEOUT -> {
@@ -2196,7 +2306,12 @@ class ProxyServer(
             }
             val startedAtNs = System.nanoTime()
             val webSocket = try {
-                webSocketConnector.connect(domain, domain, DEFAULT_WS_PATH, RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)
+                webSocketConnector.connect(
+                    cfConnectTarget.targetHost,
+                    cfConnectTarget.domain,
+                    cfConnectTarget.path,
+                    cfConnectTarget.timeoutMs,
+                )
             } catch (error: Throwable) {
                 cfProxyErrors.incrementAndGet()
                 val detail = websocketFailureDetail(error)
@@ -2244,7 +2359,10 @@ class ProxyServer(
                 logger.log("DC${parsed.dcId} CF proxy connected via $domain")
                 cfProxyBalancer.updateDomainForDc(parsed.dcId, baseDomain)
                 val result = runWebSocketRoute(client, parsed, WebSocketRoute(webSocket, "cf"), relayInit, cryptoContext, splitter)
-                if (!result.failed) return true
+                if (!result.failed) {
+                    maybeScheduleCfPoolRefill(parsed, baseDomain)
+                    return true
+                }
                 cfDomainHealth.recordCfRouteFailureAfterConnect(parsed.dcId)
                 logCfPressureLevelChanges()
                 cfProxyErrors.incrementAndGet()
@@ -2349,17 +2467,23 @@ class ProxyServer(
         val stalePooled = isStalePooledRouteFailure(route, routeFailure, reason, durationMs, counters, failedBeforeBridge)
         val retryableStalePooled = stalePooled && isRetrySafeStalePooledRoute(counters, failedBeforeBridge)
         if (stalePooled) {
-            poolStale.incrementAndGet()
-            incrementPoolCounter(poolStaleByKey, WebSocketPool.Key(parsed.dcId, parsed.isMedia))
+            if (route.type == "cf-pool") {
+                cfPoolStale.incrementAndGet()
+            } else {
+                poolStale.incrementAndGet()
+                incrementPoolCounter(poolStaleByKey, WebSocketPool.Key(parsed.dcId, parsed.isMedia))
+            }
             recordRecentEvent(recentPoolStaleTimes)
-            maybeDowngradeDirectRouteForClientExperience()
-            recordDirectPoolStaleForHealth()
+            if (route.type == "direct-pool") {
+                maybeDowngradeDirectRouteForClientExperience()
+                recordDirectPoolStaleForHealth()
+            }
             logger.log(
-                "DC${parsed.dcId} direct-pool stale route detected: $reason " +
+                "DC${parsed.dcId} ${route.type} stale route detected: $reason " +
                     "durationMs=$durationMs bytesUp=${counters.bytesUp} bytesDown=${counters.bytesDown}",
             )
             if (!retryableStalePooled) {
-                logger.log("DC${parsed.dcId} stale direct-pool route not retried after bridge state advanced")
+                logger.log("DC${parsed.dcId} stale ${route.type} route not retried after bridge state advanced")
             }
         }
         return WebSocketRouteResult(
@@ -2381,7 +2505,7 @@ class ProxyServer(
         counters: BridgeSessionCounters,
         failedBeforeBridge: Boolean,
     ): Boolean {
-        if (route.type != "direct-pool") return false
+        if (route.type != "direct-pool" && route.type != "cf-pool") return false
         if (!isStalePoolFailure(routeFailure, reason)) return false
         if (failedBeforeBridge) return true
         return durationMs < STALE_POOL_MAX_DURATION_MS || counters.bytesDown == 0L

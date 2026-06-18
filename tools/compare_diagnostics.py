@@ -47,6 +47,7 @@ CF_FIELDS = [
     "cfTimeoutCount", "cfConnectQueueTimeouts", "cfQueueControlledFailures",
     "cfNoRouteAvoidedByInflightWait", "cfInflightWaitBeforeNoRoute",
     "cfInflightWaitBeforeNoRouteMs", "cfInflightRetrySuccesses", "cfInflightRetryFailures",
+    "cfPoolHits", "cfPoolMisses", "cfPoolRefillAttempts", "cfPoolRefillSuccesses", "cfPoolRefillErrors", "cfPoolStale", "cfPoolReadyByKey", "cfPoolLastDomainByKey",
     "cf429BackoffCount", "cfPressureLevelByDc", "cfPressureReasonByDc", "cfBestDomainByDc",
 ]
 DIRECT_KEY_MAPS = {
