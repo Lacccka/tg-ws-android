@@ -2293,9 +2293,105 @@ class ProxyServerTest {
         proxy.stop()
 
         assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
-        assertTrue(proxy.stats().poolStale >= 3L)
+        assertTrue(proxy.stats().poolStale >= 1L)
         assertEquals(DirectHealthState.COOLDOWN.configValue, proxy.stats().directHealthState)
-        assertTrue(logs.any { it.contains("direct route downgraded to cf_first because health degraded") })
+        assertTrue(
+            logs.any { it.contains("direct route downgraded to cf_first because health degraded") } ||
+                logs.any { it.contains("direct route downgraded to cf_first because client experience degraded") },
+        )
+    }
+
+
+    @Test
+    fun autoWifiDirectFirstDowngradesToCfFirstWhenShortRemoteEofThresholdReached() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi"),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
+        addClientExperienceEvents(proxy, "recentShortRemoteEofTimes", 2)
+        invokeClientExperienceDowngrade(proxy)
+
+        val stats = proxy.stats()
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, stats.effectiveRouteMode)
+        assertEquals(1L, stats.clientExperience.clientExperienceDirectDowngrades)
+        assertTrue(stats.clientExperience.lastClientExperienceDirectDowngradeReason!!.contains("recentShortRemoteEofSessions"))
+        assertTrue(logs.any { it.contains("direct route downgraded to cf_first because client experience degraded") })
+    }
+
+    @Test
+    fun autoWifiDirectFirstDowngradesToCfFirstWhenPoolStaleAndDirectTimeoutThresholdReached() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi"),
+        )
+
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
+        addClientExperienceEvents(proxy, "recentPoolStaleTimes", 1)
+        addClientExperienceEvents(proxy, "recentDirectTimeoutTimes", 1)
+        invokeClientExperienceDowngrade(proxy)
+
+        val stats = proxy.stats()
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, stats.effectiveRouteMode)
+        assertEquals(1L, stats.clientExperience.clientExperienceDirectDowngrades)
+        assertTrue(stats.clientExperience.lastClientExperienceDirectDowngradeReason!!.contains("recentPoolStale"))
+    }
+
+    @Test
+    fun explicitDirectFirstDoesNotDowngradeForClientExperienceDegradation() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.DIRECT_FIRST, networkStatus = "Wi-Fi"),
+        )
+
+        addClientExperienceEvents(proxy, "recentShortRemoteEofTimes", 2)
+        invokeClientExperienceDowngrade(proxy)
+
+        val stats = proxy.stats()
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, stats.effectiveRouteMode)
+        assertEquals(0L, stats.clientExperience.clientExperienceDirectDowngrades)
+    }
+
+    @Test
+    fun alreadyCfFirstDoesNotRepeatClientExperienceDowngrade() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi"),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        addClientExperienceEvents(proxy, "recentShortRemoteEofTimes", 2)
+        invokeClientExperienceDowngrade(proxy)
+
+        val stats = proxy.stats()
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, stats.effectiveRouteMode)
+        assertEquals(0L, stats.clientExperience.clientExperienceDirectDowngrades)
+        assertFalse(logs.any { it.contains("direct route downgraded to cf_first because client experience degraded") })
+    }
+
+    @Test
+    fun isolatedSingleRemoteIdleEofDoesNotClientExperienceDowngrade() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "Wi-Fi"),
+        )
+
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
+        addClientExperienceEvents(proxy, "recentShortRemoteEofTimes", 1)
+        invokeClientExperienceDowngrade(proxy)
+
+        val stats = proxy.stats()
+        assertEquals(NetworkRouteMode.DIRECT_FIRST.configValue, stats.effectiveRouteMode)
+        assertEquals(0L, stats.clientExperience.clientExperienceDirectDowngrades)
     }
 
     @Test
@@ -3101,6 +3197,21 @@ class ProxyServerTest {
         assertEquals(MsgSplitter.PROTO_ABRIDGED_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_ABRIDGED))
         assertEquals(MsgSplitter.PROTO_INTERMEDIATE_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_INTERMEDIATE))
         assertEquals(MsgSplitter.PROTO_PADDED_INTERMEDIATE_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_SECURE))
+    }
+
+
+    private fun addClientExperienceEvents(proxy: ProxyServer, fieldName: String, count: Int) {
+        val field = ProxyServer::class.java.getDeclaredField(fieldName)
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val deque = field.get(proxy) as java.util.concurrent.ConcurrentLinkedDeque<Long>
+        repeat(count) { deque.addLast(System.currentTimeMillis()) }
+    }
+
+    private fun invokeClientExperienceDowngrade(proxy: ProxyServer) {
+        val method = ProxyServer::class.java.getDeclaredMethod("maybeDowngradeDirectRouteForClientExperience", java.lang.Long.TYPE)
+        method.isAccessible = true
+        method.invoke(proxy, System.currentTimeMillis())
     }
 
     private fun newProxy(

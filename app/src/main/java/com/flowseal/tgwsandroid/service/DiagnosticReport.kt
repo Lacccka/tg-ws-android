@@ -498,6 +498,9 @@ object DiagnosticReportFormatter {
             "clientExperienceRecentPoolMisses=${stats.clientExperience.recentPoolMisses}, " +
             "clientExperienceRecentPoolRefillErrors=${stats.clientExperience.recentPoolRefillErrors}, " +
             "clientExperienceRecentPoolStale=${stats.clientExperience.recentPoolStale}, " +
+            "clientExperienceDirectDowngrades=${stats.clientExperience.clientExperienceDirectDowngrades}, " +
+            "lastClientExperienceDirectDowngradeReason=${stats.clientExperience.lastClientExperienceDirectDowngradeReason ?: "unknown"}, " +
+            "lastClientExperienceDirectDowngradeTimeMs=${stats.clientExperience.lastClientExperienceDirectDowngradeTimeMs}, " +
             "clientExperienceRecentCfQueueControlledFailures=${stats.clientExperience.recentCfQueueControlledFailures}, " +
             "clientExperienceRecentCfConnectQueueTimeouts=${stats.clientExperience.recentCfConnectQueueTimeouts}, " +
             "clientExperienceRecentUnsupportedDcByDc=${formatLongByDc(stats.clientExperience.recentUnsupportedDcByDc)}, " +
@@ -707,6 +710,9 @@ object DiagnosticReportFormatter {
         appendLine("  recentPoolMisses: ${experience?.recentPoolMisses?.toString() ?: "unknown"}")
         appendLine("  recentPoolRefillErrors: ${experience?.recentPoolRefillErrors?.toString() ?: "unknown"}")
         appendLine("  recentPoolStale: ${experience?.recentPoolStale?.toString() ?: "unknown"}")
+        appendLine("  clientExperienceDirectDowngrades: ${experience?.clientExperienceDirectDowngrades?.toString() ?: "unknown"}")
+        appendLine("  lastClientExperienceDirectDowngradeReason: ${experience?.lastClientExperienceDirectDowngradeReason ?: "unknown"}")
+        appendLine("  lastClientExperienceDirectDowngradeTimeMs: ${experience?.lastClientExperienceDirectDowngradeTimeMs?.toString() ?: "unknown"}")
         appendLine("  recentUnsupportedDcByDc: ${experience?.recentUnsupportedDcByDc?.let(::formatLongByDc) ?: "unknown"}")
         appendLine("  recentNoRouteByDc: ${experience?.recentNoRouteByDc?.let(::formatLongByDc) ?: "unknown"}")
         appendLine("  timeToFirstSuccessfulRouteAfterIdleMs: ${experience?.timeToFirstSuccessfulRouteAfterIdleMs?.toString() ?: "unknown"}")

@@ -27,7 +27,8 @@ CLIENT_FIELDS = [
     "recentClientClosedSessions", "recentVeryShortClientClosedSessions",
     "recentShortRemoteEofSessions", "recentConnectionResetSessions", "recentDirectTimeouts",
     "recentPoolMisses", "recentPoolRefillErrors", "recentPoolStale",
-    "timeToFirstSuccessfulRouteAfterIdleMs",
+    "clientExperienceDirectDowngrades", "lastClientExperienceDirectDowngradeReason",
+    "lastClientExperienceDirectDowngradeTimeMs", "timeToFirstSuccessfulRouteAfterIdleMs",
 ]
 WAKE_FIELDS = [
     "wakeBurstPrewarmTriggers", "wakeBurstPrewarmAttempts", "wakeBurstPrewarmSuccesses",
@@ -72,6 +73,9 @@ STATS_ALIASES = {
     "clientExperienceRecentPoolMisses": "recentPoolMisses",
     "clientExperienceRecentPoolRefillErrors": "recentPoolRefillErrors",
     "clientExperienceRecentPoolStale": "recentPoolStale",
+    "clientExperienceDirectDowngrades": "clientExperienceDirectDowngrades",
+    "lastClientExperienceDirectDowngradeReason": "lastClientExperienceDirectDowngradeReason",
+    "lastClientExperienceDirectDowngradeTimeMs": "lastClientExperienceDirectDowngradeTimeMs",
     "clientExperienceTimeToFirstSuccessfulRouteAfterIdleMs": "timeToFirstSuccessfulRouteAfterIdleMs",
 }
 DEFAULT_PATTERN = "tg-ws-android-diagnostics-*.txt"

@@ -151,6 +151,9 @@ data class ClientExperienceDiagnostics(
     val recentPoolMisses: Long = 0,
     val recentPoolRefillErrors: Long = 0,
     val recentPoolStale: Long = 0,
+    val clientExperienceDirectDowngrades: Long = 0,
+    val lastClientExperienceDirectDowngradeReason: String? = null,
+    val lastClientExperienceDirectDowngradeTimeMs: Long = 0,
     val recentUnsupportedDcByDc: Map<Int, Long> = emptyMap(),
     val recentNoRouteByDc: Map<Int, Long> = emptyMap(),
     val recentCfQueueControlledFailures: Long = 0,
@@ -915,6 +918,9 @@ class ProxyServer(
     @Volatile private var wifiDirectRecoveryUntilMs: Long = 0
     @Volatile private var lastDirectDowngradeTimeMs: Long = 0
     @Volatile private var lastDirectDowngradeReason: String? = null
+    private val clientExperienceDirectDowngrades = AtomicLong(0)
+    private val lastClientExperienceDirectDowngradeTimeMs = AtomicLong(0)
+    private val lastClientExperienceDirectDowngradeReason = AtomicReference<String?>(null)
     @Volatile private var directPoolStaleInWindow: Long = 0
     @Volatile private var lastDirectPoolStaleWindowStartMs: Long = 0
     @Volatile private var lastRouteUsed: String? = null
@@ -931,6 +937,7 @@ class ProxyServer(
             poolLastRefillErrorByKey[poolDiagnosticKey(key, source)] = failureDetail(error)
             poolLastRefillTimeMsByKey.getOrPut(poolDiagnosticKey(key, source)) { AtomicLong(0) }.set(System.currentTimeMillis())
             recordRecentEvent(recentPoolRefillErrorTimes)
+            maybeDowngradeDirectRouteForClientExperience()
         },
         onRefillAttempt = { key, source ->
             directAttempts.incrementAndGet()
@@ -1801,6 +1808,7 @@ class ProxyServer(
                 directTimeouts.incrementAndGet()
                 mobileRecoveryDirectRescueTimeoutCount.incrementAndGet()
                 recordRecentEvent(recentDirectTimeoutTimes)
+                maybeDowngradeDirectRouteForClientExperience()
             }
             val detail = websocketFailureDetail(error)
             finishMobileDirectRescueFailure(parsed.dcId, detail, expectedGeneration)
@@ -1911,6 +1919,7 @@ class ProxyServer(
                 incrementPoolCounter(poolMissesByKey, poolKey)
                 poolLastMissTimeMsByKey.getOrPut(poolDiagnosticKey(poolKey)) { AtomicLong(0) }.set(System.currentTimeMillis())
                 recordRecentEvent(recentPoolMissTimes)
+                maybeDowngradeDirectRouteForClientExperience()
                 logger.log("DC${parsed.dcId} direct WS pool miss")
             }
         }
@@ -1973,7 +1982,11 @@ class ProxyServer(
                 return webSocket
             } catch (error: Throwable) {
                 wsConnectErrors.incrementAndGet()
-                if (isTimeout(error)) { directTimeouts.incrementAndGet(); recordRecentEvent(recentDirectTimeoutTimes) }
+                if (isTimeout(error)) {
+                    directTimeouts.incrementAndGet()
+                    recordRecentEvent(recentDirectTimeoutTimes)
+                    maybeDowngradeDirectRouteForClientExperience()
+                }
                 val detail = websocketFailureDetail(error)
                 failures.add("$domain ($detail)")
                 logger.log("DC${parsed.dcId} WebSocket attempt via $domain failed: $detail")
@@ -2287,6 +2300,7 @@ class ProxyServer(
             poolStale.incrementAndGet()
             incrementPoolCounter(poolStaleByKey, WebSocketPool.Key(parsed.dcId, parsed.isMedia))
             recordRecentEvent(recentPoolStaleTimes)
+            maybeDowngradeDirectRouteForClientExperience()
             recordDirectPoolStaleForHealth()
             logger.log(
                 "DC${parsed.dcId} direct-pool stale route detected: $reason " +
@@ -2400,7 +2414,10 @@ class ProxyServer(
             sessionRemoteIdleEof.incrementAndGet()
         } else {
             sessionRemoteEofShort.incrementAndGet()
-            if (durationMs <= SHORT_REMOTE_EOF_SESSION_MS) recordRecentEvent(recentShortRemoteEofTimes)
+            if (durationMs <= SHORT_REMOTE_EOF_SESSION_MS) {
+                recordRecentEvent(recentShortRemoteEofTimes)
+                maybeDowngradeDirectRouteForClientExperience()
+            }
         }
         lastRemoteEofTimeMs.set(System.currentTimeMillis())
         lastRemoteEofDurationMs.set(durationMs)
@@ -2509,6 +2526,9 @@ class ProxyServer(
             recentPoolMisses = recentPoolMissTimes.size.toLong(),
             recentPoolRefillErrors = recentPoolRefillErrorTimes.size.toLong(),
             recentPoolStale = recentPoolStaleTimes.size.toLong(),
+            clientExperienceDirectDowngrades = clientExperienceDirectDowngrades.get(),
+            lastClientExperienceDirectDowngradeReason = lastClientExperienceDirectDowngradeReason.get(),
+            lastClientExperienceDirectDowngradeTimeMs = lastClientExperienceDirectDowngradeTimeMs.get(),
             recentUnsupportedDcByDc = unsupported,
             recentNoRouteByDc = noRoute,
             recentCfQueueControlledFailures = recentCfQueueControlledFailureTimes.size.toLong(),
@@ -2815,6 +2835,46 @@ class ProxyServer(
         }
     }
 
+    private fun maybeDowngradeDirectRouteForClientExperience(now: Long = System.currentTimeMillis()) {
+        pruneClientExperienceWindows(now)
+        val reason = when {
+            recentShortRemoteEofTimes.size >= CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_SHORT_REMOTE_EOF_THRESHOLD ->
+                "recentShortRemoteEofSessions >= $CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_SHORT_REMOTE_EOF_THRESHOLD"
+            recentPoolStaleTimes.size >= CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_POOL_STALE_THRESHOLD &&
+                recentDirectTimeoutTimes.size >= CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_DIRECT_TIMEOUT_THRESHOLD ->
+                "recentPoolStale >= $CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_POOL_STALE_THRESHOLD and recentDirectTimeouts >= $CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_DIRECT_TIMEOUT_THRESHOLD"
+            recentPoolRefillErrorTimes.size >= CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_POOL_REFILL_ERROR_THRESHOLD ->
+                "recentPoolRefillErrors >= $CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_POOL_REFILL_ERROR_THRESHOLD"
+            else -> return
+        }
+        downgradeDirectRouteBecauseClientExperienceDegraded(reason, now)
+    }
+
+    private fun downgradeDirectRouteBecauseClientExperienceDegraded(reason: String, now: Long = System.currentTimeMillis()) {
+        if (routeState.configuredRouteMode != NetworkRouteMode.AUTO) return
+        if (!isWifi(currentNetworkStatus)) return
+        if (effectiveRouteMode() != NetworkRouteMode.DIRECT_FIRST) return
+        if (directRouteHealth.snapshot().cooldownUntilMs > now) return
+
+        val downgradeReason = "client experience degraded: $reason"
+        lastDirectDowngradeTimeMs = now
+        lastDirectDowngradeReason = downgradeReason
+        directRouteHealth.startCooldown(DIRECT_HEALTH_COOLDOWN_MS, downgradeReason)
+        val result = applyEffectiveRouteMode(
+            NetworkRouteMode.CF_FIRST,
+            downgradeReason,
+            currentNetworkStatus,
+            source = "client-experience",
+        )
+        if (result.changed) {
+            clientExperienceDirectDowngrades.incrementAndGet()
+            lastClientExperienceDirectDowngradeTimeMs.set(now)
+            lastClientExperienceDirectDowngradeReason.set(reason)
+            webSocketPool.disableAndClear()
+            logger.log("direct route downgraded to cf_first because client experience degraded: $reason")
+        }
+    }
+
     private fun downgradeDirectRouteBecauseHealthDegraded(reason: String) {
         if (routeState.configuredRouteMode != NetworkRouteMode.AUTO) return
         if (effectiveRouteMode() != NetworkRouteMode.DIRECT_FIRST) return
@@ -2923,6 +2983,10 @@ class ProxyServer(
         private const val EMERGENCY_DIRECT_FALLBACK_FAILURE_COOLDOWN_MS = 10_000L
         private const val DIRECT_HEALTH_DEGRADE_WINDOW_MS = 10_000L
         private const val DIRECT_POOL_STALE_DOWNGRADE_THRESHOLD = 3L
+        private const val CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_SHORT_REMOTE_EOF_THRESHOLD = 2
+        private const val CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_POOL_STALE_THRESHOLD = 1
+        private const val CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_DIRECT_TIMEOUT_THRESHOLD = 1
+        private const val CLIENT_EXPERIENCE_DIRECT_DOWNGRADE_POOL_REFILL_ERROR_THRESHOLD = 2
 
         private fun isDirectPoolEnabledFor(mode: NetworkRouteMode): Boolean =
             mode == NetworkRouteMode.DIRECT_FIRST || mode == NetworkRouteMode.AUTO
