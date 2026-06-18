@@ -42,7 +42,8 @@ data class ProxyServerConfig(
     val effectiveWsKeepaliveIntervalSeconds: Double = wsKeepaliveIntervalSeconds.coerceAtLeast(0.0)
     val effectiveRouteMode: NetworkRouteMode = RouteStrategy.resolve(routeMode, networkStatus)
     companion object {
-        const val DEFAULT_WS_KEEPALIVE_INTERVAL_SECONDS: Double = 30.0
+        const val DEFAULT_WS_KEEPALIVE_INTERVAL_SECONDS: Double = 0.0
+        const val UPSTREAM_WS_KEEPALIVE_INTERVAL_SECONDS: Double = 30.0
 
         fun fromAppConfig(
             appConfig: AppConfig,
@@ -58,6 +59,8 @@ data class ProxyServerConfig(
             cfProxyDomains = appConfig.cfproxyUserDomain.ifEmpty { CfProxyDomains.defaults },
             routeMode = appConfig.routeMode,
             networkStatus = networkStatus,
+            wsKeepaliveIntervalSeconds = appConfig.wsKeepaliveIntervalSeconds
+                ?: DEFAULT_WS_KEEPALIVE_INTERVAL_SECONDS,
         )
 
         private fun List<String>.toDcRedirects(): Map<Int, String> = buildMap {
@@ -707,6 +710,7 @@ fun interface ProxyBridgeRunner {
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
         counters: BridgeSessionCounters,
+        wsKeepaliveIntervalSeconds: Double,
     )
 }
 
@@ -730,7 +734,7 @@ class ProxyServer(
     private val webSocketConnector: RawWebSocketConnector = RawWebSocketConnector { targetHost, domain, path, timeoutMs ->
         RawWebSocketBinaryStream(RawWebSocket.connect(host = targetHost, domain = domain, path = path, timeoutMs = timeoutMs))
     },
-    private val bridgeRunner: ProxyBridgeRunner = ProxyBridgeRunner { client, webSocket, cryptoContext, splitter, counters ->
+    private val bridgeRunner: ProxyBridgeRunner = ProxyBridgeRunner { client, webSocket, cryptoContext, splitter, counters, wsKeepaliveIntervalSeconds ->
         BridgeSession(
             client = client,
             webSocket = webSocket,
@@ -738,7 +742,7 @@ class ProxyServer(
             splitter = splitter,
             counters = counters,
             bufferSize = config.bufferSizeBytes,
-            wsKeepaliveIntervalSeconds = config.effectiveWsKeepaliveIntervalSeconds,
+            wsKeepaliveIntervalSeconds = wsKeepaliveIntervalSeconds,
         ).runBlocking()
     },
     private val cfProxyBalancer: CfProxyBalancer = CfProxyBalancer(config.cfProxyDomains),
@@ -2231,7 +2235,14 @@ class ProxyServer(
             recordSuccessfulRoute()
             bridgeStarted = true
             activeBridgeCounters.add(counters)
-            bridgeRunner.run(client, route.stream, cryptoContext, splitter, counters)
+            bridgeRunner.run(
+                client,
+                route.stream,
+                cryptoContext,
+                splitter,
+                counters,
+                keepaliveIntervalForRoute(route.type),
+            )
         } catch (error: Throwable) {
             routeFailure = error
             counters.finish(bridgeExceptionReason(error))
@@ -2292,6 +2303,9 @@ class ProxyServer(
             retryableStalePooled = retryableStalePooled,
         )
     }
+
+    private fun keepaliveIntervalForRoute(routeType: String): Double =
+        if (routeType.startsWith("direct")) 0.0 else config.effectiveWsKeepaliveIntervalSeconds
 
     private fun isStalePooledRouteFailure(
         route: WebSocketRoute,
