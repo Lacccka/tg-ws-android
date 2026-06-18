@@ -21,7 +21,6 @@ python tools/generate_handshake_vectors.py
 The wrapper currently downloads Gradle 8.13, which is compatible with the Android
 Gradle Plugin declared in `build.gradle.kts`.
 
-
 ## Build variants and foreground-service declarations
 
 The project has three Android build types:
@@ -93,9 +92,9 @@ Smoke-test steps:
    direct `tg://` link, the app falls back to the `https://t.me/proxy` link.
 6. If needed, manually add an MTProto proxy in Telegram on that same Android
    device with:
-   - Server: `127.0.0.1`
-   - Port: `1443`
-   - Secret: the value shown in the app as the current Telegram MTProto secret
+    - Server: `127.0.0.1`
+    - Port: `1443`
+    - Secret: the value shown in the app as the current Telegram MTProto secret
 7. Tap **Stop proxy** in the app or the foreground notification when finished.
 
 Current runtime limitations:
