@@ -9,6 +9,7 @@ import java.net.UnknownHostException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 class CfProxyDomainsTest {
     @Test
@@ -715,6 +716,54 @@ class CfProxyDomainsTest {
 
         assertFalse(afterReset.controlledFailure)
         assertEquals(CfPressureLevel.NORMAL, afterReset.level)
+    }
+
+    @Test
+    fun inFlightDcWaitReturnsWhenSameDcConnectCompletes() {
+        val health = CfDomainHealth(listOf("one.example"), maxConcurrentConnectsForDc = { 1 })
+        assertEquals(CfConnectAcquireResult.ACQUIRED, health.acquireConnectDecision(2, false, "one.example", 0L))
+        assertTrue(health.hasInFlightConnectsForDc(2))
+
+        val waitResult = AtomicReference<Boolean>()
+        val waiter = Thread { waitResult.set(health.waitForInFlightConnectReleaseForDc(2, 1_000L)) }
+        waiter.start()
+        Thread.sleep(50L)
+        health.releaseConnect(2, false, "one.example")
+        waiter.join(1_000L)
+
+        assertFalse(waiter.isAlive)
+        assertEquals(true, waitResult.get())
+        assertFalse(health.hasInFlightConnectsForDc(2))
+    }
+
+    @Test
+    fun inFlightDcWaitRemainsBoundedWhenConnectDoesNotComplete() {
+        val health = CfDomainHealth(listOf("one.example"), maxConcurrentConnectsForDc = { 1 })
+        assertEquals(CfConnectAcquireResult.ACQUIRED, health.acquireConnectDecision(2, false, "one.example", 0L))
+
+        val started = System.nanoTime()
+        val completed = health.waitForInFlightConnectReleaseForDc(2, 75L)
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000
+
+        assertFalse(completed)
+        assertTrue("wait should be bounded, elapsedMs=$elapsedMs", elapsedMs < 1_000L)
+        assertTrue(health.hasInFlightConnectsForDc(2))
+        health.releaseConnect(2, false, "one.example")
+    }
+
+    @Test
+    fun inFlightDcWaitDoesNotChange429BackoffState() {
+        var now = 1_000L
+        val health = CfDomainHealth(listOf("one.example"), nowMs = { now }, jitterRatio = { 0.0 }, maxConcurrentConnectsForDc = { 1 })
+        health.recordFailure(2, false, "one.example", RuntimeException("HTTP 429"), "mobile", false)
+        val before = health.snapshot().backoffCount
+        assertEquals(CfConnectAcquireResult.ACQUIRED, health.acquireConnectDecision(2, false, "one.example", 0L))
+
+        now += 100L
+        assertFalse(health.waitForInFlightConnectReleaseForDc(2, 1L))
+
+        assertEquals(before, health.snapshot().backoffCount)
+        health.releaseConnect(2, false, "one.example")
     }
 
 }

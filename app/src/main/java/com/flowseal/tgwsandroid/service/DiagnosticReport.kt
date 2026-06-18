@@ -633,6 +633,11 @@ object DiagnosticReportFormatter {
             "cfActiveConnectsByDc=${formatIntByDc(stats.cfActiveConnectsByDc)}, " +
             "cfConnectQueueWaits=${stats.cfConnectQueueWaits}, cfConnectQueueTimeouts=${stats.cfConnectQueueTimeouts}, " +
             "cfQueueControlledFailures=${stats.cfQueueControlledFailures}, cfQueueWaitMs=${stats.cfQueueWaitMs}, " +
+            "cfNoRouteAvoidedByInflightWait=${stats.cfNoRouteAvoidedByInflightWait}, " +
+            "cfInflightWaitBeforeNoRoute=${stats.cfInflightWaitBeforeNoRoute}, " +
+            "cfInflightWaitBeforeNoRouteMs=${stats.cfInflightWaitBeforeNoRouteMs}, " +
+            "cfInflightRetrySuccesses=${stats.cfInflightRetrySuccesses}, " +
+            "cfInflightRetryFailures=${stats.cfInflightRetryFailures}, " +
             "cfMaxConcurrentConnectsByDc=${formatIntByDc(stats.cfMaxConcurrentConnectsByDc)}, " +
             "cf429BackoffCount=${stats.cf429BackoffCount}, cfAllCooldownWaits=${stats.cfAllCooldownWaits}, " +
             "cfAllCooldownWaitMs=${stats.cfAllCooldownWaitMs}, " +

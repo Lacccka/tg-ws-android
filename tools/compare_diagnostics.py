@@ -45,6 +45,8 @@ POOL_FIELDS = ["poolHits", "poolMisses", "poolRefillErrors", "poolStale", "direc
 CF_FIELDS = [
     "cfConnections", "cfErrors", "cf429Count", "cf503Count", "cfUnknownHostCount",
     "cfTimeoutCount", "cfConnectQueueTimeouts", "cfQueueControlledFailures",
+    "cfNoRouteAvoidedByInflightWait", "cfInflightWaitBeforeNoRoute",
+    "cfInflightWaitBeforeNoRouteMs", "cfInflightRetrySuccesses", "cfInflightRetryFailures",
     "cf429BackoffCount", "cfPressureLevelByDc", "cfPressureReasonByDc", "cfBestDomainByDc",
 ]
 DIRECT_KEY_MAPS = {

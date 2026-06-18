@@ -276,6 +276,11 @@ class RuntimeLogStoreTest {
             cfConnectQueueTimeouts = 22
             cfQueueControlledFailures = 23
             cfQueueWaitMs = 250
+            cfNoRouteAvoidedByInflightWait = 33
+            cfInflightWaitBeforeNoRoute = 34
+            cfInflightWaitBeforeNoRouteMs = 350
+            cfInflightRetrySuccesses = 35
+            cfInflightRetryFailures = 36
             cfMaxConcurrentConnectsByDc = mapOf(2 to 2)
             cf429BackoffCount = 24
             cfAllCooldownWaits = 25
@@ -366,6 +371,11 @@ class RuntimeLogStoreTest {
         assertTrue(report.contains("cfConnectQueueWaits=21"))
         assertTrue(report.contains("cf429BackoffCount=24"))
         assertTrue(report.contains("cfQueueControlledFailures=23"))
+        assertTrue(report.contains("cfNoRouteAvoidedByInflightWait=33"))
+        assertTrue(report.contains("cfInflightWaitBeforeNoRoute=34"))
+        assertTrue(report.contains("cfInflightWaitBeforeNoRouteMs=350"))
+        assertTrue(report.contains("cfInflightRetrySuccesses=35"))
+        assertTrue(report.contains("cfInflightRetryFailures=36"))
         assertTrue(report.contains("cfAllCooldownAttemptsAllowed=27"))
         assertTrue(report.contains("cfAllCooldownAttemptsSuppressed=28"))
         assertTrue(report.contains("cfAllCooldownControlledFailures=29"))

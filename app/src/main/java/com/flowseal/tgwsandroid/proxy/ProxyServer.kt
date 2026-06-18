@@ -358,6 +358,11 @@ class ProxyServerStats {
     var cfConnectQueueTimeouts: Long = 0
     var cfQueueControlledFailures: Long = 0
     var cfQueueWaitMs: Long = 0
+    var cfNoRouteAvoidedByInflightWait: Long = 0
+    var cfInflightWaitBeforeNoRoute: Long = 0
+    var cfInflightWaitBeforeNoRouteMs: Long = 0
+    var cfInflightRetrySuccesses: Long = 0
+    var cfInflightRetryFailures: Long = 0
     var cfMaxConcurrentConnectsByDc: Map<Int, Int> = emptyMap()
     var cf429BackoffCount: Long = 0
     var cfAllCooldownWaits: Long = 0
@@ -807,6 +812,11 @@ class ProxyServer(
     private val wsConnectErrors = AtomicLong(0)
     private val cfProxyConnections = AtomicLong(0)
     private val cfProxyErrors = AtomicLong(0)
+    private val cfNoRouteAvoidedByInflightWait = AtomicLong(0)
+    private val cfInflightWaitBeforeNoRoute = AtomicLong(0)
+    private val cfInflightWaitBeforeNoRouteMs = AtomicLong(0)
+    private val cfInflightRetrySuccesses = AtomicLong(0)
+    private val cfInflightRetryFailures = AtomicLong(0)
     private val bytesUp = AtomicLong(0)
     private val bytesDown = AtomicLong(0)
     private val wsKeepalivePingsSent = AtomicLong(0)
@@ -1177,6 +1187,11 @@ class ProxyServer(
             snapshot.cfConnectQueueTimeouts = cfHealthSnapshot.connectQueueTimeouts
             snapshot.cfQueueControlledFailures = cfHealthSnapshot.queueControlledFailures
             snapshot.cfQueueWaitMs = cfHealthSnapshot.queueWaitMs
+            snapshot.cfNoRouteAvoidedByInflightWait = cfNoRouteAvoidedByInflightWait.get()
+            snapshot.cfInflightWaitBeforeNoRoute = cfInflightWaitBeforeNoRoute.get()
+            snapshot.cfInflightWaitBeforeNoRouteMs = cfInflightWaitBeforeNoRouteMs.get()
+            snapshot.cfInflightRetrySuccesses = cfInflightRetrySuccesses.get()
+            snapshot.cfInflightRetryFailures = cfInflightRetryFailures.get()
             snapshot.cfMaxConcurrentConnectsByDc = cfHealthSnapshot.maxConcurrentConnectsByDc
             snapshot.cf429BackoffCount = cfHealthSnapshot.backoffCount
             snapshot.cfAllCooldownWaits = cfHealthSnapshot.allCooldownWaits
@@ -1522,6 +1537,7 @@ class ProxyServer(
                     }
                 }
                 if (tryEmergencyDirectFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration, cfFirstDirectFallbackAttempted)) return true
+                if (tryCfInflightWaitBeforeNoRoute(client, parsed, relayInit, cryptoContext, splitter)) return true
                 recordNoRoute(parsed.dcId)
                 logger.log("DC${parsed.dcId} no route available after CF-first attempts")
             }
@@ -1536,6 +1552,42 @@ class ProxyServer(
         return true
     }
 
+
+    private fun tryCfInflightWaitBeforeNoRoute(
+        client: TcpClientTransport,
+        parsed: MtprotoHandshake.Result,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+    ): Boolean {
+        if (!config.cfproxyEnabled) return false
+        if (effectiveRouteMode() != NetworkRouteMode.CF_FIRST) return false
+        val mobileOrDirectSuppressed = isMobile(currentNetworkStatus) || !isDirectAttemptAllowedForCurrentRoute()
+        if (!mobileOrDirectSuppressed) return false
+        if (!cfDomainHealth.hasInFlightConnectsForDc(parsed.dcId)) return false
+
+        val waitMs = CF_INFLIGHT_WAIT_BEFORE_NO_ROUTE_MS
+        cfInflightWaitBeforeNoRoute.incrementAndGet()
+        logger.log(
+            "DC${parsed.dcId} waiting up to ${waitMs}ms for in-flight CF connect before CF-first no-route",
+        )
+        val startedAtNs = System.nanoTime()
+        cfDomainHealth.waitForInFlightConnectReleaseForDc(parsed.dcId, waitMs)
+        val elapsedMs = ((System.nanoTime() - startedAtNs) / 1_000_000).coerceAtLeast(0L)
+        cfInflightWaitBeforeNoRouteMs.addAndGet(elapsedMs)
+        logger.log("DC${parsed.dcId} in-flight CF wait before no-route ended after ${elapsedMs}ms; retrying CF once")
+
+        val retried = tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)
+        if (retried) {
+            cfInflightRetrySuccesses.incrementAndGet()
+            cfNoRouteAvoidedByInflightWait.incrementAndGet()
+            logger.log("DC${parsed.dcId} CF-first no-route avoided by in-flight wait retry")
+        } else {
+            cfInflightRetryFailures.incrementAndGet()
+            logger.log("DC${parsed.dcId} CF retry after in-flight wait did not find a route")
+        }
+        return retried
+    }
 
     private fun waitForNetworkSettlingBeforeRoute(dcId: Int): Boolean {
         val initialGeneration = routeGeneration.get()
@@ -2953,6 +3005,7 @@ class ProxyServer(
 
     companion object {
         const val DEFAULT_WS_PATH = "/apiws"
+        private const val CF_INFLIGHT_WAIT_BEFORE_NO_ROUTE_MS: Long = 2_000L
         const val CLIENT_EXPERIENCE_RECENT_WINDOW_MS: Long = 60_000L
         const val RECONNECT_BURST_MIN_HANDSHAKES: Long = 4L
         const val VERY_SHORT_SESSION_MS: Long = 2_000L

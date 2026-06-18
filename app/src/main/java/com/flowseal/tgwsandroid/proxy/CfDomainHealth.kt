@@ -366,6 +366,28 @@ class CfDomainHealth(
     }
 
     @Synchronized
+    fun hasInFlightConnectsForDc(dcId: Int): Boolean = (activeConnectsByDc[dcId] ?: 0) > 0
+
+    fun waitForInFlightConnectReleaseForDc(dcId: Int, waitMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + waitMs.coerceAtLeast(0L)
+        synchronized(this) {
+            val initial = activeConnectsByDc[dcId] ?: 0
+            if (initial <= 0) return false
+            while ((activeConnectsByDc[dcId] ?: 0) >= initial) {
+                val remainingMs = deadline - System.currentTimeMillis()
+                if (remainingMs <= 0) return false
+                try {
+                    (this as java.lang.Object).wait(remainingMs.coerceAtLeast(1L))
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return false
+                }
+            }
+            return true
+        }
+    }
+
+    @Synchronized
     fun recordTransientNetworkFailure() {
         transientNetworkFailures += 1
     }
