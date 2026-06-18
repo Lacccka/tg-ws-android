@@ -237,6 +237,10 @@ class ProxyServerStats {
     var cfProxyErrors: Long = 0
     var bytesUp: Long = 0
     var bytesDown: Long = 0
+    var wsKeepaliveIntervalSeconds: Double = 0.0
+    var wsKeepalivePingsSent: Long = 0
+    var wsKeepaliveFailures: Long = 0
+    var lastWsKeepaliveFailure: String? = null
     var poolHits: Long = 0
     var poolMisses: Long = 0
     var poolRefillErrors: Long = 0
@@ -745,6 +749,7 @@ class ProxyServer(
 ) {
     private val running = AtomicBoolean(false)
     private val activeClients: MutableSet<TcpClientTransport> = Collections.newSetFromMap(ConcurrentHashMap<TcpClientTransport, Boolean>())
+    private val activeBridgeCounters: MutableSet<BridgeSessionCounters> = Collections.newSetFromMap(ConcurrentHashMap<BridgeSessionCounters, Boolean>())
     private val connectionsTotal = AtomicLong(0)
     private val connectionsActive = AtomicInteger(0)
     private val clientExperienceActiveSessions = AtomicInteger(0)
@@ -797,6 +802,9 @@ class ProxyServer(
     private val cfProxyErrors = AtomicLong(0)
     private val bytesUp = AtomicLong(0)
     private val bytesDown = AtomicLong(0)
+    private val wsKeepalivePingsSent = AtomicLong(0)
+    private val wsKeepaliveFailures = AtomicLong(0)
+    private val lastWsKeepaliveFailure = AtomicReference<String?>(null)
     private val sessionTimeouts = AtomicLong(0)
     private val sessionEof = AtomicLong(0)
     private val sessionClientClosed = AtomicLong(0)
@@ -993,6 +1001,13 @@ class ProxyServer(
             snapshot.cfProxyErrors = cfProxyErrors.get()
             snapshot.bytesUp = bytesUp.get()
             snapshot.bytesDown = bytesDown.get()
+            val activeKeepaliveCounters = activeBridgeCounters.toList()
+            snapshot.wsKeepaliveIntervalSeconds = config.effectiveWsKeepaliveIntervalSeconds
+            snapshot.wsKeepalivePingsSent = wsKeepalivePingsSent.get() + activeKeepaliveCounters.sumOf { it.wsKeepalivePingsSent }
+            snapshot.wsKeepaliveFailures = wsKeepaliveFailures.get() + activeKeepaliveCounters.sumOf { it.wsKeepaliveFailures }
+            snapshot.lastWsKeepaliveFailure = activeKeepaliveCounters.asSequence()
+                .mapNotNull { it.lastWsKeepaliveFailure }
+                .firstOrNull() ?: lastWsKeepaliveFailure.get()
             snapshot.sessionTimeouts = sessionTimeouts.get()
             snapshot.sessionEof = sessionEof.get()
             snapshot.sessionClientClosed = sessionClientClosed.get()
@@ -2215,6 +2230,7 @@ class ProxyServer(
             route.stream.send(relayInit)
             recordSuccessfulRoute()
             bridgeStarted = true
+            activeBridgeCounters.add(counters)
             bridgeRunner.run(client, route.stream, cryptoContext, splitter, counters)
         } catch (error: Throwable) {
             routeFailure = error
@@ -2228,8 +2244,12 @@ class ProxyServer(
                 logger.log("DC${parsed.dcId} ${route.type} route failed: ${failureDetail(error)}")
             }
         } finally {
+            activeBridgeCounters.remove(counters)
             bytesUp.addAndGet(counters.bytesUp)
             bytesDown.addAndGet(counters.bytesDown)
+            wsKeepalivePingsSent.addAndGet(counters.wsKeepalivePingsSent)
+            wsKeepaliveFailures.addAndGet(counters.wsKeepaliveFailures)
+            counters.lastWsKeepaliveFailure?.let { lastWsKeepaliveFailure.set(it) }
             durationMs = (System.nanoTime() - startedAtNs) / 1_000_000
             val rawReason = counters.closeReason
                 ?: routeFailure?.let { bridgeExceptionReason(it) }

@@ -528,6 +528,9 @@ object DiagnosticReportFormatter {
             "badHandshakeRecommendation=${stats.badHandshakeRecommendation}, " +
             "wsErrors=${stats.wsConnectErrors}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
+            "wsKeepaliveIntervalSeconds=${formatDouble(stats.wsKeepaliveIntervalSeconds)}, " +
+            "wsKeepalivePingsSent=${stats.wsKeepalivePingsSent}, wsKeepaliveFailures=${stats.wsKeepaliveFailures}, " +
+            "lastWsKeepaliveFailure=${stats.lastWsKeepaliveFailure ?: "none"}, " +
             "sessionTimeouts=${stats.sessionTimeouts}, sessionEof=${stats.sessionEof}, " +
             "sessionRemoteEof=${stats.sessionRemoteEof}, sessionRemoteIdleEof=${stats.sessionRemoteIdleEof}, " +
             "sessionRemoteEofShort=${stats.sessionRemoteEofShort}, lastRemoteEofTimeMs=${stats.lastRemoteEofTimeMs}, " +
@@ -683,6 +686,9 @@ object DiagnosticReportFormatter {
         appendLine("  lastHitTimeMsByKey: ${stats?.directPoolDiagnostics?.lastHitTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
         appendLine("  lastMissTimeMsByKey: ${stats?.directPoolDiagnostics?.lastMissTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
     }
+
+    private fun formatDouble(value: Double): String =
+        if (value % 1.0 == 0.0) value.toLong().toString() else value.toString()
 
     private fun formatCompactMap(values: Map<*, *>): String =
         if (values.isEmpty()) "none" else values.entries.joinToString(";") { "${it.key}=${it.value}" }

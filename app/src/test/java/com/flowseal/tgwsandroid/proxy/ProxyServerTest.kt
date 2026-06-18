@@ -1356,6 +1356,106 @@ class ProxyServerTest {
     }
 
     @Test
+    fun statsIncludeWebSocketKeepaliveCountersWhileSessionIsActive() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val bridgeActive = CountDownLatch(1)
+        val releaseBridge = CountDownLatch(1)
+        val proxy = newProxy(
+            server = server,
+            connector = RecordingConnector(FakeWebSocketBinaryStream()),
+            config = baseConfig().copy(cfproxyEnabled = false, wsKeepaliveIntervalSeconds = 12.5),
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
+                counters.recordWsKeepalivePing()
+                counters.recordWsKeepalivePing()
+                bridgeActive.countDown()
+                assertTrue(releaseBridge.await(5, TimeUnit.SECONDS))
+            },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        assertTrue(bridgeActive.await(5, TimeUnit.SECONDS))
+
+        val activeStats = proxy.stats()
+        assertEquals(12.5, activeStats.wsKeepaliveIntervalSeconds, 0.0)
+        assertEquals(2L, activeStats.wsKeepalivePingsSent)
+        assertEquals(0L, activeStats.wsKeepaliveFailures)
+
+        releaseBridge.countDown()
+        waitUntil { proxy.stats().connectionsActive == 0 }
+        val finishedStats = proxy.stats()
+        proxy.stop()
+
+        assertEquals(2L, finishedStats.wsKeepalivePingsSent)
+        assertEquals(0L, finishedStats.wsKeepaliveFailures)
+    }
+
+    @Test
+    fun statsIncludeActiveWebSocketKeepaliveFailureReason() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val bridgeActive = CountDownLatch(1)
+        val releaseBridge = CountDownLatch(1)
+        val proxy = newProxy(
+            server = server,
+            connector = RecordingConnector(FakeWebSocketBinaryStream()),
+            config = baseConfig().copy(cfproxyEnabled = false),
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
+                counters.recordWsKeepalivePing()
+                counters.recordWsKeepaliveFailure("SocketException: active ping failed")
+                bridgeActive.countDown()
+                assertTrue(releaseBridge.await(5, TimeUnit.SECONDS))
+            },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        assertTrue(bridgeActive.await(5, TimeUnit.SECONDS))
+
+        val activeStats = proxy.stats()
+        assertEquals(1L, activeStats.wsKeepalivePingsSent)
+        assertEquals(1L, activeStats.wsKeepaliveFailures)
+        assertEquals("SocketException: active ping failed", activeStats.lastWsKeepaliveFailure)
+
+        releaseBridge.countDown()
+        waitUntil { proxy.stats().connectionsActive == 0 }
+        val finishedStats = proxy.stats()
+        proxy.stop()
+
+        assertEquals(1L, finishedStats.wsKeepalivePingsSent)
+        assertEquals(1L, finishedStats.wsKeepaliveFailures)
+        assertEquals("SocketException: active ping failed", finishedStats.lastWsKeepaliveFailure)
+    }
+
+    @Test
+    fun statsAggregateWebSocketKeepaliveCounters() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            connector = RecordingConnector(FakeWebSocketBinaryStream()),
+            config = baseConfig().copy(cfproxyEnabled = false, wsKeepaliveIntervalSeconds = 12.5),
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
+                counters.recordWsKeepalivePing()
+                counters.recordWsKeepalivePing()
+                counters.recordWsKeepaliveFailure("SocketException: ping failed")
+            },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { proxy.stats().connectionsTotal == 1L && proxy.stats().connectionsActive == 0 }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(12.5, stats.wsKeepaliveIntervalSeconds, 0.0)
+        assertEquals(2L, stats.wsKeepalivePingsSent)
+        assertEquals(1L, stats.wsKeepaliveFailures)
+        assertEquals("SocketException: ping failed", stats.lastWsKeepaliveFailure)
+    }
+
+    @Test
     fun bridgeRunnerReceivesMsgSplitterAndCryptoContext() {
         val client = FakeTcpClientTransport(handshakeVector("intermediate_dc4").getString("handshake_hex").hexToBytes())
         val server = FakeTcpServerTransport()
