@@ -20,6 +20,8 @@ interface WebSocketBinaryStream {
 
     fun sendBatch(parts: List<ByteArray>)
 
+    fun sendPing(payload: ByteArray = ByteArray(0))
+
     fun recv(): ByteArray?
 
     fun close()
@@ -33,6 +35,8 @@ class RawWebSocketBinaryStream(
 
     override fun sendBatch(parts: List<ByteArray>) = rawWebSocket.sendBatch(parts)
 
+    override fun sendPing(payload: ByteArray) = rawWebSocket.sendPing(payload)
+
     override fun recv(): ByteArray? = rawWebSocket.recv()
 
     override fun close() = rawWebSocket.close()
@@ -45,11 +49,17 @@ class BridgeSessionCounters {
     private val packetsUpAtomic = AtomicLong(0)
     private val packetsDownAtomic = AtomicLong(0)
     private val closeReasonAtomic = AtomicReference<String?>(null)
+    private val wsKeepalivePingsSentAtomic = AtomicLong(0)
+    private val wsKeepaliveFailuresAtomic = AtomicLong(0)
+    private val lastWsKeepaliveFailureAtomic = AtomicReference<String?>(null)
 
     val bytesUp: Long get() = bytesUpAtomic.get()
     val bytesDown: Long get() = bytesDownAtomic.get()
     val packetsUp: Long get() = packetsUpAtomic.get()
     val packetsDown: Long get() = packetsDownAtomic.get()
+    val wsKeepalivePingsSent: Long get() = wsKeepalivePingsSentAtomic.get()
+    val wsKeepaliveFailures: Long get() = wsKeepaliveFailuresAtomic.get()
+    val lastWsKeepaliveFailure: String? get() = lastWsKeepaliveFailureAtomic.get()
     val closeReason: String? get() = closeReasonAtomic.get()
 
     fun recordUp(bytes: Int) {
@@ -60,6 +70,16 @@ class BridgeSessionCounters {
     fun recordDown(bytes: Int) {
         bytesDownAtomic.addAndGet(bytes.toLong())
         packetsDownAtomic.incrementAndGet()
+    }
+
+    fun recordWsKeepalivePing() {
+        wsKeepalivePingsSentAtomic.incrementAndGet()
+    }
+
+    fun recordWsKeepaliveFailure(reason: String) {
+        wsKeepaliveFailuresAtomic.incrementAndGet()
+        lastWsKeepaliveFailureAtomic.set(reason)
+        finish("websocket keepalive failed")
     }
 
     fun finish(reason: String) {
@@ -88,6 +108,7 @@ class BridgeSession(
     private val splitter: MsgSplitter? = null,
     val counters: BridgeSessionCounters = BridgeSessionCounters(),
     private val bufferSize: Int = DEFAULT_BUFFER_SIZE,
+    private val wsKeepaliveIntervalSeconds: Double = 0.0,
 ) {
     private val closed = AtomicBoolean(false)
 
@@ -110,18 +131,23 @@ class BridgeSession(
                     finished.countDown()
                 }
             }, "BridgeSession-websocket-to-client")
+        val keepalive = keepaliveThread(finished)
 
         clientToWebSocket.isDaemon = true
         webSocketToClient.isDaemon = true
+        keepalive?.isDaemon = true
         clientToWebSocket.start()
         webSocketToClient.start()
+        keepalive?.start()
 
         try {
             finished.await()
         } finally {
             closeBothBestEffort()
+            keepalive?.interrupt()
             joinBestEffort(clientToWebSocket)
             joinBestEffort(webSocketToClient)
+            keepalive?.let { joinBestEffort(it) }
             counters.finish("completed")
         }
     }
@@ -164,6 +190,29 @@ class BridgeSession(
             counters.finish(bridgeExceptionReason(error))
             // Match upstream bridge behavior: direction errors end the session.
         }
+    }
+
+    private fun keepaliveThread(finished: CountDownLatch): Thread? {
+        val intervalMs = keepaliveIntervalMillis(wsKeepaliveIntervalSeconds)
+        if (intervalMs <= 0L) return null
+        return Thread({
+            while (!closed.get()) {
+                try {
+                    Thread.sleep(intervalMs)
+                    if (closed.get()) break
+                    webSocket.sendPing()
+                    counters.recordWsKeepalivePing()
+                } catch (error: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    break
+                } catch (error: Throwable) {
+                    counters.recordWsKeepaliveFailure(bridgeExceptionReason(error))
+                    closeBothBestEffort()
+                    finished.countDown()
+                    break
+                }
+            }
+        }, "BridgeSession-websocket-keepalive")
     }
 
     private fun sendTelegramCiphertext(ciphertext: ByteArray) {
@@ -214,5 +263,11 @@ class BridgeSession(
     companion object {
         const val DEFAULT_BUFFER_SIZE: Int = 65_536
         private const val JOIN_TIMEOUT_MS: Long = 1_000
+        private const val MIN_KEEPALIVE_INTERVAL_MS: Long = 1_000
+
+        fun keepaliveIntervalMillis(seconds: Double): Long {
+            if (!seconds.isFinite() || seconds <= 0.0) return 0L
+            return maxOf((seconds * 1_000).toLong(), MIN_KEEPALIVE_INTERVAL_MS)
+        }
     }
 }

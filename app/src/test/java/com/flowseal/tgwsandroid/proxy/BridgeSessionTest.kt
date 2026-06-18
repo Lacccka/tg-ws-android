@@ -119,6 +119,75 @@ class BridgeSessionTest {
     }
 
     @Test
+    fun keepaliveDisabledWhenIntervalIsNonPositive() {
+        assertEquals(0L, BridgeSession.keepaliveIntervalMillis(0.0))
+        assertEquals(0L, BridgeSession.keepaliveIntervalMillis(-5.0))
+    }
+
+    @Test
+    fun keepaliveSendsPingAfterIntervalAndStopsWhenBridgeCloses() {
+        val client = FakeClientByteStream(blockOnRead = true)
+        val webSocket = FakeWebSocketBinaryStream(blockOnEmptyRecv = true)
+        val session = BridgeSession(
+            client = client,
+            webSocket = webSocket,
+            cryptoContext = buildContext(firstCryptoVector()),
+            wsKeepaliveIntervalSeconds = 1.0,
+        )
+        val thread = Thread { session.runBlocking() }
+
+        thread.start()
+        waitUntil { webSocket.pingCount() >= 1 }
+        client.close()
+        thread.join(2_000)
+
+        assertTrue(webSocket.pingCount() >= 1)
+        assertEquals(webSocket.pingCount().toLong(), session.counters.wsKeepalivePingsSent)
+        assertTrue(webSocket.closed)
+        assertTrue(thread.isAlive.not())
+    }
+
+    @Test
+    fun keepaliveThreadExitsPromptlyWhenBridgeCloses() {
+        val client = FakeClientByteStream(eofAfterReads = true)
+        val webSocket = FakeWebSocketBinaryStream(blockOnEmptyRecv = true)
+        val session = BridgeSession(
+            client = client,
+            webSocket = webSocket,
+            cryptoContext = buildContext(firstCryptoVector()),
+            wsKeepaliveIntervalSeconds = 30.0,
+        )
+
+        val startedAt = System.nanoTime()
+        session.runBlocking()
+        val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000
+
+        assertTrue("keepalive join should not wait for sleeping interval or join timeout, elapsedMs=$elapsedMs", elapsedMs < 900)
+        assertEquals(0, webSocket.pingCount())
+        assertTrue(webSocket.closed)
+    }
+
+    @Test
+    fun keepaliveSendPingFailureClosesSession() {
+        val client = FakeClientByteStream(blockOnRead = true)
+        val webSocket = FakeWebSocketBinaryStream(blockOnEmptyRecv = true, pingException = RuntimeException("ping boom"))
+        val session = BridgeSession(
+            client = client,
+            webSocket = webSocket,
+            cryptoContext = buildContext(firstCryptoVector()),
+            wsKeepaliveIntervalSeconds = 1.0,
+        )
+
+        session.runBlocking()
+
+        assertTrue(client.closed)
+        assertTrue(webSocket.closed)
+        assertEquals(1L, session.counters.wsKeepaliveFailures)
+        assertEquals("websocket keepalive failed", session.counters.closeReason)
+        assertTrue(session.counters.lastWsKeepaliveFailure!!.contains("ping boom"))
+    }
+
+    @Test
     fun exceptionsInOneDirectionCloseBothSidesBestEffort() {
         val client = FakeClientByteStream(readException = RuntimeException("boom"))
         val webSocket = FakeWebSocketBinaryStream(blockOnEmptyRecv = true, closeException = RuntimeException("close boom"))
@@ -199,6 +268,15 @@ class BridgeSessionTest {
 
     private fun List<ByteArray>.joinToByteArray(): ByteArray = flatMap { it.asIterable() }.toByteArray()
 
+    private fun waitUntil(condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + 3_000
+        while (System.currentTimeMillis() < deadline) {
+            if (condition()) return
+            Thread.sleep(25)
+        }
+        throw AssertionError("condition not met before timeout")
+    }
+
     private fun ByteArray.chunkBy(sizes: List<Int>): List<ByteArray> {
         val chunks = mutableListOf<ByteArray>()
         var offset = 0
@@ -258,6 +336,7 @@ private class FakeWebSocketBinaryStream(
     private val nullAfterRecvs: Boolean = false,
     private val blockOnEmptyRecv: Boolean = false,
     private val closeException: RuntimeException? = null,
+    private val pingException: RuntimeException? = null,
 ) : WebSocketBinaryStream {
     private val lock = Object()
     private val sent = mutableListOf<Pair<String, ByteArray>>()
@@ -271,6 +350,11 @@ private class FakeWebSocketBinaryStream(
 
     override fun sendBatch(parts: List<ByteArray>) {
         synchronized(lock) { parts.forEach { sent.add("batch" to it) } }
+    }
+
+    override fun sendPing(payload: ByteArray) {
+        pingException?.let { throw it }
+        synchronized(lock) { sent.add("ping" to payload) }
     }
 
     override fun recv(): ByteArray? {
@@ -290,7 +374,9 @@ private class FakeWebSocketBinaryStream(
         closeException?.let { throw it }
     }
 
-    fun sentPayloads(): List<ByteArray> = synchronized(lock) { sent.map { it.second } }
+    fun sentPayloads(): List<ByteArray> = synchronized(lock) { sent.filter { it.first != "ping" }.map { it.second } }
 
-    fun sendKinds(): List<String> = synchronized(lock) { sent.map { it.first }.distinct() }
+    fun sendKinds(): List<String> = synchronized(lock) { sent.map { it.first }.filter { it != "ping" }.distinct() }
+
+    fun pingCount(): Int = synchronized(lock) { sent.count { it.first == "ping" } }
 }

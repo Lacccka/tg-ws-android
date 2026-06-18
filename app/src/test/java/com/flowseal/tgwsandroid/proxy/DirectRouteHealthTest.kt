@@ -83,6 +83,7 @@ class DirectRouteHealthTest {
         var closed = false
         override fun send(data: ByteArray) = Unit
         override fun sendBatch(parts: List<ByteArray>) = Unit
+        override fun sendPing(payload: ByteArray) = Unit
         override fun recv(): ByteArray? = null
         override fun close() {
             closed = true

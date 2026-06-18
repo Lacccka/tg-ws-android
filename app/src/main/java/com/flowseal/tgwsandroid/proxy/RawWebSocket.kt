@@ -31,6 +31,7 @@ class RawWebSocket private constructor(
     private val transport: Transport,
     private val randomProvider: (Int) -> ByteArray,
 ) {
+    private val writeLock = Object()
     private var closed: Boolean = false
 
     /** Testable blocking stream transport used by the live connection layer. */
@@ -66,17 +67,29 @@ class RawWebSocket private constructor(
     }
 
     fun send(data: ByteArray) {
-        ensureOpen()
-        transport.output.write(maskedFrame(RawWebSocketCodec.OP_BINARY, data))
-        transport.flush()
+        synchronized(writeLock) {
+            ensureOpen()
+            transport.output.write(maskedFrame(RawWebSocketCodec.OP_BINARY, data))
+            transport.flush()
+        }
     }
 
     fun sendBatch(parts: List<ByteArray>) {
-        ensureOpen()
-        for (part in parts) {
-            transport.output.write(maskedFrame(RawWebSocketCodec.OP_BINARY, part))
+        synchronized(writeLock) {
+            ensureOpen()
+            for (part in parts) {
+                transport.output.write(maskedFrame(RawWebSocketCodec.OP_BINARY, part))
+            }
+            transport.flush()
         }
-        transport.flush()
+    }
+
+    fun sendPing(payload: ByteArray = ByteArray(0)) {
+        synchronized(writeLock) {
+            ensureOpen()
+            transport.output.write(maskedFrame(RawWebSocketCodec.OP_PING, payload))
+            transport.flush()
+        }
     }
 
     fun recv(): ByteArray? {
@@ -94,8 +107,10 @@ class RawWebSocket private constructor(
                             } else {
                                 frame.payload.copyOfRange(0, minOf(2, frame.payload.size))
                             }
-                        transport.output.write(maskedFrame(RawWebSocketCodec.OP_CLOSE, closePayload))
-                        transport.flush()
+                        synchronized(writeLock) {
+                            transport.output.write(maskedFrame(RawWebSocketCodec.OP_CLOSE, closePayload))
+                            transport.flush()
+                        }
                     } catch (_: Exception) {
                         // Match upstream: ignore failures while acknowledging close.
                     }
@@ -104,8 +119,10 @@ class RawWebSocket private constructor(
 
                 RawWebSocketCodec.OP_PING -> {
                     try {
-                        transport.output.write(maskedFrame(RawWebSocketCodec.OP_PONG, frame.payload))
-                        transport.flush()
+                        synchronized(writeLock) {
+                            transport.output.write(maskedFrame(RawWebSocketCodec.OP_PONG, frame.payload))
+                            transport.flush()
+                        }
                     } catch (_: Exception) {
                         // Match upstream: ignore pong write errors and keep reading.
                     }
@@ -128,11 +145,13 @@ class RawWebSocket private constructor(
     }
 
     fun close() {
-        if (closed) return
-        closed = true
         try {
-            transport.output.write(maskedFrame(RawWebSocketCodec.OP_CLOSE, ByteArray(0)))
-            transport.flush()
+            synchronized(writeLock) {
+                if (closed) return
+                closed = true
+                transport.output.write(maskedFrame(RawWebSocketCodec.OP_CLOSE, ByteArray(0)))
+                transport.flush()
+            }
         } catch (_: Exception) {
             // Match upstream: close is best-effort.
         }

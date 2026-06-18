@@ -37,9 +37,13 @@ data class ProxyServerConfig(
     val routeMode: NetworkRouteMode = NetworkRouteMode.AUTO,
     val networkStatus: String = "unknown",
     val directFallbackTimeoutMs: Int = 2_000,
+    val wsKeepaliveIntervalSeconds: Double = DEFAULT_WS_KEEPALIVE_INTERVAL_SECONDS,
 ) {
+    val effectiveWsKeepaliveIntervalSeconds: Double = wsKeepaliveIntervalSeconds.coerceAtLeast(0.0)
     val effectiveRouteMode: NetworkRouteMode = RouteStrategy.resolve(routeMode, networkStatus)
     companion object {
+        const val DEFAULT_WS_KEEPALIVE_INTERVAL_SECONDS: Double = 30.0
+
         fun fromAppConfig(
             appConfig: AppConfig,
             networkStatus: String = "unknown",
@@ -723,7 +727,15 @@ class ProxyServer(
         RawWebSocketBinaryStream(RawWebSocket.connect(host = targetHost, domain = domain, path = path, timeoutMs = timeoutMs))
     },
     private val bridgeRunner: ProxyBridgeRunner = ProxyBridgeRunner { client, webSocket, cryptoContext, splitter, counters ->
-        BridgeSession(client, webSocket, cryptoContext, splitter, counters, config.bufferSizeBytes).runBlocking()
+        BridgeSession(
+            client = client,
+            webSocket = webSocket,
+            cryptoContext = cryptoContext,
+            splitter = splitter,
+            counters = counters,
+            bufferSize = config.bufferSizeBytes,
+            wsKeepaliveIntervalSeconds = config.effectiveWsKeepaliveIntervalSeconds,
+        ).runBlocking()
     },
     private val cfProxyBalancer: CfProxyBalancer = CfProxyBalancer(config.cfProxyDomains),
     private val cfDomainHealth: CfDomainHealth = CfDomainHealth(config.cfProxyDomains),

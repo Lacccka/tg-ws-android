@@ -3193,6 +3193,10 @@ class ProxyServerTest {
             sent.addAll(parts)
         }
 
+        override fun sendPing(payload: ByteArray) {
+            events.add("ping")
+        }
+
         override fun recv(): ByteArray? = null
 
         override fun close() {
