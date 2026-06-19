@@ -668,6 +668,149 @@ class ProxyServerTest {
     }
 
     @Test
+    fun cfWorkerBuildsExactRouteAndSetsLastRouteUsed() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_ONLY,
+                cfproxyWorkerDomain = "tgwsproxy1.ilitasuka1448.workers.dev",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("tgwsproxy1.ilitasuka1448.workers.dev"), connector.targetHosts)
+        assertEquals(listOf("tgwsproxy1.ilitasuka1448.workers.dev"), connector.domains)
+        assertEquals(listOf("/apiws?dst=kws2.web.telegram.org"), connector.paths)
+        val stats = proxy.stats()
+        assertEquals("cf-worker", stats.lastRouteUsed)
+        assertEquals(1L, stats.cfWorkerConnections)
+        assertEquals(true, stats.cfWorkerEnabled)
+        assertEquals(true, stats.cfWorkerDomainConfigured)
+    }
+
+    @Test
+    fun cfWorkerFailureFallsBackToBundledCfRoute() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val connector = FailWorkerThenRecordingConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_ONLY,
+                cfproxyWorkerDomain = "worker.example",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("worker.example", "kws2.cf.example"), connector.targetHosts)
+        assertEquals(listOf("/apiws?dst=kws2.web.telegram.org", ProxyServer.DEFAULT_WS_PATH), connector.paths)
+        val stats = proxy.stats()
+        assertEquals("cf", stats.lastRouteUsed)
+        assertEquals(1L, stats.cfWorkerErrors)
+        assertEquals(1L, stats.cfProxyConnections)
+    }
+
+    @Test
+    fun emptyCfWorkerDomainKeepsBundledCfBehavior() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.CF_ONLY, cfproxyWorkerDomain = "", cfProxyDomains = listOf("cf.example")),
+            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("kws2.cf.example"), connector.targetHosts)
+        assertEquals(0L, proxy.stats().cfWorkerConnections)
+    }
+
+
+    @Test
+    fun cfproxyDisabledSkipsConfiguredWorkerDomain() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_ONLY,
+                cfproxyEnabled = false,
+                cfproxyWorkerDomain = "worker.example",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertTrue(connector.targetHosts.isEmpty())
+        val stats = proxy.stats()
+        assertEquals(0L, stats.cfWorkerConnections)
+        assertEquals(0L, stats.cfProxyConnections)
+    }
+
+    @Test
+    fun cfWorkerRouteFailureAfterConnectFallsBackToBundledCfRoute() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val connector = WorkerSendFailsThenRecordingConnector(events)
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_ONLY,
+                cfproxyWorkerDomain = "worker.example",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("worker.example", "kws2.cf.example"), connector.targetHosts)
+        assertEquals(listOf("/apiws?dst=kws2.web.telegram.org", ProxyServer.DEFAULT_WS_PATH), connector.paths)
+        val stats = proxy.stats()
+        assertEquals("cf", stats.lastRouteUsed)
+        assertEquals(1L, stats.cfWorkerConnections)
+        assertEquals(1L, stats.cfWorkerErrors)
+        assertEquals(1L, stats.cfProxyConnections)
+    }
+
+    @Test
     fun missingDirectRedirectWithCfEnabledAttemptsCfProxyDomain() {
         val client = FakeTcpClientTransport(buildClientHandshake(dcIdx = 5, protoTag = RelayInit.PROTO_TAG_ABRIDGED))
         val server = FakeTcpServerTransport()
@@ -3662,6 +3805,39 @@ class ProxyServerTest {
             domains.add(domain)
             timeouts.add(timeoutMs)
             throw java.net.SocketTimeoutException("timeout after $timeoutMs")
+        }
+    }
+
+
+    private class FailWorkerThenRecordingConnector(
+        private val webSocket: FakeWebSocketBinaryStream,
+    ) : RawWebSocketConnector {
+        val targetHosts = CopyOnWriteArrayList<String>()
+        val paths = CopyOnWriteArrayList<String>()
+
+        override fun connect(targetHost: String, domain: String, path: String, timeoutMs: Int): WebSocketBinaryStream {
+            targetHosts.add(targetHost)
+            paths.add(path)
+            if (path.contains("?dst=")) throw IOException("worker failed")
+            return webSocket
+        }
+    }
+
+
+    private class WorkerSendFailsThenRecordingConnector(
+        private val events: MutableList<String>,
+    ) : RawWebSocketConnector {
+        val targetHosts = CopyOnWriteArrayList<String>()
+        val paths = CopyOnWriteArrayList<String>()
+
+        override fun connect(targetHost: String, domain: String, path: String, timeoutMs: Int): WebSocketBinaryStream {
+            targetHosts.add(targetHost)
+            paths.add(path)
+            return if (path.contains("?dst=")) {
+                FakeWebSocketBinaryStream(events, sendError = IOException("worker route send failed"))
+            } else {
+                FakeWebSocketBinaryStream(events)
+            }
         }
     }
 

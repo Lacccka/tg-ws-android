@@ -131,7 +131,7 @@ fun AppConfig.toJson(): JSONObject = JSONObject().apply {
     put("check_updates", checkUpdates)
     put("cfproxy", cfproxy)
     put("cfproxy_user_domain", JSONArray(cfproxyUserDomain))
-    put("cfproxy_worker_domain", JSONArray(cfproxyWorkerDomain))
+    cfproxyWorkerDomain?.normalizeWorkerDomain()?.let { put("cfproxy_worker_domain", it) } ?: put("cfproxy_worker_domain", "")
     put("appearance", appearance.configValue)
     put("route_mode", routeMode.configValue)
     put("routeMode", routeMode.configValue)
