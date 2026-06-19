@@ -1,6 +1,8 @@
 package com.flowseal.tgwsandroid
 
 import com.flowseal.tgwsandroid.config.Appearance
+import com.flowseal.tgwsandroid.config.AppConfig
+import com.flowseal.tgwsandroid.config.normalizeWorkerDomain
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 
@@ -189,6 +191,15 @@ object SettingsUiText {
     const val DC_EMPTY_TITLE = "Датацентры не добавлены"
     const val DC_EMPTY_DESCRIPTION = "Можно добавить прямой адрес Telegram DC."
     const val DC_ADD_TITLE = "Добавить датацентр"
+    const val WORKER_SECTION_TITLE = "Cloudflare Worker"
+    const val WORKER_FIELD_LABEL = "Домен Worker"
+    const val WORKER_PLACEHOLDER = "tgwsproxy1.example.workers.dev"
+    const val WORKER_HELPER = "Можно вставить домен или полный URL. В конфиг сохранится только домен."
+    const val WORKER_SECONDARY_HELPER = "Используется перед обычными CF-доменами, если включён CF-прокси."
+    const val WORKER_CF_DISABLED_NOTE = "Worker используется только когда включён CF-прокси."
+    const val WORKER_TEST_BUTTON = "Тест"
+    const val WORKER_HELP_ACCESSIBILITY = "Справка по Cloudflare Worker"
+    const val WORKER_UNSUPPORTED_PATH_ERROR = "Укажите только домен Worker или URL вида /apiws"
     val themeOptions: List<String> = AppearanceUiModels.options.map { it.label }
     val connectionModeOptions: List<String> = UserRouteModes.normalOptions.map { it.title }
     val connectionModeDialogDescriptions: List<String> = listOf(
@@ -234,6 +245,26 @@ object DcMappingEditor {
         return parts.size == 4 && parts.all { part ->
             part.isNotEmpty() && part.length <= 3 && part.all(Char::isDigit) && part.toIntOrNull() in 0..255
         }
+    }
+}
+
+data class WorkerDomainEditResult(
+    val config: AppConfig,
+    val normalizedDomain: String?,
+    val error: String? = null,
+)
+
+object WorkerDomainSettings {
+    fun displayValue(config: AppConfig): String = config.cfproxyWorkerDomain.orEmpty()
+
+    fun save(config: AppConfig, rawValue: String): WorkerDomainEditResult {
+        val trimmed = rawValue.trim()
+        if (trimmed.isEmpty()) {
+            return WorkerDomainEditResult(config.copy(cfproxyWorkerDomain = null), normalizedDomain = null)
+        }
+        val normalized = trimmed.normalizeWorkerDomain()
+            ?: return WorkerDomainEditResult(config, normalizedDomain = null, error = SettingsUiText.WORKER_UNSUPPORTED_PATH_ERROR)
+        return WorkerDomainEditResult(config.copy(cfproxyWorkerDomain = normalized), normalizedDomain = normalized)
     }
 }
 
@@ -379,6 +410,7 @@ object SettingsScreenModel {
         SectionModel("Подключение"),
         SectionModel("Telegram MTProto"),
         dcSection(rawDcIp),
+        SectionModel(SettingsUiText.WORKER_SECTION_TITLE),
         SectionModel("Внешний вид"),
         SectionModel("Для разработчика", developerOnly = false),
     )

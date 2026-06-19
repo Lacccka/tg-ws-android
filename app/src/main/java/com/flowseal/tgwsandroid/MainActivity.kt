@@ -358,6 +358,7 @@ class MainActivity : Activity() {
                 addView(SettingsActionRow(SettingsUiText.RESET_SECRET_TITLE, "После обновления нужно заново подключить Telegram.") { confirmResetSecret() }, matchWrapParams(topMargin = rowGap))
             }, cardParams(topMargin = padding))
             addView(DcMappingsSection(), cardParams(topMargin = padding))
+            addView(CloudflareWorkerSection(), cardParams(topMargin = padding))
             addView(SettingsSection("Внешний вид") {
                 addView(ThemeSelector(), matchWrapParams())
             }, cardParams(topMargin = padding))
@@ -1093,6 +1094,73 @@ class MainActivity : Activity() {
                 matchWrapParams(topMargin = rowGap),
             )
         }
+    }
+
+
+    private fun CloudflareWorkerSection(): LinearLayout {
+        val config = ProxyRuntimeConfig.appConfig(applicationContext)
+        val density = resources.displayMetrics.density
+        val rowGap = (10 * density).toInt()
+        val workerInput = EditText(this).apply {
+            setText(WorkerDomainSettings.displayValue(config))
+            hint = SettingsUiText.WORKER_PLACEHOLDER
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+            setSingleLine(true)
+            contentDescription = SettingsUiText.WORKER_HELP_ACCESSIBILITY
+        }
+        val helper = createValueText(textSize = 13f).apply {
+            text = buildString {
+                append(SettingsUiText.WORKER_HELPER)
+                append("\n")
+                append(SettingsUiText.WORKER_SECONDARY_HELPER)
+                if (!config.cfproxy) {
+                    append("\n")
+                    append(SettingsUiText.WORKER_CF_DISABLED_NOTE)
+                }
+            }
+            setTextColor(currentColorScheme().onSurfaceVariant)
+        }
+        val saveButton = MaterialButton(this).apply {
+            text = "Сохранить"
+            isAllCaps = false
+            setOnClickListener { saveWorkerDomain(workerInput) }
+        }
+        val testButton = MaterialButton(this).apply {
+            text = SettingsUiText.WORKER_TEST_BUTTON
+            isAllCaps = false
+            isEnabled = false
+            visibility = View.GONE
+            // TODO: enable when settings has a safe reusable Worker WebSocket test path.
+        }
+        return SettingsSection(SettingsUiText.WORKER_SECTION_TITLE) {
+            addView(TextView(this@MainActivity).apply {
+                text = SettingsUiText.WORKER_FIELD_LABEL
+                textSize = 15f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(currentColorScheme().onSurface)
+            }, matchWrapParams())
+            addView(workerInput, matchWrapParams(topMargin = rowGap))
+            addView(helper, matchWrapParams(topMargin = rowGap))
+            addView(LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.HORIZONTAL
+                addView(saveButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                addView(testButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    leftMargin = rowGap
+                })
+            }, matchWrapParams(topMargin = rowGap))
+        }
+    }
+
+    private fun saveWorkerDomain(input: EditText) {
+        val current = ProxyRuntimeConfig.appConfig(applicationContext)
+        val result = WorkerDomainSettings.save(current, input.text.toString())
+        if (result.error != null) {
+            input.error = result.error
+            Toast.makeText(this, result.error, Toast.LENGTH_LONG).show()
+            return
+        }
+        input.setText(result.normalizedDomain.orEmpty())
+        saveMtprotoConfig(result.config, "cfproxy_worker_domain changed")
     }
 
     private fun showDcMappingDialog(mapping: DcMapping?) {
