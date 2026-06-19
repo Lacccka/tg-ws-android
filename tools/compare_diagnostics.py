@@ -22,7 +22,8 @@ STATUS_FIELDS = [
     "previousRunLikelyKilledBySigkill", "previousRunLikelyKilledByCleaner",
     "directHealthState", "effectiveRouteMode", "lastRouteUsed",
     "cfWorkerEnabled", "cfWorkerDomainConfigured", "cfWorkerConnections",
-    "cfWorkerErrors", "lastCfWorkerError", "lastCfWorkerLatencyMs",
+    "cfWorkerErrors", "cfWorkerSkippedNoDcRedirect", "lastCfWorkerError",
+    "lastCfWorkerLatencyMs", "lastCfWorkerDst", "lastCfWorkerDstType",
 ]
 CLIENT_FIELDS = [
     "likelyReconnectBurst", "likelyTelegramDisabledProxy", "recentAcceptedHandshakes",

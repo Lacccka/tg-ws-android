@@ -678,6 +678,7 @@ class ProxyServerTest {
             connector = connector,
             config = baseConfig().copy(
                 routeMode = NetworkRouteMode.CF_ONLY,
+                dcRedirects = mapOf(2 to "149.154.167.220"),
                 cfproxyWorkerDomain = "tgwsproxy1.ilitasuka1448.workers.dev",
                 cfProxyDomains = listOf("cf.example"),
             ),
@@ -691,12 +692,45 @@ class ProxyServerTest {
 
         assertEquals(listOf("tgwsproxy1.ilitasuka1448.workers.dev"), connector.targetHosts)
         assertEquals(listOf("tgwsproxy1.ilitasuka1448.workers.dev"), connector.domains)
-        assertEquals(listOf("/apiws?dst=kws2.web.telegram.org"), connector.paths)
+        assertEquals(listOf("/apiws?dst=149.154.167.220"), connector.paths)
         val stats = proxy.stats()
         assertEquals("cf-worker", stats.lastRouteUsed)
         assertEquals(1L, stats.cfWorkerConnections)
         assertEquals(true, stats.cfWorkerEnabled)
         assertEquals(true, stats.cfWorkerDomainConfigured)
+        assertEquals("149.154.167.220", stats.lastCfWorkerDst)
+        assertEquals("dc-redirect", stats.lastCfWorkerDstType)
+    }
+
+    @Test
+    fun cfWorkerMediaUsesSameDcRedirectDstAsNormalTraffic() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_media_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val events = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream(events))
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.CF_ONLY,
+                dcRedirects = mapOf(2 to "149.154.167.220"),
+                cfproxyWorkerDomain = "worker.example",
+                cfProxyDomains = listOf("cf.example"),
+            ),
+            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { events.contains("bridge") }
+        proxy.stop()
+
+        assertEquals(listOf("worker.example"), connector.targetHosts)
+        assertEquals(listOf("worker.example"), connector.domains)
+        assertEquals(listOf("/apiws?dst=149.154.167.220"), connector.paths)
+        val stats = proxy.stats()
+        assertEquals("149.154.167.220", stats.lastCfWorkerDst)
+        assertEquals("dc-redirect", stats.lastCfWorkerDstType)
     }
 
     @Test
@@ -710,6 +744,7 @@ class ProxyServerTest {
             connector = connector,
             config = baseConfig().copy(
                 routeMode = NetworkRouteMode.CF_ONLY,
+                dcRedirects = mapOf(2 to "149.154.167.220"),
                 cfproxyWorkerDomain = "worker.example",
                 cfProxyDomains = listOf("cf.example"),
             ),
@@ -722,7 +757,7 @@ class ProxyServerTest {
         proxy.stop()
 
         assertEquals(listOf("worker.example", "kws2.cf.example"), connector.targetHosts)
-        assertEquals(listOf("/apiws?dst=kws2.web.telegram.org", ProxyServer.DEFAULT_WS_PATH), connector.paths)
+        assertEquals(listOf("/apiws?dst=149.154.167.220", ProxyServer.DEFAULT_WS_PATH), connector.paths)
         val stats = proxy.stats()
         assertEquals("cf", stats.lastRouteUsed)
         assertEquals(1L, stats.cfWorkerErrors)
@@ -790,6 +825,7 @@ class ProxyServerTest {
             connector = connector,
             config = baseConfig().copy(
                 routeMode = NetworkRouteMode.CF_ONLY,
+                dcRedirects = mapOf(2 to "149.154.167.220"),
                 cfproxyWorkerDomain = "worker.example",
                 cfProxyDomains = listOf("cf.example"),
             ),
@@ -802,7 +838,7 @@ class ProxyServerTest {
         proxy.stop()
 
         assertEquals(listOf("worker.example", "kws2.cf.example"), connector.targetHosts)
-        assertEquals(listOf("/apiws?dst=kws2.web.telegram.org", ProxyServer.DEFAULT_WS_PATH), connector.paths)
+        assertEquals(listOf("/apiws?dst=149.154.167.220", ProxyServer.DEFAULT_WS_PATH), connector.paths)
         val stats = proxy.stats()
         assertEquals("cf", stats.lastRouteUsed)
         assertEquals(1L, stats.cfWorkerConnections)
@@ -820,7 +856,7 @@ class ProxyServerTest {
         val proxy = newProxy(
             server = server,
             connector = connector,
-            config = baseConfig().copy(dcRedirects = emptyMap(), cfProxyDomains = listOf("cf.example")),
+            config = baseConfig().copy(dcRedirects = emptyMap(), cfproxyWorkerDomain = "worker.example", cfProxyDomains = listOf("cf.example")),
             runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
             logger = ProxyLogger { logs.add(it) },
         )
@@ -833,8 +869,12 @@ class ProxyServerTest {
         assertEquals(listOf("kws5.cf.example"), connector.targetHosts)
         assertEquals(listOf("kws5.cf.example"), connector.domains)
         assertEquals(listOf(ProxyServer.DEFAULT_WS_PATH), connector.paths)
-        assertEquals(1L, proxy.stats().cfProxyConnections)
+        val stats = proxy.stats()
+        assertEquals(1L, stats.cfProxyConnections)
+        assertEquals(1L, stats.cfWorkerSkippedNoDcRedirect)
+        assertEquals(0L, stats.cfWorkerConnections)
         assertTrue(logs.any { it.contains("DC5 has no direct redirect configured; trying CF fallback") })
+        assertTrue(logs.any { it.contains("DC5 CF Worker skipped: no DC TCP redirect configured") })
         assertTrue(logs.any { it.contains("DC5 -> trying CF proxy wss://kws5.cf.example/apiws") })
         assertTrue(logs.any { it.contains("DC5 CF proxy connected via kws5.cf.example") })
     }

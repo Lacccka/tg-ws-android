@@ -250,8 +250,11 @@ class ProxyServerStats {
     var cfWorkerDomainConfigured: Boolean = false
     var cfWorkerConnections: Long = 0
     var cfWorkerErrors: Long = 0
+    var cfWorkerSkippedNoDcRedirect: Long = 0
     var lastCfWorkerError: String? = null
     var lastCfWorkerLatencyMs: Long? = null
+    var lastCfWorkerDst: String? = null
+    var lastCfWorkerDstType: String? = null
     var bytesUp: Long = 0
     var bytesDown: Long = 0
     var wsKeepaliveIntervalSeconds: Double = 0.0
@@ -737,10 +740,10 @@ internal data class CfProxyConnectTarget(
     val timeoutMs: Int,
 ) {
     companion object {
-        fun forWorkerDomain(workerDomain: String, telegramWsDomain: String): CfProxyConnectTarget = CfProxyConnectTarget(
+        fun forWorkerDomain(workerDomain: String, dst: String): CfProxyConnectTarget = CfProxyConnectTarget(
                 targetHost = workerDomain,
                 domain = workerDomain,
-                path = "/apiws?dst=$telegramWsDomain",
+                path = "/apiws?dst=$dst",
                 timeoutMs = RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS,
             )
 
@@ -859,8 +862,11 @@ class ProxyServer(
     private val cfProxyErrors = AtomicLong(0)
     private val cfWorkerConnections = AtomicLong(0)
     private val cfWorkerErrors = AtomicLong(0)
+    private val cfWorkerSkippedNoDcRedirect = AtomicLong(0)
     private val lastCfWorkerError = AtomicReference<String?>(null)
     private val lastCfWorkerLatencyMs = AtomicLong(-1)
+    private val lastCfWorkerDst = AtomicReference<String?>(null)
+    private val lastCfWorkerDstType = AtomicReference<String?>(null)
     private val cfNoRouteAvoidedByInflightWait = AtomicLong(0)
     private val cfInflightWaitBeforeNoRoute = AtomicLong(0)
     private val cfInflightWaitBeforeNoRouteMs = AtomicLong(0)
@@ -1100,8 +1106,11 @@ class ProxyServer(
             snapshot.cfWorkerDomainConfigured = !config.cfproxyWorkerDomain.isNullOrBlank()
             snapshot.cfWorkerConnections = cfWorkerConnections.get()
             snapshot.cfWorkerErrors = cfWorkerErrors.get()
+            snapshot.cfWorkerSkippedNoDcRedirect = cfWorkerSkippedNoDcRedirect.get()
             snapshot.lastCfWorkerError = lastCfWorkerError.get()
             snapshot.lastCfWorkerLatencyMs = lastCfWorkerLatencyMs.get().takeIf { it >= 0L }
+            snapshot.lastCfWorkerDst = lastCfWorkerDst.get()
+            snapshot.lastCfWorkerDstType = lastCfWorkerDstType.get()
             snapshot.bytesUp = bytesUp.get()
             snapshot.bytesDown = bytesDown.get()
             val activeKeepaliveCounters = activeBridgeCounters.toList()
@@ -2208,8 +2217,15 @@ class ProxyServer(
         if (!config.cfproxyEnabled) return false
         val workerDomain = config.cfproxyWorkerDomain?.trim()?.takeIf { it.isNotEmpty() } ?: return false
         if (currentNetworkStatus.equals("none", ignoreCase = true)) return false
-        val telegramDomain = wsDomains(parsed.dcId, parsed.isMedia).firstOrNull() ?: return false
-        val target = CfProxyConnectTarget.forWorkerDomain(workerDomain, telegramDomain)
+        val dst = config.dcRedirects[parsed.dcId]?.trim()?.takeIf { it.isNotEmpty() }
+        if (dst == null) {
+            cfWorkerSkippedNoDcRedirect.incrementAndGet()
+            logger.log("DC${parsed.dcId} CF Worker skipped: no DC TCP redirect configured")
+            return false
+        }
+        val target = CfProxyConnectTarget.forWorkerDomain(workerDomain, dst)
+        lastCfWorkerDst.set(dst)
+        lastCfWorkerDstType.set("dc-redirect")
         logger.log("DC${parsed.dcId} -> trying CF Worker wss://${target.domain}${target.path}")
         val startedAtNs = System.nanoTime()
         val webSocket = try {
