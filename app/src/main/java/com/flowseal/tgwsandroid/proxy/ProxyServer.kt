@@ -36,7 +36,6 @@ data class ProxyServerConfig(
     val cfPoolEnabled: Boolean = true,
     /** Bundled or caller-provided CF proxy base domains. Remote refresh is intentionally not ported yet. */
     val cfProxyDomains: List<String> = CfProxyDomains.defaults,
-    val cfproxyWorkerDomain: String? = null,
     val routeMode: NetworkRouteMode = NetworkRouteMode.AUTO,
     val networkStatus: String = "unknown",
     val directFallbackTimeoutMs: Int = 2_000,
@@ -61,7 +60,6 @@ data class ProxyServerConfig(
             cfproxyEnabled = appConfig.cfproxy,
             cfPoolEnabled = true,
             cfProxyDomains = appConfig.cfproxyUserDomain.ifEmpty { CfProxyDomains.defaults },
-            cfproxyWorkerDomain = appConfig.cfproxyWorkerDomain,
             routeMode = appConfig.routeMode,
             networkStatus = networkStatus,
             wsKeepaliveIntervalSeconds = appConfig.wsKeepaliveIntervalSeconds
@@ -246,12 +244,6 @@ class ProxyServerStats {
     var wsConnectErrors: Long = 0
     var cfProxyConnections: Long = 0
     var cfProxyErrors: Long = 0
-    var cfWorkerEnabled: Boolean = false
-    var cfWorkerDomainConfigured: Boolean = false
-    var cfWorkerConnections: Long = 0
-    var cfWorkerErrors: Long = 0
-    var lastCfWorkerError: String? = null
-    var lastCfWorkerLatencyMs: Long? = null
     var bytesUp: Long = 0
     var bytesDown: Long = 0
     var wsKeepaliveIntervalSeconds: Double = 0.0
@@ -737,13 +729,6 @@ internal data class CfProxyConnectTarget(
     val timeoutMs: Int,
 ) {
     companion object {
-        fun forWorkerDomain(workerDomain: String, telegramWsDomain: String): CfProxyConnectTarget = CfProxyConnectTarget(
-                targetHost = workerDomain,
-                domain = workerDomain,
-                path = "/apiws?dst=$telegramWsDomain",
-                timeoutMs = RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS,
-            )
-
         fun forDcBaseDomain(dcId: Int, baseDomain: String): CfProxyConnectTarget {
             val fullDomain = "kws$dcId.$baseDomain"
             return CfProxyConnectTarget(
@@ -857,10 +842,6 @@ class ProxyServer(
     private val wsConnectErrors = AtomicLong(0)
     private val cfProxyConnections = AtomicLong(0)
     private val cfProxyErrors = AtomicLong(0)
-    private val cfWorkerConnections = AtomicLong(0)
-    private val cfWorkerErrors = AtomicLong(0)
-    private val lastCfWorkerError = AtomicReference<String?>(null)
-    private val lastCfWorkerLatencyMs = AtomicLong(-1)
     private val cfNoRouteAvoidedByInflightWait = AtomicLong(0)
     private val cfInflightWaitBeforeNoRoute = AtomicLong(0)
     private val cfInflightWaitBeforeNoRouteMs = AtomicLong(0)
@@ -1096,12 +1077,6 @@ class ProxyServer(
             snapshot.wsConnectErrors = wsConnectErrors.get()
             snapshot.cfProxyConnections = cfProxyConnections.get()
             snapshot.cfProxyErrors = cfProxyErrors.get()
-            snapshot.cfWorkerEnabled = config.cfproxyEnabled && !config.cfproxyWorkerDomain.isNullOrBlank()
-            snapshot.cfWorkerDomainConfigured = !config.cfproxyWorkerDomain.isNullOrBlank()
-            snapshot.cfWorkerConnections = cfWorkerConnections.get()
-            snapshot.cfWorkerErrors = cfWorkerErrors.get()
-            snapshot.lastCfWorkerError = lastCfWorkerError.get()
-            snapshot.lastCfWorkerLatencyMs = lastCfWorkerLatencyMs.get().takeIf { it >= 0L }
             snapshot.bytesUp = bytesUp.get()
             snapshot.bytesDown = bytesDown.get()
             val activeKeepaliveCounters = activeBridgeCounters.toList()
@@ -2193,47 +2168,8 @@ class ProxyServer(
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
     ): Boolean {
-        if (tryCfWorkerFallback(client, parsed, relayInit, cryptoContext, splitter)) return true
         val cycleState = CfDomainFallbackCycleState()
         return tryCfProxyFallbackCycle(client, parsed, relayInit, cryptoContext, splitter, cycleState)
-    }
-
-    private fun tryCfWorkerFallback(
-        client: TcpClientTransport,
-        parsed: MtprotoHandshake.Result,
-        relayInit: ByteArray,
-        cryptoContext: CryptoContext,
-        splitter: MsgSplitter,
-    ): Boolean {
-        if (!config.cfproxyEnabled) return false
-        val workerDomain = config.cfproxyWorkerDomain?.trim()?.takeIf { it.isNotEmpty() } ?: return false
-        if (currentNetworkStatus.equals("none", ignoreCase = true)) return false
-        val telegramDomain = wsDomains(parsed.dcId, parsed.isMedia).firstOrNull() ?: return false
-        val target = CfProxyConnectTarget.forWorkerDomain(workerDomain, telegramDomain)
-        logger.log("DC${parsed.dcId} -> trying CF Worker wss://${target.domain}${target.path}")
-        val startedAtNs = System.nanoTime()
-        val webSocket = try {
-            webSocketConnector.connect(target.targetHost, target.domain, target.path, target.timeoutMs)
-        } catch (error: Throwable) {
-            val latencyMs = ((System.nanoTime() - startedAtNs) / 1_000_000).coerceAtLeast(0L)
-            val detail = websocketFailureDetail(error)
-            cfWorkerErrors.incrementAndGet()
-            lastCfWorkerError.set(detail)
-            lastCfWorkerLatencyMs.set(latencyMs)
-            logger.log("DC${parsed.dcId} CF Worker failed via $workerDomain latencyMs=$latencyMs: $detail")
-            return false
-        }
-        val latencyMs = ((System.nanoTime() - startedAtNs) / 1_000_000).coerceAtLeast(0L)
-        cfWorkerConnections.incrementAndGet()
-        lastCfWorkerError.set(null)
-        lastCfWorkerLatencyMs.set(latencyMs)
-        logger.log("DC${parsed.dcId} CF Worker connected via $workerDomain latencyMs=$latencyMs")
-        val result = runWebSocketRoute(client, parsed, WebSocketRoute(webSocket, "cf-worker"), relayInit, cryptoContext, splitter)
-        if (!result.failed) return true
-        cfWorkerErrors.incrementAndGet()
-        lastCfWorkerError.set("route failed after connect")
-        logger.log("DC${parsed.dcId} CF Worker route failed via $workerDomain latencyMs=$latencyMs")
-        return false
     }
 
     private fun tryCfProxyFallbackCycle(

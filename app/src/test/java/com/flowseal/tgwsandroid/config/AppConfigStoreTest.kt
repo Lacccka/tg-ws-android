@@ -48,7 +48,7 @@ class AppConfigStoreTest {
             poolSize = 9,
             cfproxy = false,
             cfproxyUserDomain = listOf("user.example"),
-            cfproxyWorkerDomain = "worker.example",
+            cfproxyWorkerDomain = listOf("worker.example"),
             dcIp = listOf("1:203.0.113.1"),
             appearance = Appearance.DARK,
             routeMode = NetworkRouteMode.CF_ONLY,

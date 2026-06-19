@@ -21,8 +21,6 @@ STATUS_FIELDS = [
     "Status", "Proxy link current", "WakeLock held", "Previous run was unexpected",
     "previousRunLikelyKilledBySigkill", "previousRunLikelyKilledByCleaner",
     "directHealthState", "effectiveRouteMode", "lastRouteUsed",
-    "cfWorkerEnabled", "cfWorkerDomainConfigured", "cfWorkerConnections",
-    "cfWorkerErrors", "lastCfWorkerError", "lastCfWorkerLatencyMs",
 ]
 CLIENT_FIELDS = [
     "likelyReconnectBurst", "likelyTelegramDisabledProxy", "recentAcceptedHandshakes",

@@ -23,7 +23,7 @@ data class AppConfig(
     val checkUpdates: Boolean = true,
     val cfproxy: Boolean = true,
     val cfproxyUserDomain: List<String> = emptyList(),
-    val cfproxyWorkerDomain: String? = null,
+    val cfproxyWorkerDomain: List<String> = emptyList(),
     val appearance: Appearance = Appearance.AUTO,
     val routeMode: NetworkRouteMode = NetworkRouteMode.AUTO,
     val telemetryEnabled: Boolean = false,
@@ -51,7 +51,7 @@ data class AppConfig(
                 checkUpdates = json.optBoolean("check_updates", true),
                 cfproxy = json.optBoolean("cfproxy", true),
                 cfproxyUserDomain = json.optStringList("cfproxy_user_domain", emptyList()),
-                cfproxyWorkerDomain = json.optWorkerDomain(),
+                cfproxyWorkerDomain = json.optStringList("cfproxy_worker_domain", emptyList()),
                 appearance = Appearance.fromConfigValue(json.optString("appearance", Appearance.AUTO.configValue)),
                 routeMode = NetworkRouteMode.fromConfigValue(
                     json.optString("route_mode", json.optString("routeMode", NetworkRouteMode.AUTO.configValue)),
@@ -119,27 +119,3 @@ private fun JSONObject.optStringList(
 
 private fun JSONObject.optionalNonNegativeDouble(name: String): Double? =
     if (has(name) && !isNull(name)) optDouble(name).takeIf { !it.isNaN() }?.coerceAtLeast(0.0) else null
-
-
-private fun JSONObject.optWorkerDomain(): String? =
-    optStringList("cfproxy_worker_domain", emptyList()).ifEmpty {
-        optStringList("cfproxyWorkerDomain", emptyList())
-    }.firstOrNull()?.normalizeWorkerDomain()
-
-internal fun String.normalizeWorkerDomain(): String? {
-    var value = trim()
-    for (prefix in listOf("https://", "http://", "wss://", "ws://")) {
-        value = value.removePrefix(prefix)
-    }
-    value = value.substringBefore('?').substringBefore('#')
-    val slashIndex = value.indexOf('/')
-    if (slashIndex < 0) return value.takeIf { it.isNotBlank() }
-
-    val host = value.substring(0, slashIndex)
-    val path = value.substring(slashIndex).trimEnd('/')
-    return when {
-        host.isBlank() -> null
-        path.isEmpty() || path == "/" || path.equals("/apiws", ignoreCase = true) -> host
-        else -> null
-    }
-}

@@ -530,10 +530,7 @@ object DiagnosticReportFormatter {
             "recentHandshakeDiagnostic=${stats.handshakeDiagnosticReason}, " +
             "badHandshakeRecommendation=${stats.badHandshakeRecommendation}, " +
             "wsErrors=${stats.wsConnectErrors}, cfConnections=${stats.cfProxyConnections}, " +
-            "cfErrors=${stats.cfProxyErrors}, cfWorkerEnabled=${stats.cfWorkerEnabled}, " +
-            "cfWorkerDomainConfigured=${stats.cfWorkerDomainConfigured}, cfWorkerConnections=${stats.cfWorkerConnections}, " +
-            "cfWorkerErrors=${stats.cfWorkerErrors}, lastCfWorkerError=${stats.lastCfWorkerError ?: "none"}, " +
-            "lastCfWorkerLatencyMs=${stats.lastCfWorkerLatencyMs ?: "unknown"}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
+            "cfErrors=${stats.cfProxyErrors}, bytesUp=${stats.bytesUp}, bytesDown=${stats.bytesDown}, " +
             "wsKeepaliveIntervalSeconds=${formatDouble(stats.wsKeepaliveIntervalSeconds)}, " +
             "wsKeepalivePingsSent=${stats.wsKeepalivePingsSent}, wsKeepaliveFailures=${stats.wsKeepaliveFailures}, " +
             "lastWsKeepaliveFailure=${stats.lastWsKeepaliveFailure ?: "none"}, " +
@@ -561,9 +558,7 @@ object DiagnosticReportFormatter {
             "lastRouteUsed=${stats.lastRouteUsed ?: "none"}, " +
             "directAttempts=${stats.directAttempts}, directAttemptsSkippedBecauseRoute=${stats.directAttemptsSkippedBecauseRoute}, " +
             "directTimeouts=${stats.directTimeouts}, cfConnections=${stats.cfProxyConnections}, " +
-            "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, " +
-            "cfWorkerConnections=${stats.cfWorkerConnections}, cfWorkerErrors=${stats.cfWorkerErrors}, " +
-            "lastCfWorkerError=${stats.lastCfWorkerError ?: "none"}, lastCfWorkerLatencyMs=${stats.lastCfWorkerLatencyMs ?: "unknown"}, poolHits=${stats.poolHits}, " +
+            "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, poolHits=${stats.poolHits}, " +
             "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}, " +
             "directPoolReadyByKey=${formatCompactMap(stats.directPoolDiagnostics.readyByKey)}, " +
             "directPoolHitsByKey=${formatCompactMap(stats.directPoolDiagnostics.hitsByKey)}, " +

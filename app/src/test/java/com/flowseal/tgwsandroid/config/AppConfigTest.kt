@@ -49,39 +49,9 @@ class AppConfigTest {
         assertEquals(false, config.checkUpdates)
         assertEquals(false, config.cfproxy)
         assertEquals(listOf("one.example", "two.example"), config.cfproxyUserDomain)
-        assertEquals("worker.example", config.cfproxyWorkerDomain)
+        assertEquals(listOf("worker.example"), config.cfproxyWorkerDomain)
         assertEquals(Appearance.DARK, config.appearance)
         assertEquals(NetworkRouteMode.CF_FIRST, config.routeMode)
-    }
-
-
-    @Test
-    fun parsesAndNormalizesCfWorkerDomain() {
-        val config = AppConfig.fromJson(JSONObject("""{"cfproxy_worker_domain":"https://tgwsproxy1.ilitasuka1448.workers.dev/apiws/"}"""))
-
-        assertEquals("tgwsproxy1.ilitasuka1448.workers.dev", config.cfproxyWorkerDomain)
-    }
-
-    @Test
-    fun parsesCamelCaseCfWorkerDomainAlias() {
-        val config = AppConfig.fromJson(JSONObject("""{"cfproxyWorkerDomain":"http://worker.example/apiws"}"""))
-
-        assertEquals("worker.example", config.cfproxyWorkerDomain)
-    }
-
-
-    @Test
-    fun normalizesWssCfWorkerDomain() {
-        val config = AppConfig.fromJson(JSONObject("""{"cfproxy_worker_domain":"wss://worker.example/apiws"}"""))
-
-        assertEquals("worker.example", config.cfproxyWorkerDomain)
-    }
-
-    @Test
-    fun unsupportedCfWorkerPathIsRejected() {
-        val config = AppConfig.fromJson(JSONObject("""{"cfproxy_worker_domain":"https://worker.example/other"}"""))
-
-        assertEquals(null, config.cfproxyWorkerDomain)
     }
 
     @Test
