@@ -1,7 +1,6 @@
 package com.flowseal.tgwsandroid
 
 import com.flowseal.tgwsandroid.config.Appearance
-import com.flowseal.tgwsandroid.config.AppConfig
 import com.flowseal.tgwsandroid.proxy.HandshakeDiagnosticState
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
@@ -544,51 +543,6 @@ class MainUiModelTest {
         assertTrue(section.rows.any { it.title == "Добавить датацентр" })
     }
 
-
-    @Test
-    fun workerSettingsLoadsDomainFromAppConfig() {
-        val config = AppConfig(cfproxyWorkerDomain = "worker.example")
-
-        assertEquals("worker.example", WorkerDomainSettings.displayValue(config))
-    }
-
-    @Test
-    fun editingWorkerDomainUpdatesAppConfig() {
-        val result = WorkerDomainSettings.save(AppConfig(), "worker.example")
-
-        assertEquals("worker.example", result.config.cfproxyWorkerDomain)
-        assertEquals(null, result.error)
-    }
-
-    @Test
-    fun emptyWorkerFieldPersistsNullEquivalent() {
-        val result = WorkerDomainSettings.save(AppConfig(cfproxyWorkerDomain = "worker.example"), "   ")
-
-        assertEquals(null, result.config.cfproxyWorkerDomain)
-        assertEquals(null, result.error)
-    }
-
-    @Test
-    fun fullWorkerUrlIsAcceptedAndSavedNormalized() {
-        val httpsResult = WorkerDomainSettings.save(AppConfig(), "https://tgwsproxy1.ilitasuka1448.workers.dev/apiws")
-        val wssResult = WorkerDomainSettings.save(AppConfig(), "wss://tgwsproxy1.ilitasuka1448.workers.dev/apiws")
-
-        assertEquals("tgwsproxy1.ilitasuka1448.workers.dev", httpsResult.config.cfproxyWorkerDomain)
-        assertEquals("tgwsproxy1.ilitasuka1448.workers.dev", wssResult.config.cfproxyWorkerDomain)
-        assertEquals(null, httpsResult.error)
-        assertEquals(null, wssResult.error)
-    }
-
-    @Test
-    fun unsupportedWorkerPathShowsValidationErrorAndKeepsConfig() {
-        val config = AppConfig(cfproxyWorkerDomain = "worker.example")
-        val result = WorkerDomainSettings.save(config, "https://bad.example/not-apiws")
-
-        assertEquals(config, result.config)
-        assertEquals(null, result.config.cfproxyWorkerDomain?.takeIf { it == "bad.example" })
-        assertEquals(SettingsUiText.WORKER_UNSUPPORTED_PATH_ERROR, result.error)
-    }
-
     @Test
     fun settingsDatacentersSectionIsPresentForDefaultEmptyAndMalformedConfig() {
         val cases = listOf(
@@ -611,8 +565,7 @@ class MainUiModelTest {
 
         assertFalse(dcSection.developerOnly)
         assertTrue(sections.indexOf("Telegram MTProto") < sections.indexOf("Датацентры Telegram"))
-        assertTrue(sections.indexOf("Датацентры Telegram") < sections.indexOf(SettingsUiText.WORKER_SECTION_TITLE))
-        assertTrue(sections.indexOf(SettingsUiText.WORKER_SECTION_TITLE) < sections.indexOf("Внешний вид"))
+        assertTrue(sections.indexOf("Датацентры Telegram") < sections.indexOf("Внешний вид"))
     }
 
     @Test
