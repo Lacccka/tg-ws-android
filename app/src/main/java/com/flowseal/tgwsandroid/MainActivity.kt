@@ -249,7 +249,7 @@ class MainActivity : Activity() {
             setTextColor(currentColorScheme().onSurfaceVariant)
         }
         primaryControlButton = createFilledButton("Включить") { handleMainPrimaryAction() }
-        connectTelegramButton = createOutlinedButton("Перезапустить") { restartProxyService() }
+        connectTelegramButton = createOutlinedButton("Переподключить") { restartProxyService() }
         restartPendingButton = createOutlinedButton("Подключить Telegram") { openTelegramProxyLink() }
         hintsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val chipsRow = LinearLayout(this).apply {
@@ -470,14 +470,16 @@ class MainActivity : Activity() {
 
         if (::statusText.isInitialized) {
             val stats = ProxyForegroundService.State.stats()
-            val healthLabel = userHealthLabel(running, stats, transitionStatus == TransitionStatus.STARTING, failed)
+            val starting = transitionStatus == TransitionStatus.STARTING
+            val stopping = transitionStatus == TransitionStatus.STOPPING
+            val healthLabel = userHealthLabel(running, stats, starting, failed)
             val telegramConnected = telegramConnected(running, stats)
             val unstable = failed || healthLabel == "Нестабильно" || TelegramStatusUiText.showTelegramReconnectWarning(stats)
-            val starting = transitionStatus == TransitionStatus.STARTING || (transitionStatus == TransitionStatus.STOPPING && running)
 
             val hero = MainHeroStateMapper.state(
                 running = running,
                 starting = starting,
+                stopping = stopping,
                 failed = failed,
                 healthLabel = healthLabel,
                 telegramReconnectWarning = TelegramStatusUiText.showTelegramReconnectWarning(stats),
@@ -490,9 +492,10 @@ class MainActivity : Activity() {
             routeText.text = userModeChipLabel()
             qualityText.text = healthLabel
 
-            val proxyEnabled = running || starting
             val actions = MainActionModelMapper.actions(
-                proxyEnabled = proxyEnabled,
+                running = running,
+                starting = starting,
+                stopping = stopping,
                 settingsChangedPendingRestart = pendingRestartRequired && running,
             )
 
@@ -880,18 +883,26 @@ class MainActivity : Activity() {
     }
 
     private fun showLogsDialog() {
+        val colors = currentColorScheme()
         val logText = ProxyForegroundService.State.recentLogs().takeIf { it.isNotEmpty() }?.joinToString("\n") ?: "Логов пока нет"
         val textView = createValueText(textSize = 13f).apply {
             text = logText
             typeface = Typeface.MONOSPACE
             setTextIsSelectable(true)
+            setTextColor(colors.onSurface)
+            setBackgroundColor(colors.surfaceContainer)
             setPadding((16 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt(), (16 * resources.displayMetrics.density).toInt())
         }
-        AlertDialog.Builder(this)
+        val content = ScrollView(this).apply {
+            setBackgroundColor(colors.surfaceContainer)
+            addView(textView)
+        }
+        val dialog = AlertDialog.Builder(this)
             .setTitle("Открыть лог")
-            .setView(ScrollView(this).apply { addView(textView) })
+            .setView(content)
             .setPositiveButton("Закрыть", null)
             .show()
+        dialog.window?.decorView?.setBackgroundColor(colors.surface)
     }
 
     private fun confirmClearLogs() {
@@ -983,6 +994,7 @@ class MainActivity : Activity() {
             return
         }
         requestNotificationPermissionIfNeeded()
+        transitionStatus = TransitionStatus.STOPPING
         pendingRestartRequired = false
         startService(ProxyForegroundService.stopIntent(this))
         handler.postDelayed({

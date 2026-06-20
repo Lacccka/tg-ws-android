@@ -347,6 +347,7 @@ class MainUiModelTest {
         val hero = MainHeroStateMapper.state(
             running = false,
             starting = false,
+            stopping = false,
             failed = false,
             healthLabel = "Нестабильно",
             telegramReconnectWarning = false,
@@ -362,6 +363,7 @@ class MainUiModelTest {
         val hero = MainHeroStateMapper.state(
             running = false,
             starting = false,
+            stopping = false,
             failed = false,
             healthLabel = "Стабильно",
             telegramReconnectWarning = true,
@@ -377,6 +379,7 @@ class MainUiModelTest {
         val hero = MainHeroStateMapper.state(
             running = false,
             starting = false,
+            stopping = false,
             failed = true,
             healthLabel = "Нестабильно",
             telegramReconnectWarning = true,
@@ -392,6 +395,7 @@ class MainUiModelTest {
         val hero = MainHeroStateMapper.state(
             running = true,
             starting = false,
+            stopping = false,
             failed = false,
             healthLabel = "Нестабильно",
             telegramReconnectWarning = false,
@@ -408,6 +412,7 @@ class MainUiModelTest {
         val hero = MainHeroStateMapper.state(
             running = false,
             starting = true,
+            stopping = false,
             failed = true,
             healthLabel = "Нестабильно",
             telegramReconnectWarning = true,
@@ -424,6 +429,7 @@ class MainUiModelTest {
         val hero = MainHeroStateMapper.state(
             running = true,
             starting = false,
+            stopping = false,
             failed = false,
             healthLabel = "Стабильно",
             telegramReconnectWarning = false,
@@ -440,6 +446,7 @@ class MainUiModelTest {
         val hero = MainHeroStateMapper.state(
             running = true,
             starting = false,
+            stopping = false,
             failed = false,
             healthLabel = "Стабильно",
             telegramReconnectWarning = false,
@@ -454,29 +461,29 @@ class MainUiModelTest {
 
     @Test
     fun stoppedMainActionsOnlyShowStart() {
-        val actions = MainActionModelMapper.actions(proxyEnabled = false, settingsChangedPendingRestart = false)
+        val actions = MainActionModelMapper.actions(running = false, starting = false, stopping = false, settingsChangedPendingRestart = false)
 
         assertEquals(listOf("Включить"), actions.visibleActions)
-        assertFalse(actions.visibleActions.contains("Отключить"))
-        assertFalse(actions.visibleActions.contains("Перезапустить"))
+        assertFalse(actions.visibleActions.contains("Остановить"))
+        assertFalse(actions.visibleActions.contains("Переподключить"))
         assertFalse(actions.visibleActions.contains("Подключить Telegram"))
     }
 
     @Test
     fun runningMainActionsAlwaysShowStopRestartAndTelegram() {
-        val actions = MainActionModelMapper.actions(proxyEnabled = true, settingsChangedPendingRestart = false)
+        val actions = MainActionModelMapper.actions(running = true, starting = false, stopping = false, settingsChangedPendingRestart = false)
 
-        assertEquals("Отключить", actions.primaryAction)
-        assertEquals("Перезапустить", actions.restartAction)
+        assertEquals("Остановить", actions.primaryAction)
+        assertEquals("Переподключить", actions.restartAction)
         assertEquals("Подключить Telegram", actions.telegramAction)
     }
 
     @Test
     fun pendingRestartUsesExistingRestartActionOnly() {
-        val actions = MainActionModelMapper.actions(proxyEnabled = true, settingsChangedPendingRestart = true)
+        val actions = MainActionModelMapper.actions(running = true, starting = false, stopping = false, settingsChangedPendingRestart = true)
 
-        assertEquals(1, actions.visibleActions.count { it == "Перезапустить" })
-        assertEquals("Перезапустите прокси, чтобы применить изменения", actions.restartNote)
+        assertEquals(1, actions.visibleActions.count { it == "Переподключить" })
+        assertEquals("Переподключите прокси, чтобы применить изменения", actions.restartNote)
     }
 
     @Test
@@ -484,24 +491,48 @@ class MainUiModelTest {
         val hero = MainHeroStateMapper.state(
             running = false,
             starting = false,
+            stopping = false,
             failed = true,
             healthLabel = "Нестабильно",
             telegramReconnectWarning = true,
             telegramConnected = false,
         )
-        val actions = MainActionModelMapper.actions(proxyEnabled = false, settingsChangedPendingRestart = true)
+        val actions = MainActionModelMapper.actions(running = false, starting = false, stopping = false, settingsChangedPendingRestart = true)
 
         assertEquals("Прокси выключен", hero.title)
         assertEquals(listOf("Включить"), actions.visibleActions)
-        assertFalse(actions.visibleActions.contains("Перезапустить"))
+        assertFalse(actions.visibleActions.contains("Переподключить"))
+    }
+
+    @Test
+    fun stoppingHeroShowsExplicitStoppingState() {
+        val hero = MainHeroStateMapper.state(
+            running = true,
+            starting = false,
+            stopping = true,
+            failed = false,
+            healthLabel = "Стабильно",
+            telegramReconnectWarning = false,
+            telegramConnected = true,
+        )
+        val actions = MainActionModelMapper.actions(
+            running = true,
+            starting = false,
+            stopping = true,
+            settingsChangedPendingRestart = false,
+        )
+
+        assertEquals("Останавливаем…", hero.title)
+        assertEquals("Прокси выключается", hero.subtitle)
+        assertTrue(actions.visibleActions.isEmpty())
     }
 
     @Test
     fun mainHeroDoesNotExposeDiagnosticsAction() {
         val scenarios = listOf(
-            MainHeroStateMapper.state(false, false, false, "Нестабильно", false, false),
-            MainHeroStateMapper.state(true, false, false, "Стабильно", false, true),
-            MainHeroStateMapper.state(true, false, false, "Нестабильно", false, false),
+            MainHeroStateMapper.state(false, false, false, false, "Нестабильно", false, false),
+            MainHeroStateMapper.state(true, false, false, false, "Стабильно", false, true),
+            MainHeroStateMapper.state(true, false, false, false, "Нестабильно", false, false),
         )
 
         assertFalse(scenarios.any { it.primaryAction == "Диагностика" || it.secondaryAction == "Диагностика" })
@@ -511,7 +542,7 @@ class MainUiModelTest {
     fun settingsLabelsUseSecretAndNoPermanentRestartAction() {
         assertEquals("Обновить secret", SettingsUiText.RESET_SECRET_TITLE)
         assertFalse(SettingsUiText.RESET_SECRET_TITLE.contains("Обновить подключение"))
-        assertFalse(SettingsUiText.RESET_SECRET_TITLE.contains("Перезапустить прокси"))
+        assertFalse(SettingsUiText.RESET_SECRET_TITLE.contains("Переподключить прокси"))
     }
 
 
@@ -602,9 +633,9 @@ class MainUiModelTest {
 
     @Test
     fun pendingRestartActionIsNotDuplicated() {
-        val actions = MainActionModelMapper.actions(proxyEnabled = true, settingsChangedPendingRestart = true)
-        assertEquals(listOf("Отключить", "Перезапустить", "Подключить Telegram"), actions.visibleActions)
-        assertEquals(1, actions.visibleActions.count { it == "Перезапустить" })
+        val actions = MainActionModelMapper.actions(running = true, starting = false, stopping = false, settingsChangedPendingRestart = true)
+        assertEquals(listOf("Остановить", "Переподключить", "Подключить Telegram"), actions.visibleActions)
+        assertEquals(1, actions.visibleActions.count { it == "Переподключить" })
         assertEquals(MainActionModelMapper.PENDING_RESTART_NOTE, actions.restartNote)
     }
 

@@ -437,20 +437,30 @@ data class MainActionModel(
 
 object MainActionModelMapper {
     const val START_ACTION = "Включить"
-    const val STOP_ACTION = "Отключить"
+    const val STOP_ACTION = "Остановить"
     const val CONNECT_TELEGRAM_ACTION = "Подключить Telegram"
-    const val RESTART_ACTION = "Перезапустить"
-    const val PENDING_RESTART_NOTE = "Перезапустите прокси, чтобы применить изменения"
+    const val RESTART_ACTION = "Переподключить"
+    const val PENDING_RESTART_NOTE = "Переподключите прокси, чтобы применить изменения"
 
-    fun actions(proxyEnabled: Boolean, settingsChangedPendingRestart: Boolean): MainActionModel = if (proxyEnabled) {
-        MainActionModel(
+    fun actions(
+        running: Boolean,
+        starting: Boolean,
+        stopping: Boolean,
+        settingsChangedPendingRestart: Boolean,
+    ): MainActionModel = when {
+        starting || stopping -> MainActionModel(
+            primaryAction = null,
+            restartAction = null,
+            telegramAction = null,
+            restartNote = if (settingsChangedPendingRestart) PENDING_RESTART_NOTE else null,
+        )
+        running -> MainActionModel(
             primaryAction = STOP_ACTION,
             restartAction = RESTART_ACTION,
             telegramAction = CONNECT_TELEGRAM_ACTION,
             restartNote = if (settingsChangedPendingRestart) PENDING_RESTART_NOTE else null,
         )
-    } else {
-        MainActionModel(
+        else -> MainActionModel(
             primaryAction = START_ACTION,
             restartAction = null,
             telegramAction = null,
@@ -461,24 +471,27 @@ object MainActionModelMapper {
 
 object MainHeroStateMapper {
     const val STARTING_TITLE = "Подключаемся…"
+    const val STOPPING_TITLE = "Останавливаем…"
     const val STOPPED_TITLE = "Прокси выключен"
     const val UNSTABLE_TITLE = "Подключение нестабильно"
     const val TELEGRAM_NOT_CONNECTED_TITLE = "Почти готово"
     const val READY_TITLE = "Всё готово"
 
     const val START_ACTION = "Включить"
-    const val STOP_ACTION = "Отключить"
+    const val STOP_ACTION = "Остановить"
     const val CONNECT_TELEGRAM_ACTION = "Подключить Telegram"
-    const val RESTART_ACTION = "Перезапустить"
+    const val RESTART_ACTION = "Переподключить"
 
     fun state(
         running: Boolean,
         starting: Boolean,
+        stopping: Boolean,
         failed: Boolean,
         healthLabel: String,
         telegramReconnectWarning: Boolean,
         telegramConnected: Boolean,
     ): MainHeroState = when {
+        stopping -> MainHeroState(STOPPING_TITLE, "Прокси выключается", null, null)
         starting -> MainHeroState(STARTING_TITLE, "Это займёт несколько секунд", null, null)
         !running -> MainHeroState(STOPPED_TITLE, "Включите подключение", null, null)
         failed || healthLabel == "Нестабильно" || telegramReconnectWarning -> {
@@ -492,8 +505,7 @@ object MainHeroStateMapper {
 object MainScreenUiModel {
     val actions: List<String> = listOf(
         "Включить",
-        "Отключить",
-        "Перезапустить",
+        "Остановить",
         "Переподключить",
         "Подключить Telegram",
     )
