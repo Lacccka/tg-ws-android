@@ -84,14 +84,6 @@ class RawWebSocket private constructor(
         }
     }
 
-    fun sendPing(payload: ByteArray = ByteArray(0)) {
-        synchronized(writeLock) {
-            ensureOpen()
-            transport.output.write(maskedFrame(RawWebSocketCodec.OP_PING, payload))
-            transport.flush()
-        }
-    }
-
     fun recv(): ByteArray? {
         while (!closed) {
             val frame = RawWebSocketCodec.parseFrame(transport.input)

@@ -738,23 +738,6 @@ class RuntimeLogStoreTest {
 
 
     @Test
-    fun diagnosticReportStatsIncludesWebSocketKeepaliveCounters() {
-        val stats = ProxyServerStats().apply {
-            wsKeepaliveIntervalSeconds = 12.5
-            wsKeepalivePingsSent = 7
-            wsKeepaliveFailures = 2
-            lastWsKeepaliveFailure = "SocketException: ping failed"
-        }
-
-        val formatted = DiagnosticReportFormatter.formatStats(stats)
-
-        assertTrue(formatted.contains("wsKeepaliveIntervalSeconds=12.5"))
-        assertTrue(formatted.contains("wsKeepalivePingsSent=7"))
-        assertTrue(formatted.contains("wsKeepaliveFailures=2"))
-        assertTrue(formatted.contains("lastWsKeepaliveFailure=SocketException: ping failed"))
-    }
-
-    @Test
     fun diagnosticReportShowsSnapshotTimingAndStatsAfterIncludedLogTail() {
         val store = RuntimeLogStore(clock = fixedClock)
         store.append("effective route changed: cf_first -> direct_first because direct health probe success", LogSeverity.INFO, "proxy")

@@ -27,7 +27,6 @@ data class AppConfig(
     val appearance: Appearance = Appearance.AUTO,
     val routeMode: NetworkRouteMode = NetworkRouteMode.AUTO,
     val telemetryEnabled: Boolean = false,
-    val wsKeepaliveIntervalSeconds: Double? = null,
 ) {
     companion object {
         const val DEFAULT_HOST = "127.0.0.1"
@@ -57,8 +56,6 @@ data class AppConfig(
                     json.optString("route_mode", json.optString("routeMode", NetworkRouteMode.AUTO.configValue)),
                 ),
                 telemetryEnabled = json.optBoolean("telemetry_enabled", false),
-                wsKeepaliveIntervalSeconds = json.optionalNonNegativeDouble("ws_keepalive_interval_seconds")
-                    ?: json.optionalNonNegativeDouble("wsKeepaliveIntervalSeconds"),
             )
     }
 }
@@ -117,5 +114,3 @@ private fun JSONObject.optStringList(
     }
 }
 
-private fun JSONObject.optionalNonNegativeDouble(name: String): Double? =
-    if (has(name) && !isNull(name)) optDouble(name).takeIf { !it.isNaN() }?.coerceAtLeast(0.0) else null

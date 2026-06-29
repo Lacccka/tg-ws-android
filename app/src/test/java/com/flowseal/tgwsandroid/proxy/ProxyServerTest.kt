@@ -23,29 +23,6 @@ import javax.crypto.spec.SecretKeySpec
 
 class ProxyServerTest {
     @Test
-    fun directRouteBridgeReceivesZeroKeepaliveByDefault() {
-        val vector = handshakeVector("abridged_dc2")
-        val client = FakeTcpClientTransport(vector.getString("handshake_hex").hexToBytes())
-        val server = FakeTcpServerTransport()
-        val observedIntervals = CopyOnWriteArrayList<Double>()
-        val proxy = newProxy(
-            server = server,
-            runner = ProxyBridgeRunner { _, _, _, _, counters, wsKeepaliveIntervalSeconds ->
-                observedIntervals.add(wsKeepaliveIntervalSeconds)
-                counters.finish("completed")
-            },
-        )
-
-        proxy.start()
-        server.enqueue(client)
-        waitUntil { observedIntervals.isNotEmpty() }
-        proxy.stop()
-
-        assertEquals(listOf(0.0), observedIntervals.toList())
-        assertEquals(0.0, proxy.stats().wsKeepaliveIntervalSeconds, 0.0)
-    }
-
-    @Test
     fun validHandshakeConnectsToDcSendsRelayInitThenRunsBridge() {
         val vector = handshakeVector("abridged_dc2")
         val client = FakeTcpClientTransport(vector.getString("handshake_hex").hexToBytes())
@@ -54,7 +31,7 @@ class ProxyServerTest {
         val webSocket = FakeWebSocketBinaryStream(events)
         val connector = RecordingConnector(webSocket)
         val runner =
-            ProxyBridgeRunner { _, _, cryptoContext, splitter, counters, _ ->
+            ProxyBridgeRunner { _, _, cryptoContext, splitter, counters ->
                 assertTrue(cryptoContext.decryptFromClient(ByteArray(0)).isEmpty())
                 assertTrue(splitter.split(ByteArray(0)).isEmpty())
                 counters.recordUp(7)
@@ -91,7 +68,7 @@ class ProxyServerTest {
         val proxy = newProxy(
             server = server,
             connector = RecordingConnector(FakeWebSocketBinaryStream()),
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ ->
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
                 counters.recordUp(13)
                 counters.recordDown(17)
                 counters.finish("completed")
@@ -121,7 +98,7 @@ class ProxyServerTest {
         val logs = CopyOnWriteArrayList<String>()
         val proxy = newProxy(
             server = server,
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> throw EOFException("unexpected end of WebSocket frame") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> throw EOFException("unexpected end of WebSocket frame") },
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -176,7 +153,7 @@ class ProxyServerTest {
         val server = FakeTcpServerTransport()
         val proxy = newProxy(
             server = server,
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ -> counters.finish("client closed") },
+            runner = ProxyBridgeRunner { _, _, _, _, counters -> counters.finish("client closed") },
         )
 
         proxy.start()
@@ -197,7 +174,7 @@ class ProxyServerTest {
         val server = FakeTcpServerTransport()
         val proxy = newProxy(
             server = server,
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ -> counters.finish("exception: SocketTimeoutException: read timed out") },
+            runner = ProxyBridgeRunner { _, _, _, _, counters -> counters.finish("exception: SocketTimeoutException: read timed out") },
         )
 
         proxy.start()
@@ -219,7 +196,7 @@ class ProxyServerTest {
         val logs = CopyOnWriteArrayList<String>()
         val proxy = newProxy(
             server = server,
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> throw SocketException("Connection reset") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> throw SocketException("Connection reset") },
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -247,7 +224,7 @@ class ProxyServerTest {
         val logs = CopyOnWriteArrayList<String>()
         val proxy = newProxy(
             server = server,
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> throw SocketException("Connection timed out") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> throw SocketException("Connection timed out") },
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -345,7 +322,7 @@ class ProxyServerTest {
                 server = server,
                 connector = connector,
                 runner =
-                    ProxyBridgeRunner { _, _, _, _, _, _ ->
+                    ProxyBridgeRunner { _, _, _, _, _ ->
                         while (!client.closed) Thread.sleep(10)
                     },
             )
@@ -370,7 +347,7 @@ class ProxyServerTest {
             newProxy(
                 server = server,
                 connector = RecordingConnector(FakeWebSocketBinaryStream()),
-                runner = ProxyBridgeRunner { _, _, _, _, _, _ -> bridgeCount.incrementAndGet() },
+                runner = ProxyBridgeRunner { _, _, _, _, _ -> bridgeCount.incrementAndGet() },
             )
 
         proxy.start()
@@ -465,7 +442,7 @@ class ProxyServerTest {
             newProxy(
                 server = server,
                 connector = connector,
-                runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+                runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
                 logger = ProxyLogger { logs.add(it) },
             )
 
@@ -527,7 +504,7 @@ class ProxyServerTest {
                 cfPoolEnabled = false,
                 cfProxyDomains = listOf("cf.example"),
             ),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -627,7 +604,7 @@ class ProxyServerTest {
                 networkStatus = "mobile",
                 cfProxyDomains = listOf("cf.example"),
             ),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
         )
 
         proxy.start()
@@ -678,7 +655,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(dcRedirects = emptyMap(), cfProxyDomains = listOf("cf.example")),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -707,7 +684,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(cfProxyDomains = listOf("cf.example")),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -735,7 +712,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(cfProxyDomains = listOf("cf.example")),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -761,7 +738,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(cfProxyDomains = listOf("cf.example")),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
         )
 
         proxy.start()
@@ -832,7 +809,7 @@ class ProxyServerTest {
                 networkStatus = "mobile",
                 cfProxyDomains = listOf("cf.example"),
             ),
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ -> counters.finish("completed") },
+            runner = ProxyBridgeRunner { _, _, _, _, counters -> counters.finish("completed") },
         )
 
         proxy.start()
@@ -869,7 +846,7 @@ class ProxyServerTest {
                 networkStatus = "mobile",
                 cfProxyDomains = listOf("cf.example"),
             ),
-            runner = ProxyBridgeRunner { _, webSocket, _, _, counters, _ ->
+            runner = ProxyBridgeRunner { _, webSocket, _, _, counters ->
                 bridgedRoutes.add(if (webSocket === connector.sockets[0]) "first-cf" else "retry-cf")
                 counters.finish("completed")
             },
@@ -904,7 +881,7 @@ class ProxyServerTest {
                 networkStatus = "mobile",
                 cfProxyDomains = listOf("cf.example"),
             ),
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ ->
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
                 if (bridgeCalls.incrementAndGet() == 2) {
                     counters.recordDown(1)
                     throw EOFException("partial frame")
@@ -995,7 +972,7 @@ class ProxyServerTest {
                 server = server,
                 connector = RecordingConnector(FakeWebSocketBinaryStream()),
                 config = baseConfig().copy(cfproxyEnabled = false),
-                runner = ProxyBridgeRunner { _, _, _, _, _, _ -> throw SocketException("Broken pipe") },
+                runner = ProxyBridgeRunner { _, _, _, _, _ -> throw SocketException("Broken pipe") },
                 logger = ProxyLogger { logs.add(it) },
             )
 
@@ -1030,7 +1007,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, webSocket, _, _, _, _ ->
+            runner = ProxyBridgeRunner { _, webSocket, _, _, _ ->
                 assertTrue(webSocket === warmSocket)
                 events.add("bridge")
             },
@@ -1067,7 +1044,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, webSocket, _, _, _, _ ->
+            runner = ProxyBridgeRunner { _, webSocket, _, _, _ ->
                 assertTrue(webSocket === coldSocket)
                 events.add("bridge")
             },
@@ -1109,7 +1086,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, webSocket, _, _, _, _ ->
+            runner = ProxyBridgeRunner { _, webSocket, _, _, _ ->
                 assertTrue(webSocket === coldSocket)
                 events.add("bridge")
             },
@@ -1155,7 +1132,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(poolSize = 1, cfProxyDomains = listOf("cf.example"), dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, webSocket, _, _, _, _ ->
+            runner = ProxyBridgeRunner { _, webSocket, _, _, _ ->
                 assertTrue(webSocket === cfSocket)
                 events.add("bridge")
             },
@@ -1197,7 +1174,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, webSocket, _, _, counters, _ ->
+            runner = ProxyBridgeRunner { _, webSocket, _, _, counters ->
                 if (webSocket === staleSocket) {
                     counters.finish("exception: EOFException: no frame")
                 } else {
@@ -1236,7 +1213,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, webSocket, _, _, counters, _ ->
+            runner = ProxyBridgeRunner { _, webSocket, _, _, counters ->
                 assertTrue(webSocket === pooledSocket)
                 counters.finish("client closed")
                 events.add("bridge")
@@ -1306,7 +1283,7 @@ class ProxyServerTest {
                 if (attempts.incrementAndGet() == 1 && domain == "kws2.web.telegram.org") warmSocket else throw IOException("blocked")
             },
             config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> },
             logger = ProxyLogger { logs.add(it) },
         )
         proxy.start()
@@ -1330,7 +1307,7 @@ class ProxyServerTest {
                 if (Thread.currentThread().name.startsWith("ProxyServer-client") && domain == "kws2.web.telegram.org") FakeWebSocketBinaryStream() else throw IOException("blocked")
             },
             config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> },
             logger = ProxyLogger { logs.add(it) },
         )
         proxy.start()
@@ -1373,7 +1350,7 @@ class ProxyServerTest {
                 if (attempts.incrementAndGet() == 1 && domain == "kws2.web.telegram.org") FakeWebSocketBinaryStream(sendError = SocketException("Broken pipe")) else FakeWebSocketBinaryStream()
             },
             config = baseConfig().copy(poolSize = 1, cfproxyEnabled = false, dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> },
             logger = ProxyLogger { logs.add(it) },
         )
         proxy.start()
@@ -1469,7 +1446,7 @@ class ProxyServerTest {
             server = server,
             connector = connector,
             config = baseConfig().copy(poolSize = 1, cfProxyDomains = listOf("cf.example"), dcRedirects = mapOf(2 to "203.0.113.2")),
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ -> events.add("bridge") },
+            runner = ProxyBridgeRunner { _, _, _, _, _ -> events.add("bridge") },
             logger = ProxyLogger { logs.add(it) },
         )
 
@@ -1486,106 +1463,6 @@ class ProxyServerTest {
     }
 
     @Test
-    fun statsIncludeWebSocketKeepaliveCountersWhileSessionIsActive() {
-        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
-        val server = FakeTcpServerTransport()
-        val bridgeActive = CountDownLatch(1)
-        val releaseBridge = CountDownLatch(1)
-        val proxy = newProxy(
-            server = server,
-            connector = RecordingConnector(FakeWebSocketBinaryStream()),
-            config = baseConfig().copy(cfproxyEnabled = false, wsKeepaliveIntervalSeconds = 12.5),
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ ->
-                counters.recordWsKeepalivePing()
-                counters.recordWsKeepalivePing()
-                bridgeActive.countDown()
-                assertTrue(releaseBridge.await(5, TimeUnit.SECONDS))
-            },
-        )
-
-        proxy.start()
-        server.enqueue(client)
-        assertTrue(bridgeActive.await(5, TimeUnit.SECONDS))
-
-        val activeStats = proxy.stats()
-        assertEquals(12.5, activeStats.wsKeepaliveIntervalSeconds, 0.0)
-        assertEquals(2L, activeStats.wsKeepalivePingsSent)
-        assertEquals(0L, activeStats.wsKeepaliveFailures)
-
-        releaseBridge.countDown()
-        waitUntil { proxy.stats().connectionsActive == 0 }
-        val finishedStats = proxy.stats()
-        proxy.stop()
-
-        assertEquals(2L, finishedStats.wsKeepalivePingsSent)
-        assertEquals(0L, finishedStats.wsKeepaliveFailures)
-    }
-
-    @Test
-    fun statsIncludeActiveWebSocketKeepaliveFailureReason() {
-        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
-        val server = FakeTcpServerTransport()
-        val bridgeActive = CountDownLatch(1)
-        val releaseBridge = CountDownLatch(1)
-        val proxy = newProxy(
-            server = server,
-            connector = RecordingConnector(FakeWebSocketBinaryStream()),
-            config = baseConfig().copy(cfproxyEnabled = false),
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ ->
-                counters.recordWsKeepalivePing()
-                counters.recordWsKeepaliveFailure("SocketException: active ping failed")
-                bridgeActive.countDown()
-                assertTrue(releaseBridge.await(5, TimeUnit.SECONDS))
-            },
-        )
-
-        proxy.start()
-        server.enqueue(client)
-        assertTrue(bridgeActive.await(5, TimeUnit.SECONDS))
-
-        val activeStats = proxy.stats()
-        assertEquals(1L, activeStats.wsKeepalivePingsSent)
-        assertEquals(1L, activeStats.wsKeepaliveFailures)
-        assertEquals("SocketException: active ping failed", activeStats.lastWsKeepaliveFailure)
-
-        releaseBridge.countDown()
-        waitUntil { proxy.stats().connectionsActive == 0 }
-        val finishedStats = proxy.stats()
-        proxy.stop()
-
-        assertEquals(1L, finishedStats.wsKeepalivePingsSent)
-        assertEquals(1L, finishedStats.wsKeepaliveFailures)
-        assertEquals("SocketException: active ping failed", finishedStats.lastWsKeepaliveFailure)
-    }
-
-    @Test
-    fun statsAggregateWebSocketKeepaliveCounters() {
-        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
-        val server = FakeTcpServerTransport()
-        val proxy = newProxy(
-            server = server,
-            connector = RecordingConnector(FakeWebSocketBinaryStream()),
-            config = baseConfig().copy(cfproxyEnabled = false, wsKeepaliveIntervalSeconds = 12.5),
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ ->
-                counters.recordWsKeepalivePing()
-                counters.recordWsKeepalivePing()
-                counters.recordWsKeepaliveFailure("SocketException: ping failed")
-            },
-        )
-
-        proxy.start()
-        server.enqueue(client)
-        waitUntil { proxy.stats().connectionsTotal == 1L && proxy.stats().connectionsActive == 0 }
-        proxy.stop()
-
-        val stats = proxy.stats()
-        assertEquals(12.5, stats.wsKeepaliveIntervalSeconds, 0.0)
-        assertEquals(2L, stats.wsKeepalivePingsSent)
-        assertEquals(1L, stats.wsKeepaliveFailures)
-        assertEquals("SocketException: ping failed", stats.lastWsKeepaliveFailure)
-    }
-
-    @Test
     fun bridgeRunnerReceivesMsgSplitterAndCryptoContext() {
         val client = FakeTcpClientTransport(handshakeVector("intermediate_dc4").getString("handshake_hex").hexToBytes())
         val server = FakeTcpServerTransport()
@@ -1596,7 +1473,7 @@ class ProxyServerTest {
                 server = server,
                 connector = RecordingConnector(FakeWebSocketBinaryStream()),
                 runner =
-                    ProxyBridgeRunner { _, _, cryptoContext, splitter, _, _ ->
+                    ProxyBridgeRunner { _, _, cryptoContext, splitter, _ ->
                         sawCrypto.set(cryptoContext.encryptToTelegram(ByteArray(0)).isEmpty())
                         sawSplitter.set(splitter.flush().isEmpty())
                     },
@@ -2384,7 +2261,7 @@ class ProxyServerTest {
                 networkStatus = "mobile",
                 dcRedirects = mapOf(2 to "203.0.113.2"),
             ),
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ ->
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
                 counters.finish("exception: EOFException: no frame")
             },
             logger = ProxyLogger { logs.add(it) },
@@ -2628,7 +2505,7 @@ class ProxyServerTest {
                 dcRedirects = mapOf(2 to "203.0.113.2"),
                 cfproxyEnabled = false,
             ),
-            runner = ProxyBridgeRunner { _, _, _, _, counters, _ ->
+            runner = ProxyBridgeRunner { _, _, _, _, counters ->
                 counters.finish("exception: EOFException: no frame")
                 proxy!!.applyNetworkRouteImmediately("none")
             },
@@ -3139,7 +3016,7 @@ class ProxyServerTest {
         val proxy = newProxy(
             server = server,
             connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ ->
+            runner = ProxyBridgeRunner { _, _, _, _, _ ->
                 bridgeEntered.countDown()
                 releaseBridge.await(5, TimeUnit.SECONDS)
             },
@@ -3193,7 +3070,7 @@ class ProxyServerTest {
         val proxy = newProxy(
             server = server,
             connector = RawWebSocketConnector { _, _, _, _ -> FakeWebSocketBinaryStream() },
-            runner = ProxyBridgeRunner { _, _, _, _, _, _ ->
+            runner = ProxyBridgeRunner { _, _, _, _, _ ->
                 bridgeEntered.countDown()
                 releaseBridge.await(5, TimeUnit.SECONDS)
             },
@@ -3326,7 +3203,7 @@ class ProxyServerTest {
     private fun newProxy(
         server: FakeTcpServerTransport,
         connector: RawWebSocketConnector = RecordingConnector(FakeWebSocketBinaryStream()),
-        runner: ProxyBridgeRunner = ProxyBridgeRunner { _, _, _, _, _, _ -> },
+        runner: ProxyBridgeRunner = ProxyBridgeRunner { _, _, _, _, _ -> },
         config: ProxyServerConfig = baseConfig(),
         logger: ProxyLogger = ProxyLogger {},
         cfDomainHealth: CfDomainHealth = CfDomainHealth(config.cfProxyDomains),
@@ -3536,11 +3413,7 @@ class ProxyServerTest {
             sent.addAll(parts)
         }
 
-        override fun sendPing(payload: ByteArray) {
-            events.add("ping")
-        }
-
-        override fun recv(): ByteArray? = null
+            override fun recv(): ByteArray? = null
 
         override fun close() {
             events.add("close")

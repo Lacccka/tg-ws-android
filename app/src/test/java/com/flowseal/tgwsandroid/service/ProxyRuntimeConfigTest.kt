@@ -27,14 +27,6 @@ class ProxyRuntimeConfigTest {
         assertEquals(256 * 1024, config.bufferSizeBytes)
         assertEquals(4, config.poolSize)
         assertTrue(config.cfproxyEnabled)
-        assertEquals(0.0, config.effectiveWsKeepaliveIntervalSeconds, 0.0)
-    }
-
-    @Test
-    fun explicitWebSocketKeepaliveIntervalStillMapsToProxyServerConfig() {
-        val config = ProxyRuntimeConfig.proxyServerConfig(appConfig.copy(wsKeepaliveIntervalSeconds = 12.5))
-
-        assertEquals(12.5, config.effectiveWsKeepaliveIntervalSeconds, 0.0)
     }
 
     @Test

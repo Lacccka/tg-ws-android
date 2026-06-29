@@ -103,22 +103,6 @@ class RawWebSocketLiveTest {
     }
 
     @Test
-    fun sendPingWritesMaskedPingFrame() {
-        val fake = FakeTransportFactory(httpResponse(101, "Switching Protocols"))
-        val ws = connect(fake)
-        val requestLength = fake.transport.outputBytes().size
-
-        ws.sendPing("ka".bytes())
-
-        val frame = fake.transport.outputBytes().copyOfRange(requestLength, fake.transport.outputBytes().size)
-        val parsed = RawWebSocketCodec.parseFrame(frame)
-        assertEquals(RawWebSocketCodec.OP_PING, parsed.opcode)
-        assertTrue(parsed.masked)
-        assertEquals("ka", parsed.payload.toString(Charsets.UTF_8))
-        assertEquals(2, fake.transport.flushCount)
-    }
-
-    @Test
     fun recvReturnsBinaryPayload() {
         val fake =
             FakeTransportFactory(

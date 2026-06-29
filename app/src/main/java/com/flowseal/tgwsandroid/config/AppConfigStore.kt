@@ -136,10 +136,6 @@ fun AppConfig.toJson(): JSONObject = JSONObject().apply {
     put("route_mode", routeMode.configValue)
     put("routeMode", routeMode.configValue)
     put("telemetry_enabled", telemetryEnabled)
-    wsKeepaliveIntervalSeconds?.let {
-        put("ws_keepalive_interval_seconds", it)
-        put("wsKeepaliveIntervalSeconds", it)
-    }
 }
 
 private fun generateSecretHex(): String {
