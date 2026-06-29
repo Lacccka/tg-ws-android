@@ -26,6 +26,16 @@ object CfProxyDomains {
         "tjacxbqtj.com",
         "bxaxtxmrw.com",
         "dmohrsgmohcrwb.com",
+        "vwbmtmoi.com",
+        "khgrre.com",
+        "ulihssf.com",
+        "tmhqsdqmfpmk.com",
+        "xwuwoqbm.com",
+        "orgcnunpj.com",
+        "zhkuldz.com",
+        "zypoljnslxa.com",
+        "efabnxaowuzs.com",
+        "zaftuzsftqdq.com",
     )
 
     val defaults: List<String> = encodedDefaults.map(::decodeDefaultDomain)

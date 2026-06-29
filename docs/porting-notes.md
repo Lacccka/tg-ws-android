@@ -300,6 +300,12 @@ Recommended debugging remains: **Clear logs**, reproduce the failure, then
 `poolStale`, watchdog stats, network, and battery-optimization state.
 
 
+## Upstream v1.8.1 Cloudflare proxy domains
+
+Android bundled Cloudflare proxy domains are synced with upstream v1.8.1 (`third_party/tg-ws-proxy/proxy/config.py::_CFPROXY_ENC` and `.github/cfproxy-domains.txt`). This only updates the bundled/default CF proxy domain list used when no user-provided CF domains are configured.
+
+This domain sync is separate from Fronting fallback. Fronting fallback remains intentionally unimplemented in the Android port.
+
 ## Upstream v1.8.1 target IP cooldown
 
 Android now ports the upstream v1.8.1 target-IP failure cooldown for configured DC->IP direct WebSocket routes. If a configured direct target (for example, a DC2/DC4 IP) fails during WebSocket connect or upgrade with a timeout/unreachable-style error, the proxy records a one-hour cooldown keyed by the configured target host/IP rather than the WebSocket domain. While the cooldown is active and CF fallback is available, new sessions skip direct pool and cold-direct attempts for that target and try the normal CF fallback path immediately.

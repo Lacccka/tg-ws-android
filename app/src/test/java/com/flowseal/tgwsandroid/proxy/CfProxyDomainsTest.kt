@@ -26,10 +26,35 @@ class CfProxyDomainsTest {
                 "kartoshka.co.uk",
                 "sorokodin.co.uk",
                 "pyatdesyatodin.co.uk",
+                "notelega.co.uk",
+                "ebally.co.uk",
+                "nebally.co.uk",
+                "havegreatday.co.uk",
+                "pomogite.co.uk",
+                "fixtelega.co.uk",
+                "sadnews.co.uk",
+                "onedaychamp.co.uk",
+                "stopblocking.co.uk",
+                "nothingthere.co.uk",
             ),
             CfProxyDomains.defaults,
         )
         assertEquals("example.org", CfProxyDomains.decodeDefaultDomain("example.org"))
+    }
+
+    @Test
+    fun defaultCfProxyDomainsIncludeUpstreamV181Domains() {
+        assertTrue(
+            CfProxyDomains.defaults.containsAll(
+                listOf(
+                    "fixtelega.co.uk",
+                    "sadnews.co.uk",
+                    "onedaychamp.co.uk",
+                    "stopblocking.co.uk",
+                    "nothingthere.co.uk",
+                ),
+            ),
+        )
     }
 
     @Test
