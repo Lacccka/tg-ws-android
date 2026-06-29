@@ -298,3 +298,10 @@ direct-pool hits while keeping the configured pool size unchanged.
 Recommended debugging remains: **Clear logs**, reproduce the failure, then
 **Share logs** so the diagnostics include route ends, pool hits/misses/refills,
 `poolStale`, watchdog stats, network, and battery-optimization state.
+
+
+## Upstream v1.8.1 target IP cooldown
+
+Android now ports the upstream v1.8.1 target-IP failure cooldown for configured DC->IP direct WebSocket routes. If a configured direct target (for example, a DC2/DC4 IP) fails during WebSocket connect or upgrade with a timeout/unreachable-style error, the proxy records a one-hour cooldown keyed by the configured target host/IP rather than the WebSocket domain. While the cooldown is active and CF fallback is available, new sessions skip direct pool and cold-direct attempts for that target and try the normal CF fallback path immediately.
+
+This behavior is separate from Fronting fallback. Fronting fallback remains intentionally unimplemented in the Android port. Active/outbound WebSocket keepalive also remains removed; only passive inbound WebSocket PING -> PONG handling is retained.

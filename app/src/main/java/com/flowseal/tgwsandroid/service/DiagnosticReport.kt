@@ -554,6 +554,11 @@ object DiagnosticReportFormatter {
             "routeEvaluations=${stats.routeEvaluations}, routeNoopEvaluations=${stats.routeNoopEvaluations}, " +
             "lastRouteUsed=${stats.lastRouteUsed ?: "none"}, " +
             "directAttempts=${stats.directAttempts}, directAttemptsSkippedBecauseRoute=${stats.directAttemptsSkippedBecauseRoute}, " +
+            "directTargetIpCooldownHits=${stats.directTargetIpCooldownHits}, directTargetIpCooldownSets=${stats.directTargetIpCooldownSets}, " +
+            "directTargetIpCooldownClears=${stats.directTargetIpCooldownClears}, directAttemptsSkippedBecauseTargetIpCooldown=${stats.directAttemptsSkippedBecauseTargetIpCooldown}, " +
+            "directPoolSkippedBecauseTargetIpCooldown=${stats.directPoolSkippedBecauseTargetIpCooldown}, lastDirectTargetIpCooldownTarget=${stats.lastDirectTargetIpCooldownTarget ?: "none"}, " +
+            "lastDirectTargetIpCooldownReason=${stats.lastDirectTargetIpCooldownReason ?: "none"}, lastDirectTargetIpCooldownSetTimeMs=${stats.lastDirectTargetIpCooldownSetTimeMs}, " +
+            "directTargetIpCooldownUntilByTarget=${formatCompactMap(stats.directTargetIpCooldownUntilByTarget)}, " +
             "directTimeouts=${stats.directTimeouts}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, poolHits=${stats.poolHits}, " +
             "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}, " +

@@ -3,10 +3,13 @@ package com.flowseal.tgwsandroid.proxy
 import com.flowseal.tgwsandroid.config.AppConfig
 import java.io.EOFException
 import java.io.IOException
+import java.net.ConnectException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.NoRouteToHostException
 import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.util.Collections
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.ConcurrentHashMap
@@ -287,6 +290,15 @@ class ProxyServerStats {
     var lastCfDomain: String? = null
     var directAttempts: Long = 0
     var directAttemptsSkippedBecauseRoute: Long = 0
+    var directTargetIpCooldownHits: Long = 0
+    var directTargetIpCooldownSets: Long = 0
+    var directTargetIpCooldownClears: Long = 0
+    var directAttemptsSkippedBecauseTargetIpCooldown: Long = 0
+    var directPoolSkippedBecauseTargetIpCooldown: Long = 0
+    var lastDirectTargetIpCooldownTarget: String? = null
+    var lastDirectTargetIpCooldownReason: String? = null
+    var lastDirectTargetIpCooldownSetTimeMs: Long = 0
+    var directTargetIpCooldownUntilByTarget: Map<String, Long> = emptyMap()
     var poolRefillsCancelled: Long = 0
     var poolResultsDiscardedAfterRouteChange: Long = 0
     var routeChangesImmediate: Long = 0
@@ -884,6 +896,17 @@ class ProxyServer(
     private val directTimeouts = AtomicLong(0)
     private val directAttempts = AtomicLong(0)
     private val directAttemptsSkippedBecauseRoute = AtomicLong(0)
+    private val directTargetIpCooldownHits = AtomicLong(0)
+    private val directTargetIpCooldownSets = AtomicLong(0)
+    private val directTargetIpCooldownClears = AtomicLong(0)
+    private val directAttemptsSkippedBecauseTargetIpCooldown = AtomicLong(0)
+    private val directPoolSkippedBecauseTargetIpCooldown = AtomicLong(0)
+    private val lastDirectTargetIpCooldownTarget = AtomicReference<String?>(null)
+    private val lastDirectTargetIpCooldownReason = AtomicReference<String?>(null)
+    private val lastDirectTargetIpCooldownSetTimeMs = AtomicLong(0)
+    private val directTargetIpCooldownUntilByTarget = ConcurrentHashMap<String, AtomicLong>()
+    private val directTargetIpCooldownReasonByTarget = ConcurrentHashMap<String, String>()
+    private val directTargetIpCooldownLoggedUntilByTarget = ConcurrentHashMap<String, AtomicLong>()
     private val directProbeSkippedBecauseAlreadyHealthy = AtomicLong(0)
     private val mobileDirectRescueAttempts = AtomicLong(0)
     private val mobileDirectRescueSuccesses = AtomicLong(0)
@@ -982,6 +1005,12 @@ class ProxyServer(
         },
         onRefillCancelled = { count -> poolRefillsCancelled.addAndGet(count.toLong()) },
         onResultDiscardedAfterRouteChange = { poolResultsDiscardedAfterRouteChange.incrementAndGet() },
+        shouldSkipTarget = { key, targetHost -> isDirectTargetIpCooldownActive(targetHost) && config.cfproxyEnabled },
+        onSkippedTarget = { key, targetHost, source ->
+            directPoolSkippedBecauseTargetIpCooldown.incrementAndGet()
+            directTargetIpCooldownHits.incrementAndGet()
+            logger.log("DC${key.dc} direct target $targetHost in cooldown; direct pool $source skipped")
+        },
     )
     private val cfWebSocketPool = CfWebSocketPool(
         connector = webSocketConnector,
@@ -1144,6 +1173,15 @@ class ProxyServer(
         snapshot.lastCfDomain = lastCfDomain
         snapshot.directAttempts = directAttempts.get()
         snapshot.directAttemptsSkippedBecauseRoute = directAttemptsSkippedBecauseRoute.get()
+        snapshot.directTargetIpCooldownHits = directTargetIpCooldownHits.get()
+        snapshot.directTargetIpCooldownSets = directTargetIpCooldownSets.get()
+        snapshot.directTargetIpCooldownClears = directTargetIpCooldownClears.get()
+        snapshot.directAttemptsSkippedBecauseTargetIpCooldown = directAttemptsSkippedBecauseTargetIpCooldown.get()
+        snapshot.directPoolSkippedBecauseTargetIpCooldown = directPoolSkippedBecauseTargetIpCooldown.get()
+        snapshot.lastDirectTargetIpCooldownTarget = lastDirectTargetIpCooldownTarget.get()
+        snapshot.lastDirectTargetIpCooldownReason = lastDirectTargetIpCooldownReason.get()
+        snapshot.lastDirectTargetIpCooldownSetTimeMs = lastDirectTargetIpCooldownSetTimeMs.get()
+        snapshot.directTargetIpCooldownUntilByTarget = directTargetIpCooldownSnapshotForStats(snapshotTimeMs)
         snapshot.poolRefillsCancelled = poolRefillsCancelled.get()
         snapshot.poolResultsDiscardedAfterRouteChange = poolResultsDiscardedAfterRouteChange.get()
         snapshot.routeChangesImmediate = routeChangesImmediate.get()
@@ -1682,6 +1720,76 @@ class ProxyServer(
         return false
     }
 
+    private fun setDirectTargetIpCooldown(targetHost: String, dcId: Int, reason: String) {
+        val now = System.currentTimeMillis()
+        val until = now + IP_FAIL_COOLDOWN_MS
+        directTargetIpCooldownUntilByTarget.getOrPut(targetHost) { AtomicLong(0) }.set(until)
+        directTargetIpCooldownReasonByTarget[targetHost] = reason
+        lastDirectTargetIpCooldownTarget.set(targetHost)
+        lastDirectTargetIpCooldownReason.set(reason)
+        lastDirectTargetIpCooldownSetTimeMs.set(now)
+        directTargetIpCooldownSets.incrementAndGet()
+        logger.log("direct target $targetHost cooldown set for DC$dcId because $reason")
+    }
+
+    private fun isDirectTargetIpCooldownActive(targetHost: String, now: Long = System.currentTimeMillis()): Boolean {
+        val until = directTargetIpCooldownUntilByTarget[targetHost]?.get() ?: return false
+        if (until > now) return true
+        directTargetIpCooldownUntilByTarget.remove(targetHost)
+        directTargetIpCooldownReasonByTarget.remove(targetHost)
+        directTargetIpCooldownLoggedUntilByTarget.remove(targetHost)
+        return false
+    }
+
+    private fun logDirectTargetIpCooldownHit(dcId: Int, targetHost: String) {
+        val until = directTargetIpCooldownUntilByTarget[targetHost]?.get() ?: 0L
+        val previous = directTargetIpCooldownLoggedUntilByTarget.getOrPut(targetHost) { AtomicLong(0) }.getAndSet(until)
+        if (previous != until) logger.log("DC$dcId direct target $targetHost in cooldown; trying CF fallback")
+    }
+
+    private fun clearDirectTargetIpCooldownAfterSuccess(targetHost: String) {
+        val removed = directTargetIpCooldownUntilByTarget.remove(targetHost) != null
+        directTargetIpCooldownReasonByTarget.remove(targetHost)
+        directTargetIpCooldownLoggedUntilByTarget.remove(targetHost)
+        if (removed) {
+            directTargetIpCooldownClears.incrementAndGet()
+            logger.log("direct target $targetHost cooldown cleared after successful direct route")
+        }
+    }
+
+    private fun directTargetIpCooldownSnapshotForStats(now: Long): Map<String, Long> {
+        return directTargetIpCooldownUntilByTarget.mapNotNull { (target, untilRef) ->
+            val until = untilRef.get()
+            if (until > now) target to until else null
+        }.toMap().toSortedMap()
+    }
+
+    internal fun setDirectTargetIpCooldownForTest(target: String, untilMs: Long, reason: String) {
+        directTargetIpCooldownUntilByTarget.getOrPut(target) { AtomicLong(0) }.set(untilMs)
+        directTargetIpCooldownReasonByTarget[target] = reason
+        lastDirectTargetIpCooldownTarget.set(target)
+        lastDirectTargetIpCooldownReason.set(reason)
+        lastDirectTargetIpCooldownSetTimeMs.set(System.currentTimeMillis())
+    }
+
+    internal fun directTargetIpCooldownSnapshotForTest(): Map<String, Long> = directTargetIpCooldownSnapshotForStats(System.currentTimeMillis())
+
+    internal fun clearDirectTargetIpCooldownForTest(target: String) {
+        clearDirectTargetIpCooldownAfterSuccess(target)
+    }
+
+    private fun isCooldownWorthyDirectFailure(error: Throwable): Boolean {
+        if (error is SocketTimeoutException || error is NoRouteToHostException || error is ConnectException) return true
+        if (error is SocketException) {
+            val message = error.message.orEmpty()
+            return listOf("ENETUNREACH", "EHOSTUNREACH", "Connection timed out", "Network is unreachable", "No route to host", "Connection refused").any {
+                message.contains(it, ignoreCase = true)
+            }
+        }
+        val message = error.message.orEmpty()
+        return message.contains("connect timed out", ignoreCase = true) || message.contains("read timed out", ignoreCase = true)
+    }
+
     private fun tryDirectRoute(
         client: TcpClientTransport,
         parsed: MtprotoHandshake.Result,
@@ -1987,6 +2095,12 @@ class ProxyServer(
         expectedGeneration: Long? = null,
         allowWifiDirectRecovery: Boolean = false,
     ): WebSocketRoute? {
+        if (isDirectTargetIpCooldownActive(targetHost) && config.cfproxyEnabled) {
+            directAttemptsSkippedBecauseTargetIpCooldown.incrementAndGet()
+            directTargetIpCooldownHits.incrementAndGet()
+            logDirectTargetIpCooldownHit(parsed.dcId, targetHost)
+            return null
+        }
         if (expectedGeneration != null && routeGeneration.get() != expectedGeneration) {
             directAttemptsSkippedBecauseRoute.incrementAndGet()
             logger.log("DC${parsed.dcId} direct route skipped because route generation changed")
@@ -2079,6 +2193,7 @@ class ProxyServer(
             try {
                 directAttempts.incrementAndGet()
                 val webSocket = webSocketConnector.connect(targetHost, domain, DEFAULT_WS_PATH, timeoutMs)
+                clearDirectTargetIpCooldownAfterSuccess(targetHost)
                 logger.log("DC${parsed.dcId} WebSocket connected via $domain")
                 return webSocket
             } catch (error: Throwable) {
@@ -2091,8 +2206,16 @@ class ProxyServer(
                 val detail = websocketFailureDetail(error)
                 failures.add("$domain ($detail)")
                 logger.log("DC${parsed.dcId} WebSocket attempt via $domain failed: $detail")
+                val cooldownWorthy = isCooldownWorthyDirectFailure(error)
+                if (cooldownWorthy) {
+                    setDirectTargetIpCooldown(targetHost, parsed.dcId, detail)
+                }
                 if (error is SocketException || detail.contains("ENETUNREACH", ignoreCase = true)) {
                     downgradeDirectRouteBecauseHealthDegraded(detail)
+                }
+                if (cooldownWorthy) {
+                    logger.log("DC${parsed.dcId} direct target $targetHost marked failed; stop direct domain attempts")
+                    break
                 }
             }
         }
@@ -3097,6 +3220,7 @@ class ProxyServer(
     companion object {
         const val DEFAULT_WS_PATH = "/apiws"
         private const val CF_INFLIGHT_WAIT_BEFORE_NO_ROUTE_MS: Long = 2_000L
+        const val IP_FAIL_COOLDOWN_MS: Long = 60L * 60L * 1000L
         const val CLIENT_EXPERIENCE_RECENT_WINDOW_MS: Long = 60_000L
         const val RECONNECT_BURST_MIN_HANDSHAKES: Long = 4L
         const val VERY_SHORT_SESSION_MS: Long = 2_000L

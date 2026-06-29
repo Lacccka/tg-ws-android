@@ -36,6 +36,8 @@ class WebSocketPool(
     private val onRefillSuccess: (Key, String) -> Unit = { _, _ -> },
     private val onRefillCancelled: (Int) -> Unit = {},
     private val onResultDiscardedAfterRouteChange: () -> Unit = {},
+    private val shouldSkipTarget: (Key, String) -> Boolean = { _, _ -> false },
+    private val onSkippedTarget: (Key, String, String) -> Unit = { _, _, _ -> },
 ) {
     private val lock = Any()
     private val enabled = AtomicBoolean(true)
@@ -57,6 +59,10 @@ class WebSocketPool(
     ): WebSocketBinaryStream? {
         if (poolSize <= 0 || !enabled.get()) return null
         val key = Key(dc, isMedia)
+        if (shouldSkipTarget(Key(dc, isMedia), targetHost)) {
+            onSkippedTarget(Key(dc, isMedia), targetHost, REFILL_SOURCE_ON_MISS)
+            return null
+        }
         var pooled: WebSocketBinaryStream? = null
         val expired = mutableListOf<WebSocketBinaryStream>()
         synchronized(lock) {
@@ -192,6 +198,10 @@ class WebSocketPool(
         source: String = REFILL_SOURCE_NORMAL,
     ) {
         if (poolSize <= 0 || domains.isEmpty() || !enabled.get()) return
+        if (shouldSkipTarget(Key(dc, isMedia), targetHost)) {
+            onSkippedTarget(Key(dc, isMedia), targetHost, source)
+            return
+        }
         val targetSize = desiredSize.coerceIn(0, poolSize)
         if (targetSize <= 0) return
         val refillGeneration = generation.get()

@@ -10,6 +10,7 @@ import org.junit.Test
 import java.io.EOFException
 import java.io.IOException
 import java.net.SocketException
+import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -1570,9 +1571,9 @@ class ProxyServerTest {
         waitUntil { client.closed }
         proxy.stop()
 
-        assertEquals(listOf("kws2.cf.example", "kws2.web.telegram.org", "kws2-1.web.telegram.org"), connector.domains)
-        assertEquals(listOf(RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS, 1_500, 1_500), connector.timeouts)
-        assertEquals(2L, proxy.stats().directTimeouts)
+        assertEquals(listOf("kws2.cf.example", "kws2.web.telegram.org"), connector.domains)
+        assertEquals(listOf(RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS, 1_500), connector.timeouts)
+        assertEquals(1L, proxy.stats().directTimeouts)
         assertEquals(0L, proxy.stats().poolMisses)
     }
 
@@ -3088,6 +3089,149 @@ class ProxyServerTest {
         assertEquals(1L, proxy.stats().clientExperience.wakeBurstPrewarmTriggers)
     }
 
+
+    @Test
+    fun directTimeoutStopsDirectDomainLoopAndFallsBackToCf() {
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = DirectTimeoutThenCfConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(dcRedirects = mapOf(2 to "203.0.113.2"), cfProxyDomains = listOf("cf.example")),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        server.enqueue(client)
+        waitUntil { client.closed }
+        proxy.stop()
+
+        assertEquals(listOf("kws2.web.telegram.org", "kws2.cf.example"), connector.domains.toList())
+        val stats = proxy.stats()
+        assertTrue(proxy.directTargetIpCooldownSnapshotForTest().containsKey("203.0.113.2"))
+        assertTrue(stats.directTargetIpCooldownSets >= 1L)
+        assertEquals("203.0.113.2", stats.lastDirectTargetIpCooldownTarget)
+        assertTrue(logs.any { it.contains("direct target 203.0.113.2 cooldown set for DC2 because SocketTimeoutException: connect timed out") })
+    }
+
+    @Test
+    fun nextSessionSkipsDirectWhileTargetIpCooldownIsActive() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(dcRedirects = mapOf(2 to "203.0.113.2"), cfProxyDomains = listOf("cf.example")),
+            logger = ProxyLogger { logs.add(it) },
+        )
+        proxy.setDirectTargetIpCooldownForTest("203.0.113.2", System.currentTimeMillis() + ProxyServer.IP_FAIL_COOLDOWN_MS, "test")
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { connector.domains.contains("kws2.cf.example") }
+        waitUntil { proxy.stats().directAttemptsSkippedBecauseTargetIpCooldown == 1L }
+        proxy.stop()
+
+        assertFalse(connector.domains.any { it.endsWith(".web.telegram.org") })
+        assertEquals("kws2.cf.example", connector.domains.first())
+        val stats = proxy.stats()
+        assertEquals(1L, stats.directAttemptsSkippedBecauseTargetIpCooldown)
+        assertEquals(1L, stats.directTargetIpCooldownHits)
+        assertTrue(logs.any { it.contains("DC2 direct target 203.0.113.2 in cooldown; trying CF fallback") })
+    }
+
+    @Test
+    fun targetIpCooldownIsSharedAcrossDcs() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(dcRedirects = mapOf(2 to "203.0.113.2", 4 to "203.0.113.2"), cfProxyDomains = listOf("cf.example")),
+            logger = ProxyLogger { logs.add(it) },
+        )
+        proxy.setDirectTargetIpCooldownForTest("203.0.113.2", System.currentTimeMillis() + ProxyServer.IP_FAIL_COOLDOWN_MS, "test")
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("intermediate_dc4").getString("handshake_hex").hexToBytes()))
+        waitUntil { connector.domains.contains("kws4.cf.example") }
+        proxy.stop()
+
+        assertFalse(connector.domains.any { it.endsWith(".web.telegram.org") })
+        assertEquals("203.0.113.2", proxy.stats().lastDirectTargetIpCooldownTarget)
+        assertTrue(logs.any { it.contains("DC4 direct target 203.0.113.2 in cooldown; trying CF fallback") })
+    }
+
+    @Test
+    fun targetIpCooldownDoesNotSuppressDirectWhenCfFallbackDisabled() {
+        val server = FakeTcpServerTransport()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(dcRedirects = mapOf(2 to "203.0.113.2"), cfproxyEnabled = false),
+        )
+        proxy.setDirectTargetIpCooldownForTest("203.0.113.2", System.currentTimeMillis() + ProxyServer.IP_FAIL_COOLDOWN_MS, "test")
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { connector.domains.any { it.endsWith(".web.telegram.org") } }
+        proxy.stop()
+
+        assertEquals(0L, proxy.stats().directAttemptsSkippedBecauseTargetIpCooldown)
+    }
+
+    @Test
+    fun successfulDirectRouteClearsTargetIpCooldown() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(dcRedirects = mapOf(2 to "203.0.113.2"), cfproxyEnabled = false),
+            logger = ProxyLogger { logs.add(it) },
+        )
+        proxy.setDirectTargetIpCooldownForTest("203.0.113.2", System.currentTimeMillis() + ProxyServer.IP_FAIL_COOLDOWN_MS, "test")
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { clientClosedOrDirectAttempted(connector) }
+        proxy.stop()
+
+        assertFalse(proxy.directTargetIpCooldownSnapshotForTest().containsKey("203.0.113.2"))
+        assertEquals(1L, proxy.stats().directTargetIpCooldownClears)
+        assertTrue(logs.any { it.contains("direct target 203.0.113.2 cooldown cleared after successful direct route") })
+    }
+
+    @Test
+    fun directPoolWarmupAndUseRespectTargetIpCooldown() {
+        val server = FakeTcpServerTransport()
+        val connector = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = connector,
+            config = baseConfig().copy(poolSize = 1, dcRedirects = mapOf(2 to "203.0.113.2"), cfProxyDomains = listOf("cf.example")),
+        )
+        proxy.setDirectTargetIpCooldownForTest("203.0.113.2", System.currentTimeMillis() + ProxyServer.IP_FAIL_COOLDOWN_MS, "test")
+
+        proxy.start()
+        Thread.sleep(100)
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil { connector.domains.contains("kws2.cf.example") }
+        proxy.stop()
+
+        assertFalse(connector.domains.any { it.endsWith(".web.telegram.org") })
+        assertTrue(proxy.stats().directPoolSkippedBecauseTargetIpCooldown > 0L)
+    }
+
+    private fun clientClosedOrDirectAttempted(connector: RecordingConnector): Boolean =
+        connector.domains.any { it.endsWith(".web.telegram.org") }
+
     @Test
     fun dcWithoutDirectRedirectAndCfDisabledRecordsUnsupportedAndNoRouteByDc() {
         val client = FakeTcpClientTransport(buildClientHandshake(5, RelayInit.PROTO_TAG_ABRIDGED))
@@ -3457,6 +3601,23 @@ class ProxyServerTest {
             targetHosts.add(targetHost)
             domains.add(domain)
             if (domain.endsWith(".web.telegram.org")) throw IOException("direct down for $domain")
+            return webSocket
+        }
+    }
+
+    private class DirectTimeoutThenCfConnector(
+        private val webSocket: FakeWebSocketBinaryStream,
+    ) : RawWebSocketConnector {
+        val domains = CopyOnWriteArrayList<String>()
+
+        override fun connect(
+            targetHost: String,
+            domain: String,
+            path: String,
+            timeoutMs: Int,
+        ): WebSocketBinaryStream {
+            domains.add(domain)
+            if (domain.endsWith(".web.telegram.org")) throw SocketTimeoutException("connect timed out")
             return webSocket
         }
     }

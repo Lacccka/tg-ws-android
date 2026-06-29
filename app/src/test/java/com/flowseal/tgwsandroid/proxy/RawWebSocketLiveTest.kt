@@ -19,7 +19,7 @@ class RawWebSocketLiveTest {
         val ws = connect(fake)
 
         assertNotNull(ws)
-        assertEquals(listOf(ConnectionCall("edge.example", 443, "ws.example", 10_000)), fake.calls)
+        assertEquals(listOf(ConnectionCall("edge.example", 443, "ws.example", 5_000)), fake.calls)
         assertFalse(fake.transport.closed)
         assertEquals(expectedUpgradeRequest(), fake.transport.outputBytes().toString(Charsets.UTF_8))
     }
@@ -207,8 +207,8 @@ class RawWebSocketLiveTest {
             randomProvider = deterministicRandomProvider(),
         )
 
-        assertEquals(10_000, fake.calls.single().timeoutMs)
-        assertEquals(listOf(10_000, 0), fake.transport.readTimeouts)
+        assertEquals(5_000, fake.calls.single().timeoutMs)
+        assertEquals(listOf(5_000, 0), fake.transport.readTimeouts)
     }
 
     @Test
@@ -225,7 +225,7 @@ class RawWebSocketLiveTest {
             )
         }
 
-        assertEquals(listOf(10_000), fake.transport.readTimeouts)
+        assertEquals(listOf(5_000), fake.transport.readTimeouts)
         assertTrue(fake.transport.closed)
     }
 
