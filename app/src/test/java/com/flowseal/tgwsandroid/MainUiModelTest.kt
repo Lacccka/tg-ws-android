@@ -1272,4 +1272,31 @@ class MainUiModelTest {
 
         return snapshot
     }
+    @Test
+    fun restartProxyServiceUsesServiceRestartIntentWithoutDelayedStopStart() {
+        val source = readRepoFile("app/src/main/java/com/flowseal/tgwsandroid/MainActivity.kt")
+        val restartMethod = source.substringBetween("private fun restartProxyService()", "private fun showEditHostDialog()")
+
+        assertTrue(restartMethod.contains("ProxyForegroundService.restartIntent(this)"))
+        assertFalse(restartMethod.contains("ProxyForegroundService.stopIntent(this)"))
+        assertFalse(restartMethod.contains("postDelayed"))
+        assertFalse(source.contains("RESTART_DELAY_MS"))
+    }
+
+    private fun readRepoFile(relativePath: String): String = java.io.File(repoRoot(), relativePath).readText()
+
+    private fun String.substringBetween(startMarker: String, endMarker: String): String {
+        val start = indexOf(startMarker)
+        require(start >= 0) { "Missing start marker: $startMarker" }
+        val end = indexOf(endMarker, start + startMarker.length)
+        require(end >= 0) { "Missing end marker: $endMarker" }
+        return substring(start, end)
+    }
+
+    private fun repoRoot(): java.io.File {
+        val userDir = requireNotNull(System.getProperty("user.dir")) { "Missing user.dir system property" }
+        return generateSequence(java.io.File(userDir)) { current -> current.parentFile }
+            .first { candidate -> java.io.File(candidate, "app/build.gradle.kts").isFile }
+    }
+
 }

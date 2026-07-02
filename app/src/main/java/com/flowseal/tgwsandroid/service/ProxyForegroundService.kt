@@ -80,6 +80,13 @@ class ProxyForegroundService : Service() {
                 State.addLog(stopSource.logMessage, LogSeverity.INFO, "service")
                 stopProxyAsync(stopSource.markerReason)
             }
+            ACTION_RESTART_FROM_UI -> {
+                State.markServiceEvent("restart_begin")
+                State.addLog("=== Proxy restart ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, "ui")
+                State.addLog("restart command received from UI", LogSeverity.INFO, "service")
+                State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
+                restartProxyAsync()
+            }
             ACTION_START, null -> {
                 State.addLog("=== Proxy start ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, "ui")
                 State.addLog("start command received", LogSeverity.INFO, "service")
@@ -138,7 +145,35 @@ class ProxyForegroundService : Service() {
     }
 
     private fun startProxyAsync() {
-        try {
+        if (!startOrRefreshForegroundNotification(stopServiceOnFailure = true)) return
+        executor.execute { startProxyBlocking(stopServiceOnFailure = true, successEvent = null, failureEvent = null) }
+    }
+
+    private fun restartProxyAsync() {
+        if (!startOrRefreshForegroundNotification(
+                stopServiceOnFailure = false,
+                failureEvent = "restart_failed_foreground_refresh",
+                preserveRunningStateOnFailure = true,
+            )
+        ) return
+        executor.execute {
+            stopProxyBlocking("restart")
+            State.markServiceEvent("restart_stop_completed")
+            State.addLog("restart_stop_completed", LogSeverity.INFO, "service")
+            startProxyBlocking(
+                stopServiceOnFailure = false,
+                successEvent = "restart_start_completed",
+                failureEvent = "restart_failed",
+            )
+        }
+    }
+
+    private fun startOrRefreshForegroundNotification(
+        stopServiceOnFailure: Boolean,
+        failureEvent: String? = null,
+        preserveRunningStateOnFailure: Boolean = false,
+    ): Boolean {
+        return try {
             val notification = buildNotification()
             State.markServiceEvent("foreground_notification_built")
             startForegroundCompat(notification)
@@ -148,47 +183,66 @@ class ProxyForegroundService : Service() {
                 "service",
             )
             State.markForegroundStarted()
+            true
         } catch (error: Throwable) {
-            State.setRunning(false, "service failed to start foreground: ${error.message ?: error::class.java.simpleName}")
-            stopSelf()
-            return
+            val message = "service failed to start foreground: ${error.message ?: error::class.java.simpleName}"
+            if (preserveRunningStateOnFailure) {
+                val serverStillRunning = synchronized(lock) { proxyServer?.isRunning == true }
+                State.setRunning(serverStillRunning, message)
+                State.markServiceEvent("restart_failed")
+                failureEvent?.let { State.markServiceEvent(it) }
+                failureEvent?.let { State.addLog("$it: ${error.message ?: error::class.java.simpleName}", LogSeverity.ERROR, "service") }
+            } else {
+                State.setRunning(false, message)
+            }
+            if (stopServiceOnFailure) stopSelf()
+            false
         }
-        executor.execute {
-            synchronized(lock) {
-                if (proxyServer?.isRunning == true) {
-                    State.setRunning(true, "Proxy already running on ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
-                    return@execute
-                }
-                State.addLog("proxy start requested", LogSeverity.INFO, "service")
-                State.markServiceEvent("proxy_start_requested")
-                registerNetworkCallback()
-                val logger = ProxyLogger { message -> State.addProxyLog(message) }
-                val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus), logger = logger)
-                proxyServer = server
-                State.setLiveStatsProvider { synchronized(lock) { proxyServer }?.stats() }
+    }
+
+    private fun startProxyBlocking(stopServiceOnFailure: Boolean, successEvent: String?, failureEvent: String?) {
+        synchronized(lock) {
+            if (proxyServer?.isRunning == true) {
+                State.setRunning(true, "Proxy already running on ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
+                successEvent?.let { State.markServiceEvent(it) }
+                successEvent?.let { State.addLog(it, LogSeverity.INFO, "service") }
+                return
+            }
+            State.addLog("proxy start requested", LogSeverity.INFO, "service")
+            State.markServiceEvent("proxy_start_requested")
+            registerNetworkCallback()
+            val logger = ProxyLogger { message -> State.addProxyLog(message) }
+            val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus), logger = logger)
+            proxyServer = server
+            State.setLiveStatsProvider { synchronized(lock) { proxyServer }?.stats() }
+            try {
+                server.start()
+                val stats = server.stats()
+                State.updateStats(stats)
+                State.setRunning(true, "Proxy running on ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
+                State.markProxyStarted()
+                successEvent?.let { State.markServiceEvent(it) }
+                successEvent?.let { State.addLog(it, LogSeverity.INFO, "service") }
+                State.addLog("proxy started", LogSeverity.INFO, "service")
+                acquireWakeLock()
+                startWatchdog()
+            } catch (error: Throwable) {
                 try {
-                    server.start()
-                    val stats = server.stats()
-                    State.updateStats(stats)
-                    State.setRunning(true, "Proxy running on ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
-                    State.markProxyStarted()
-                    State.addLog("proxy started", LogSeverity.INFO, "service")
-                    acquireWakeLock()
-                    startWatchdog()
-                } catch (error: Throwable) {
-                    try {
-                        server.stop()
-                    } catch (_: Throwable) {
-                        // Best-effort cleanup after a partial start failure.
-                    }
-                    proxyServer = null
-                    State.setLiveStatsProvider(null)
-                    State.updateStats(null)
-                    State.setRunning(false, "proxy start failed with exception: ${error.message ?: error::class.java.simpleName}")
-                    State.markProxyStopped("start_failed")
-                    unregisterNetworkCallback()
-                    releaseWakeLock()
-                    stopWatchdog()
+                    server.stop()
+                } catch (_: Throwable) {
+                    // Best-effort cleanup after a partial start failure.
+                }
+                proxyServer = null
+                State.setLiveStatsProvider(null)
+                State.updateStats(null)
+                State.setRunning(false, "proxy start failed with exception: ${error.message ?: error::class.java.simpleName}")
+                State.markProxyStopped(if (failureEvent == "restart_failed") "restart_failed" else "start_failed")
+                failureEvent?.let { State.markServiceEvent(it) }
+                failureEvent?.let { State.addLog("$it: ${error.message ?: error::class.java.simpleName}", LogSeverity.ERROR, "service") }
+                unregisterNetworkCallback()
+                releaseWakeLock()
+                stopWatchdog()
+                if (stopServiceOnFailure) {
                     stopForegroundCompat()
                     stopSelf()
                 }
@@ -544,6 +598,7 @@ class ProxyForegroundService : Service() {
         const val ACTION_STOP_FROM_UI = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_UI"
         const val ACTION_STOP_FROM_NOTIFICATION = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_NOTIFICATION"
         const val ACTION_STOP_FROM_TILE = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_TILE"
+        const val ACTION_RESTART_FROM_UI = "com.flowseal.tgwsandroid.action.RESTART_PROXY_FROM_UI"
         private const val CHANNEL_ID = "proxy_foreground"
         private const val NOTIFICATION_ID = 1001
         private const val WATCHDOG_INTERVAL_SECONDS = 45L
@@ -588,6 +643,8 @@ class ProxyForegroundService : Service() {
         fun startIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_START)
 
         fun stopIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_STOP_FROM_UI)
+
+        fun restartIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_RESTART_FROM_UI)
 
         fun stopFromTileIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_STOP_FROM_TILE)
 

@@ -994,14 +994,9 @@ class MainActivity : Activity() {
             return
         }
         requestNotificationPermissionIfNeeded()
-        transitionStatus = TransitionStatus.STOPPING
+        transitionStatus = TransitionStatus.STARTING
         pendingRestartRequired = false
-        startService(ProxyForegroundService.stopIntent(this))
-        handler.postDelayed({
-            transitionStatus = TransitionStatus.STARTING
-            startProxyService()
-            refreshState()
-        }, RESTART_DELAY_MS)
+        startService(ProxyForegroundService.restartIntent(this))
         refreshState()
     }
 
@@ -1946,7 +1941,6 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REFRESH_MS = 1_000L
-        private const val RESTART_DELAY_MS = 350L
         private const val REQUEST_POST_NOTIFICATIONS = 2001
         private const val KEY_PENDING_RESTART_REQUIRED = "pending_restart_required"
         private const val KEY_CURRENT_SCREEN = "current_screen"
