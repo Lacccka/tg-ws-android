@@ -40,6 +40,7 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.button.MaterialButtonToggleGroup
 import com.google.android.material.materialswitch.MaterialSwitch
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -67,6 +68,7 @@ class MainActivity : Activity() {
 
     private lateinit var statusText: TextView
     private lateinit var heroSubtitleText: TextView
+    private lateinit var heroProgressBar: ProgressBar
     private lateinit var networkText: TextView
     private lateinit var routeText: TextView
     private lateinit var qualityText: TextView
@@ -117,6 +119,7 @@ class MainActivity : Activity() {
     private var renderingScreen: Boolean = false
     private var pendingRestartRequired: Boolean = false
     private var transitionStatus: TransitionStatus = TransitionStatus.NONE
+    private var restartRequestedAtMs: Long = 0L
     private var diagnosticsLastCheckAtMs: Long? = null
     private var diagnosticsLastCheckDurationMs: Long? = null
     private var diagnosticsCheckInProgress: Boolean = false
@@ -236,6 +239,10 @@ class MainActivity : Activity() {
         val chipGap = (6 * density).toInt()
         statusText = createValueText(textSize = 30f, bold = true)
         heroSubtitleText = createValueText(textSize = 17f).apply { setTextColor(currentColorScheme().onSurfaceVariant) }
+        heroProgressBar = ProgressBar(this).apply {
+            isIndeterminate = true
+            visibility = View.GONE
+        }
         networkText = Badge("Wi-Fi")
         routeText = Badge("Авто")
         qualityText = Badge("Проверка…")
@@ -266,6 +273,7 @@ class MainActivity : Activity() {
             addView(SettingsSection("") {
                 addView(statusText, matchWrapParams())
                 addView(heroSubtitleText, matchWrapParams(topMargin = rowGap))
+                addView(heroProgressBar, matchWrapParams(topMargin = rowGap))
                 addView(chipsRow, matchWrapParams(topMargin = padding))
                 addView(restartRequiredText, matchWrapParams(topMargin = rowGap))
                 addView(telegramCleanupHintText, matchWrapParams(topMargin = rowGap))
@@ -462,9 +470,8 @@ class MainActivity : Activity() {
         ProxyRuntimeConfig.initialize(applicationContext)
         refreshLocalDiagnostics()
         val running = ProxyForegroundService.State.running
-        if (!running && transitionStatus != TransitionStatus.STARTING) pendingRestartRequired = false
-        if (transitionStatus == TransitionStatus.STARTING && running) transitionStatus = TransitionStatus.NONE
-        if (transitionStatus == TransitionStatus.STOPPING && !running) transitionStatus = TransitionStatus.NONE
+        if (!running && transitionStatus != TransitionStatus.STARTING && transitionStatus != TransitionStatus.RESTARTING) pendingRestartRequired = false
+        updateTransitionStatus(running)
         val failed = ProxyForegroundService.State.lastStatus.contains("failed", ignoreCase = true) ||
             ProxyForegroundService.State.lastStatus.contains("error", ignoreCase = true)
 
@@ -472,6 +479,7 @@ class MainActivity : Activity() {
             val stats = ProxyForegroundService.State.stats()
             val starting = transitionStatus == TransitionStatus.STARTING
             val stopping = transitionStatus == TransitionStatus.STOPPING
+            val restarting = transitionStatus == TransitionStatus.RESTARTING
             val healthLabel = userHealthLabel(running, stats, starting, failed)
             val telegramConnected = telegramConnected(running, stats)
             val unstable = failed || healthLabel == "Нестабильно" || TelegramStatusUiText.showTelegramReconnectWarning(stats)
@@ -480,6 +488,7 @@ class MainActivity : Activity() {
                 running = running,
                 starting = starting,
                 stopping = stopping,
+                restarting = restarting,
                 failed = failed,
                 healthLabel = healthLabel,
                 telegramReconnectWarning = TelegramStatusUiText.showTelegramReconnectWarning(stats),
@@ -488,6 +497,7 @@ class MainActivity : Activity() {
 
             statusText.text = hero.title
             heroSubtitleText.text = hero.subtitle
+            heroProgressBar.visibility = if (starting || restarting) View.VISIBLE else View.GONE
             networkText.text = userNetworkChipLabel(ProxyForegroundService.State.networkStatus)
             routeText.text = userModeChipLabel()
             qualityText.text = healthLabel
@@ -496,6 +506,7 @@ class MainActivity : Activity() {
                 running = running,
                 starting = starting,
                 stopping = stopping,
+                restarting = restarting,
                 settingsChangedPendingRestart = pendingRestartRequired && running,
             )
 
@@ -505,7 +516,7 @@ class MainActivity : Activity() {
 
             connectTelegramButton.text = actions.restartAction.orEmpty()
             connectTelegramButton.visibility = if (actions.restartAction == null) View.GONE else View.VISIBLE
-            connectTelegramButton.isEnabled = running
+            connectTelegramButton.isEnabled = running && !restarting
             connectTelegramButton.setOnClickListener { restartProxyService() }
 
             restartRequiredText.text = actions.restartNote.orEmpty()
@@ -994,12 +1005,37 @@ class MainActivity : Activity() {
             return
         }
         requestNotificationPermissionIfNeeded()
-        transitionStatus = TransitionStatus.STARTING
+        transitionStatus = TransitionStatus.RESTARTING
+        restartRequestedAtMs = SystemClock.elapsedRealtime()
         pendingRestartRequired = false
         startService(ProxyForegroundService.restartIntent(this))
         refreshState()
     }
 
+
+    private fun updateTransitionStatus(running: Boolean) {
+        when (transitionStatus) {
+            TransitionStatus.STARTING -> if (running) transitionStatus = TransitionStatus.NONE
+            TransitionStatus.STOPPING -> if (!running) transitionStatus = TransitionStatus.NONE
+            TransitionStatus.RESTARTING -> {
+                val elapsedMs = SystemClock.elapsedRealtime() - restartRequestedAtMs
+                when {
+                    elapsedMs >= RESTART_UI_TIMEOUT_MS -> {
+                        transitionStatus = TransitionStatus.NONE
+                        restartRequestedAtMs = 0L
+                    }
+                    running && elapsedMs >= RESTART_UI_MIN_DURATION_MS -> {
+                        transitionStatus = TransitionStatus.NONE
+                        restartRequestedAtMs = 0L
+                    }
+                    running -> handler.postDelayed({
+                        if (!isFinishing && !isDestroyed) refreshState()
+                    }, (RESTART_UI_MIN_DURATION_MS - elapsedMs).coerceAtLeast(0L))
+                }
+            }
+            TransitionStatus.NONE -> Unit
+        }
+    }
 
     private fun showEditHostDialog() {
         val current = ProxyRuntimeConfig.appConfig(applicationContext)
@@ -1929,7 +1965,7 @@ class MainActivity : Activity() {
             fun fromItemId(itemId: Int): Screen? = entries.firstOrNull { it.itemId == itemId }
         }
     }
-    private enum class TransitionStatus { NONE, STARTING, STOPPING }
+    private enum class TransitionStatus { NONE, STARTING, STOPPING, RESTARTING }
 
     private data class RecommendationCardModel(
         val id: String,
@@ -1941,6 +1977,8 @@ class MainActivity : Activity() {
 
     companion object {
         private const val REFRESH_MS = 1_000L
+        private const val RESTART_UI_MIN_DURATION_MS = 1_000L
+        private const val RESTART_UI_TIMEOUT_MS = 10_000L
         private const val REQUEST_POST_NOTIFICATIONS = 2001
         private const val KEY_PENDING_RESTART_REQUIRED = "pending_restart_required"
         private const val KEY_CURRENT_SCREEN = "current_screen"

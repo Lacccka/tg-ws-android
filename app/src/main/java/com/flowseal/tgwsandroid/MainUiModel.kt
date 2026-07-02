@@ -440,6 +440,7 @@ object MainActionModelMapper {
     const val STOP_ACTION = "Остановить"
     const val CONNECT_TELEGRAM_ACTION = "Подключить Telegram"
     const val RESTART_ACTION = "Переподключить"
+    const val RESTARTING_ACTION = "Перезапускаем…"
     const val PENDING_RESTART_NOTE = "Переподключите прокси, чтобы применить изменения"
 
     fun actions(
@@ -447,7 +448,14 @@ object MainActionModelMapper {
         starting: Boolean,
         stopping: Boolean,
         settingsChangedPendingRestart: Boolean,
+        restarting: Boolean = false,
     ): MainActionModel = when {
+        restarting -> MainActionModel(
+            primaryAction = null,
+            restartAction = RESTARTING_ACTION,
+            telegramAction = null,
+            restartNote = if (settingsChangedPendingRestart) PENDING_RESTART_NOTE else null,
+        )
         starting || stopping -> MainActionModel(
             primaryAction = null,
             restartAction = null,
@@ -472,6 +480,8 @@ object MainActionModelMapper {
 object MainHeroStateMapper {
     const val STARTING_TITLE = "Подключаемся…"
     const val STOPPING_TITLE = "Останавливаем…"
+    const val RESTARTING_TITLE = "Переподключаемся…"
+    const val RESTARTING_SUBTITLE = "Обновляем соединение. Это займёт несколько секунд."
     const val STOPPED_TITLE = "Прокси выключен"
     const val UNSTABLE_TITLE = "Подключение нестабильно"
     const val TELEGRAM_NOT_CONNECTED_TITLE = "Почти готово"
@@ -490,7 +500,9 @@ object MainHeroStateMapper {
         healthLabel: String,
         telegramReconnectWarning: Boolean,
         telegramConnected: Boolean,
+        restarting: Boolean = false,
     ): MainHeroState = when {
+        restarting -> MainHeroState(RESTARTING_TITLE, RESTARTING_SUBTITLE, null, null)
         stopping -> MainHeroState(STOPPING_TITLE, "Прокси выключается", null, null)
         starting -> MainHeroState(STARTING_TITLE, "Это займёт несколько секунд", null, null)
         !running -> MainHeroState(STOPPED_TITLE, "Включите подключение", null, null)

@@ -527,6 +527,33 @@ class MainUiModelTest {
         assertTrue(actions.visibleActions.isEmpty())
     }
 
+
+    @Test
+    fun restartingHeroAndActionsShowExplicitRestartFeedback() {
+        val hero = MainHeroStateMapper.state(
+            running = true,
+            starting = false,
+            stopping = false,
+            failed = false,
+            healthLabel = "Стабильно",
+            telegramReconnectWarning = false,
+            telegramConnected = true,
+            restarting = true,
+        )
+        val actions = MainActionModelMapper.actions(
+            running = true,
+            starting = false,
+            stopping = false,
+            settingsChangedPendingRestart = false,
+            restarting = true,
+        )
+
+        assertEquals("Переподключаемся…", hero.title)
+        assertEquals("Обновляем соединение. Это займёт несколько секунд.", hero.subtitle)
+        assertEquals("Перезапускаем…", actions.restartAction)
+        assertEquals(listOf("Перезапускаем…"), actions.visibleActions)
+    }
+
     @Test
     fun mainHeroDoesNotExposeDiagnosticsAction() {
         val scenarios = listOf(
@@ -1277,10 +1304,16 @@ class MainUiModelTest {
         val source = readRepoFile("app/src/main/java/com/flowseal/tgwsandroid/MainActivity.kt")
         val restartMethod = source.substringBetween("private fun restartProxyService()", "private fun showEditHostDialog()")
 
+        assertTrue(restartMethod.contains("transitionStatus = TransitionStatus.RESTARTING"))
+        assertFalse(restartMethod.contains("transitionStatus = TransitionStatus.STARTING"))
+        assertTrue(restartMethod.contains("restartRequestedAtMs = SystemClock.elapsedRealtime()"))
         assertTrue(restartMethod.contains("ProxyForegroundService.restartIntent(this)"))
         assertFalse(restartMethod.contains("ProxyForegroundService.stopIntent(this)"))
-        assertFalse(restartMethod.contains("postDelayed"))
+        assertFalse(restartMethod.contains("stopIntent"))
+        assertFalse(restartMethod.contains("RESTART_DELAY_MS"))
         assertFalse(source.contains("RESTART_DELAY_MS"))
+        assertTrue(source.contains("RESTART_UI_MIN_DURATION_MS"))
+        assertTrue(source.contains("RESTART_UI_TIMEOUT_MS"))
     }
 
     private fun readRepoFile(relativePath: String): String = java.io.File(repoRoot(), relativePath).readText()
