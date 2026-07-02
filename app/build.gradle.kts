@@ -31,17 +31,20 @@ android {
         buildConfigField("String", "BUILD_FLAVOR_NAME", "\"none\"")
         buildConfigField("String", "TELEMETRY_ENDPOINT", "\"https://d5dqfsreu76tk91ifakc.xxg4zr82.apigw.yandexcloud.net/telemetry\"")
         buildConfigField("String", "TELEMETRY_TOKEN", "\"${providers.gradleProperty("TELEMETRY_TOKEN").orNull ?: ""}\"")
+        buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
     }
 
     buildTypes {
         getByName("debug") {
             manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
+            buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
         }
 
         getByName("release") {
             manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
+            buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
         }
 
         create("sideload") {
@@ -49,6 +52,16 @@ android {
             matchingFallbacks += listOf("debug")
             manifestPlaceholders["proxyForegroundServiceType"] = "specialUse"
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"specialUse\"")
+            buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
+        }
+
+        create("privateSideload") {
+            initWith(getByName("sideload"))
+            matchingFallbacks += listOf("sideload", "debug")
+            manifestPlaceholders["proxyForegroundServiceType"] = "specialUse"
+            buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"specialUse\"")
+            buildConfigField("String", "BUILD_FLAVOR_NAME", "\"privateSideload\"")
+            buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "true")
         }
     }
 

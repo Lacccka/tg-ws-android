@@ -115,6 +115,7 @@ class MainActivity : Activity() {
     private lateinit var rawRouteDetailsText: TextView
     private lateinit var cfDetailsText: TextView
     private lateinit var directDetailsText: TextView
+    private lateinit var handshakeDetailsText: TextView
 
     private var currentScreen: Screen = Screen.HOME
     private var renderingScreen: Boolean = false
@@ -338,6 +339,7 @@ class MainActivity : Activity() {
         rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        handshakeDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         developerSection = SettingsSection("Для разработчика") {
             addView(createValueText().apply {
                 text = "Показывает технические разделы во вкладке «Диагностика»."
@@ -551,7 +553,7 @@ class MainActivity : Activity() {
             if (::telemetrySwitch.isInitialized) telemetrySwitch.isChecked = config.telemetryEnabled
             if (::telemetryTestButton.isInitialized) {
                 telemetryTestButton.isEnabled = config.telemetryEnabled
-                telemetryTestButton.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+                telemetryTestButton.visibility = if (testTelemetryButtonEnabledInThisBuild() && developerModeEnabled()) View.VISIBLE else View.GONE
             }
             secretStateText.text = ProxyRuntimeConfig.partialTelegramSecret(applicationContext)
         }
@@ -561,6 +563,7 @@ class MainActivity : Activity() {
             rawRouteDetailsText.text = routeDetailsLine()
             cfDetailsText.text = cfDetailsLine()
             directDetailsText.text = directDetailsLine()
+            if (::handshakeDetailsText.isInitialized) handshakeDetailsText.text = handshakeDetailsLine()
             if (::telemetryStatusText.isInitialized) {
                 val enabled = ProxyRuntimeConfig.appConfig(applicationContext).telemetryEnabled
                 telemetryStatusText.text = "Анонимная диагностика: ${if (enabled) "включена" else "выключена"}"
@@ -585,10 +588,13 @@ class MainActivity : Activity() {
         diagnosticsLastConnectionText = createValueText()
         diagnosticsCheckButton = createButton("Проверить сейчас") { runDiagnosticsAvailabilityCheck() }
         telemetryStatusText = createValueText()
-        telemetryTestButton = createButton("Отправить тестовую телеметрию") { sendTestTelemetry() }
+        if (testTelemetryButtonEnabledInThisBuild()) {
+            telemetryTestButton = createButton("Отправить тестовую телеметрию") { sendTestTelemetry() }
+        }
         rawRouteDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         cfDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         directDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
+        handshakeDetailsText = createValueText(textSize = 13f).apply { setTextIsSelectable(true) }
         developerSection = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
@@ -620,13 +626,15 @@ class MainActivity : Activity() {
                 addView(createButton("Поделиться диагностикой") { shareDiagnostics() }, matchWrapParams(topMargin = rowGap))
                 addView(createButton("Открыть лог") { showLogsDialog() }, matchWrapParams(topMargin = rowGap))
                 addView(createButton("Очистить логи") { confirmClearLogs() }, matchWrapParams(topMargin = rowGap))
-                telemetryTestButton.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
-                addView(telemetryTestButton, matchWrapParams(topMargin = rowGap))
+                if (testTelemetryButtonEnabledInThisBuild()) {
+                    telemetryTestButton.visibility = if (developerModeEnabled()) View.VISIBLE else View.GONE
+                    addView(telemetryTestButton, matchWrapParams(topMargin = rowGap))
+                }
             }, cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Маршрут: детали", rawRouteDetailsText), cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Cloudflare: детали", cfDetailsText), cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Direct/pool: детали", directDetailsText), cardParams(topMargin = padding))
-            developerSection.addView(CollapsibleSettingsSection("Handshake: детали", createValueText(textSize = 13f).apply { text = directDetailsLine(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
+            developerSection.addView(CollapsibleSettingsSection("Handshake: детали", handshakeDetailsText), cardParams(topMargin = padding))
             developerSection.addView(CollapsibleSettingsSection("Счётчики", createValueText(textSize = 13f).apply { text = developerCountersSummary(); setTextIsSelectable(true) }), cardParams(topMargin = padding))
             addView(developerSection, matchWrapParams())
         }
@@ -938,13 +946,11 @@ class MainActivity : Activity() {
         return "CF health=${stats.cfHealthEnabled}, domains=${stats.cfDomainsTotal}, cooldown=${stats.cfDomainsInCooldown}, 429=${stats.cf429Count}, queueFailures=${stats.cfQueueControlledFailures}, pool=${stats.poolHits}/${stats.poolMisses}"
     }
 
-    private fun directDetailsLine(): String {
-        val stats = ProxyForegroundService.State.stats() ?: return "direct health: unknown"
-        return "direct health=${stats.directHealthState}, attempts=${stats.directAttempts}, failures=${stats.directHealthFailures}, cooldownUntil=${stats.directCooldownUntil}, route state=${stats.lastRouteUsed ?: "none"}; " +
-            "Invalid MTProto handshake storm=${stats.badHandshakeStormRecent}, badHandshakeRatio=${String.format(java.util.Locale.US, "%.3f", stats.badHandshakeRatio)}, " +
-            "handshakeDiagnosticState=${stats.handshakeDiagnosticState}, handshakeDiagnosticReason=${stats.handshakeDiagnosticReason}, " +
-            "badHandshakeRecommendation=${stats.badHandshakeRecommendation}"
-    }
+    private fun directDetailsLine(): String =
+        DeveloperDiagnosticsFormatter.directPoolDetails(ProxyForegroundService.State.stats())
+
+    private fun handshakeDetailsLine(): String =
+        DeveloperDiagnosticsFormatter.handshakeDetails(ProxyForegroundService.State.stats())
 
 
     private fun developerCountersSummary(): String {
@@ -1463,6 +1469,15 @@ class MainActivity : Activity() {
     }
 
     private fun sendTestTelemetry() {
+        if (!BuildConfig.ENABLE_TEST_TELEMETRY_BUTTON) {
+            ProxyForegroundService.State.addLog(
+                "test telemetry button is disabled in this build",
+                LogSeverity.WARN,
+                "ui",
+            )
+            Toast.makeText(this, "Тестовая телеметрия недоступна в этой сборке", Toast.LENGTH_SHORT).show()
+            return
+        }
         val config = AppConfigStore.from(applicationContext).loadConfig()
         if (!config.telemetryEnabled) {
             Toast.makeText(this, "Сначала включите анонимную диагностику", Toast.LENGTH_SHORT).show()
@@ -1546,6 +1561,9 @@ class MainActivity : Activity() {
     }
 
     private fun developerModeEnabled(): Boolean = prefs.getBoolean(PREF_DEVELOPER_MODE, false)
+
+    private fun testTelemetryButtonEnabledInThisBuild(): Boolean =
+        BuildConfig.ENABLE_TEST_TELEMETRY_BUTTON
 
     private fun SettingsSection(title: String, subtitle: String? = null, body: LinearLayout.() -> Unit): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
