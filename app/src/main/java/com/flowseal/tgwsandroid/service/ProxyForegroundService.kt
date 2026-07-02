@@ -288,7 +288,7 @@ class ProxyForegroundService : Service() {
         val manager = getSystemService(NotificationManager::class.java)
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Прокси TG WS Android",
+            "Прокси Siberian Empire Proxy",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
             description = "Статус фоновой работы прокси"
@@ -319,7 +319,7 @@ class ProxyForegroundService : Service() {
             Notification.Builder(this)
         }
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
-            .setContentTitle("TG WS Android")
+            .setContentTitle("Siberian Empire Proxy")
             .setContentText("Прокси работает: ${ProxyRuntimeConfig.endpointSummary(applicationContext)}")
             .setContentIntent(activityPendingIntent)
             .setOngoing(true)

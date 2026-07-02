@@ -266,7 +266,7 @@ object DiagnosticReportFormatter {
     )
 
     fun format(snapshot: DiagnosticSnapshot): String = buildString {
-        appendLine("TG WS Android diagnostics")
+        appendLine("Siberian Empire Proxy diagnostics")
         appendLine("Generated: ${snapshot.generated.format(GENERATED_FORMATTER)}")
         appendLine("Build:")
         appendLine("  applicationId: ${snapshot.applicationId}")

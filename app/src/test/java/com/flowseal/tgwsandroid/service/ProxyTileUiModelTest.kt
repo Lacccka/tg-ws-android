@@ -6,7 +6,7 @@ import org.junit.Test
 class ProxyTileUiModelTest {
     @Test
     fun tileLabelIsTgProxy() {
-        assertEquals("TG Proxy", ProxyTileUiModel.LABEL)
+        assertEquals("Siberian Empire Proxy", ProxyTileUiModel.LABEL)
     }
 
     @Test

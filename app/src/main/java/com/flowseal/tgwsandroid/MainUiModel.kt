@@ -203,7 +203,7 @@ object SettingsUiText {
     const val QS_TILE_TEXT = "Добавьте быстрый переключатель, чтобы включать и останавливать прокси без открытия приложения."
     const val QS_TILE_HELP_BUTTON = "Добавить кнопку"
     const val QS_TILE_HELP_TITLE = "Как добавить кнопку"
-    const val QS_TILE_HELP_MESSAGE = "Откройте шторку быстрых настроек, нажмите изменить и добавьте TG WS."
+    const val QS_TILE_HELP_MESSAGE = "Откройте шторку быстрых настроек, нажмите изменить и добавьте Siberian Empire Proxy."
 
     fun batteryStatusLine(status: String): String = "Статус: $status"
 }

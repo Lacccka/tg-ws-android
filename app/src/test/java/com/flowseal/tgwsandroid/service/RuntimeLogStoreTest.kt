@@ -351,7 +351,7 @@ class RuntimeLogStoreTest {
             ),
         )
 
-        assertTrue(report.contains("TG WS Android diagnostics"))
+        assertTrue(report.contains("Siberian Empire Proxy diagnostics"))
         assertTrue(report.contains("Generated: 2026-06-04 02:45:30"))
         assertTrue(report.contains("Status: proxy running on 127.0.0.1:1443"))
         assertTrue(report.contains("Endpoint: 127.0.0.1:1443"))

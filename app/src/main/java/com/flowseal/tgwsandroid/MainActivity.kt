@@ -57,6 +57,7 @@ import com.flowseal.tgwsandroid.service.LogSeverity
 import com.flowseal.tgwsandroid.service.ProxyForegroundService
 import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
 import com.flowseal.tgwsandroid.service.ProxyQuickSettingsTileService
+import com.flowseal.tgwsandroid.service.ProxyTileUiModel
 import com.flowseal.tgwsandroid.telemetry.Telemetry
 import kotlin.concurrent.thread
 
@@ -386,16 +387,14 @@ class MainActivity : Activity() {
     private fun LinearLayout.addHeader() {
         val smallPadding = (8 * resources.displayMetrics.density).toInt()
         addView(TextView(this@MainActivity).apply {
-            text = "TG WS"
+            text = "Siberian Empire Proxy"
             textSize = 26f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(currentColorScheme().onSurface)
-        }, matchWrapParams())
-        addView(TextView(this@MainActivity).apply {
-            text = "Локальный прокси для Telegram"
-            textSize = 15f
-            setTextColor(currentColorScheme().onSurfaceVariant)
-            setPadding(0, smallPadding / 2, 0, smallPadding)
+            setPadding(0, 0, 0, smallPadding * 2)
+
+            gravity = android.view.Gravity.CENTER_HORIZONTAL
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
         }, matchWrapParams())
     }
 
@@ -1286,13 +1285,13 @@ class MainActivity : Activity() {
             return
         }
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Диагностика TG WS Android", ProxyForegroundService.State.diagnosticReport()))
+        clipboard.setPrimaryClip(ClipData.newPlainText("Диагностика Siberian Empire Proxy", ProxyForegroundService.State.diagnosticReport()))
         Toast.makeText(this, "Диагностика скопирована", Toast.LENGTH_SHORT).show()
     }
 
     private fun copyDiagnosticsToClipboard(diagnosticsReport: String) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("Диагностика TG WS Android", diagnosticsReport))
+        clipboard.setPrimaryClip(ClipData.newPlainText("Диагностика Siberian Empire Proxy", diagnosticsReport))
     }
 
     private fun shareDiagnostics() {
@@ -1319,8 +1318,8 @@ class MainActivity : Activity() {
         }
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_SUBJECT, "Диагностика TG WS Android")
-            putExtra(Intent.EXTRA_TEXT, "Файл диагностики TG WS Android во вложении.")
+            putExtra(Intent.EXTRA_SUBJECT, "Диагностика Siberian Empire Proxy")
+            putExtra(Intent.EXTRA_TEXT, "Файл диагностики Siberian Empire Proxy во вложении.")
             putExtra(Intent.EXTRA_STREAM, export.uri)
             clipData = ClipData.newUri(contentResolver, export.file.name, export.uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -1429,7 +1428,7 @@ class MainActivity : Activity() {
             try {
                 statusBarManager.requestAddTileService(
                     component,
-                    "TG Proxy",
+                    ProxyTileUiModel.LABEL,
                     Icon.createWithResource(this, R.drawable.ic_qs_tg_proxy),
                     mainExecutor,
                 ) { result ->

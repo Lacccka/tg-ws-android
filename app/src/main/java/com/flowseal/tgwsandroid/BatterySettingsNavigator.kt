@@ -99,7 +99,7 @@ object BatterySettingsIntentPlan {
             className = MIUI_HIDDEN_APPS_ACTIVITY,
             extras = mapOf(
                 MIUI_EXTRA_PACKAGE_NAME to packageName,
-                MIUI_EXTRA_PACKAGE_LABEL to "TG Proxy",
+                MIUI_EXTRA_PACKAGE_LABEL to "Siberian Empire Proxy",
             ),
         ),
     )

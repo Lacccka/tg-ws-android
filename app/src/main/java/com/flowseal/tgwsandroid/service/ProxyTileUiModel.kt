@@ -1,7 +1,7 @@
 package com.flowseal.tgwsandroid.service
 
 object ProxyTileUiModel {
-    const val LABEL = "TG Proxy"
+    const val LABEL = "Siberian Empire Proxy"
     const val SUBTITLE_RUNNING = "Включён"
     const val SUBTITLE_STOPPED = "Остановлен"
     const val STATE_ACTIVE = 2

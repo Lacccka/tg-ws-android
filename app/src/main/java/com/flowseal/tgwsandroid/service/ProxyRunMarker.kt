@@ -159,7 +159,7 @@ class ProxyRunMarker(
             markerFile.parentFile?.mkdirs()
             val props = Properties()
             values.forEach { (key, value) -> props.setProperty(key, value) }
-            markerFile.outputStream().use { props.store(it, "TG WS Android proxy run marker") }
+            markerFile.outputStream().use { props.store(it, "Siberian Empire Proxy proxy run marker") }
         }
     }
 

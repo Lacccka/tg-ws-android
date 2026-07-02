@@ -27,7 +27,7 @@ class DiagnosticsFileExporterTest {
 
     @Test
     fun writeDiagnosticsTextPreservesContent() {
-        val diagnosticsText = "TG WS Android diagnostics\nLine with unicode: Привіт 🚀\nFinal line"
+        val diagnosticsText = "Siberian Empire Proxy diagnostics\nLine with unicode: Привіт 🚀\nFinal line"
         val file = temporaryFolder.newFile("diagnostics.txt")
 
         DiagnosticsFileExporter.writeDiagnosticsText(file, diagnosticsText)
