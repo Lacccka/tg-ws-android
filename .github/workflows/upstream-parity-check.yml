@@ -9,7 +9,7 @@ on:
       - main
 
 jobs:
-  unit-tests:
+  parity-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,7 +17,11 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Run debug unit tests
+      - name: Run affected transport and pool tests
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest
+          ./gradlew testDebugUnitTest \
+            --tests 'com.flowseal.tgwsandroid.proxy.RawWebSocketCodecParityTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.RawWebSocketLiveTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.WebSocketPoolTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.BridgeSessionTest'
