@@ -2,6 +2,7 @@ package com.flowseal.tgwsandroid.proxy
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.IOException
@@ -30,18 +31,18 @@ class WebSocketPoolTest {
             )
         val key = WebSocketPool.Key(2, false)
 
-        assertEquals(null, pool.get(2, false, TARGET, listOf(DOMAIN)))
+        assertNull(pool.get(2, false, TARGET, listOf(DOMAIN)))
 
         assertEquals(4, calls.get())
         assertEquals(1, pool.refillFailuresSnapshot()[key])
         assertEquals(60_000L, pool.refillBackoffUntilSnapshot()[key])
 
-        assertEquals(null, pool.get(2, false, TARGET, listOf(DOMAIN)))
+        assertNull(pool.get(2, false, TARGET, listOf(DOMAIN)))
         assertEquals(4, calls.get())
         assertEquals(1, suppressed.get())
 
         now = 60_000L
-        assertEquals(null, pool.get(2, false, TARGET, listOf(DOMAIN)))
+        assertNull(pool.get(2, false, TARGET, listOf(DOMAIN)))
 
         assertEquals(8, calls.get())
         assertEquals(2, pool.refillFailuresSnapshot()[key])
@@ -116,12 +117,12 @@ class WebSocketPoolTest {
             )
         val key = WebSocketPool.Key(2, false)
 
-        assertEquals(null, pool.get(2, false, TARGET, listOf(DOMAIN)))
+        assertNull(pool.get(2, false, TARGET, listOf(DOMAIN)))
         assertEquals(1, pool.readyCount(2, false))
         assertEquals(1, created.size)
 
         created.single().usable = false
-        assertEquals(null, pool.get(2, false, TARGET, listOf(DOMAIN)))
+        assertNull(pool.get(2, false, TARGET, listOf(DOMAIN)))
 
         assertTrue(created.first().closed)
         assertEquals(2, created.size)
