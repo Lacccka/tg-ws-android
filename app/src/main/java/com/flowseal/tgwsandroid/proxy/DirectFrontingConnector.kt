@@ -23,6 +23,9 @@ internal data class DirectFrontingConnectResult(
  * networks much more frequently, so carrying a preference learned on one Wi-Fi
  * or mobile network into another network is unsafe. This state is therefore
  * scoped to the current network generation and to DC/media/target-host.
+ *
+ * Network generations are monotonic. A stale in-flight connect from an older
+ * generation must never roll preference state backwards after a network change.
  */
 internal class DirectFrontingPreferenceState {
     private val lock = Any()
@@ -33,8 +36,7 @@ internal class DirectFrontingPreferenceState {
         key: DirectFrontingRouteKey,
         networkGeneration: Long,
     ): Boolean = synchronized(lock) {
-        ensureGenerationLocked(networkGeneration)
-        key in preferred
+        ensureGenerationLocked(networkGeneration) && key in preferred
     }
 
     fun recordFrontingSuccess(
@@ -42,8 +44,7 @@ internal class DirectFrontingPreferenceState {
         networkGeneration: Long,
     ) {
         synchronized(lock) {
-            ensureGenerationLocked(networkGeneration)
-            preferred.add(key)
+            if (ensureGenerationLocked(networkGeneration)) preferred.add(key)
         }
     }
 
@@ -52,29 +53,28 @@ internal class DirectFrontingPreferenceState {
         networkGeneration: Long,
     ) {
         synchronized(lock) {
-            ensureGenerationLocked(networkGeneration)
-            preferred.remove(key)
+            if (ensureGenerationLocked(networkGeneration)) preferred.remove(key)
         }
     }
 
     fun clearForNetworkGeneration(networkGeneration: Long) {
         synchronized(lock) {
-            if (generation != networkGeneration) {
-                generation = networkGeneration
-                preferred.clear()
-            }
+            ensureGenerationLocked(networkGeneration)
         }
     }
 
     fun preferredSnapshot(networkGeneration: Long): Set<DirectFrontingRouteKey> = synchronized(lock) {
-        ensureGenerationLocked(networkGeneration)
-        preferred.toSet()
+        if (ensureGenerationLocked(networkGeneration)) preferred.toSet() else emptySet()
     }
 
-    private fun ensureGenerationLocked(networkGeneration: Long) {
-        if (generation == networkGeneration) return
-        generation = networkGeneration
-        preferred.clear()
+    /** Returns false when [networkGeneration] is stale and therefore must not mutate state. */
+    private fun ensureGenerationLocked(networkGeneration: Long): Boolean {
+        if (networkGeneration < generation) return false
+        if (networkGeneration > generation) {
+            generation = networkGeneration
+            preferred.clear()
+        }
+        return true
     }
 }
 

@@ -6,11 +6,13 @@ on:
       - upstream-v1.10-core-parity
       - upstream-v1.10-fronting
       - upstream-v1.10-fronting-runtime
+      - upstream-v1.10-fronting-pool-diagnostics
   pull_request:
     branches:
       - main
       - upstream-v1.10-core-parity
       - upstream-v1.10-fronting
+      - upstream-v1.10-fronting-runtime
 
 jobs:
   parity-tests:
@@ -21,7 +23,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Run affected transport, pool, fronting, and runtime tests
+      - name: Run affected transport, pool, fronting, runtime, diagnostics, and telemetry tests
         run: |
           chmod +x ./gradlew
           ./gradlew testDebugUnitTest \
@@ -29,9 +31,15 @@ jobs:
             --tests 'com.flowseal.tgwsandroid.proxy.RawWebSocketLiveTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.RawWebSocketSniTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.DirectFrontingConnectorTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.DirectFrontingPreferenceStateTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.WebSocketPoolTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.WebSocketPoolFrontingTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.BridgeSessionTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerFrontingTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerFrontingPoolDiagnosticsTest' \
+            --tests 'com.flowseal.tgwsandroid.DeveloperDiagnosticsFormatterTest' \
+            --tests 'com.flowseal.tgwsandroid.service.FrontingDiagnosticReportTest' \
+            --tests 'com.flowseal.tgwsandroid.telemetry.TelemetryFrontingDiagnosticsTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerTest.validHandshakeConnectsToDcSendsRelayInitThenRunsBridge' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerTest.autoMobileCfFirstCfExhaustedAllowsBoundedDirectRescueWithoutPool' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerTest.autoMobileDirectRescueFailureSetsCooldownAndSuppressesRepeat' \

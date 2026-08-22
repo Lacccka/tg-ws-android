@@ -226,6 +226,10 @@ data class DirectPoolDiagnosticsSnapshot(
     val refillAttemptsByKey: Map<String, Long> = emptyMap(),
     val refillSuccessesByKey: Map<String, Long> = emptyMap(),
     val refillErrorsByKey: Map<String, Long> = emptyMap(),
+    val refillFailureWavesByKey: Map<String, Int> = emptyMap(),
+    val refillBackoffRemainingMsByKey: Map<String, Long> = emptyMap(),
+    val refillBackoffSuppressedByKey: Map<String, Long> = emptyMap(),
+    val closedIdlePrunedByKey: Map<String, Long> = emptyMap(),
     val staleByKey: Map<String, Long> = emptyMap(),
     val lastRefillErrorByKey: Map<String, String> = emptyMap(),
     val lastRefillTimeMsByKey: Map<String, Long> = emptyMap(),
@@ -287,6 +291,14 @@ class ProxyServerStats {
     var lastEffectiveRouteModeUpdateTimeMs: Long? = null
     var lastRouteUsedUpdateTimeMs: Long? = null
     var directTimeouts: Long = 0
+    var frontingAttempts: Long = 0
+    var frontingSuccesses: Long = 0
+    var frontingFailures: Long = 0
+    var frontingFirstAttempts: Long = 0
+    var frontingFallbackAttempts: Long = 0
+    var frontingPreferredKeys: List<String> = emptyList()
+    var lastFrontingError: String? = null
+    var lastFrontingTimeMs: Long = 0
     var lastCfDomain: String? = null
     var directAttempts: Long = 0
     var directAttemptsSkippedBecauseRoute: Long = 0
@@ -888,6 +900,7 @@ class ProxyServer(
     private val poolRefillAttemptsByKey = ConcurrentHashMap<String, AtomicLong>()
     private val poolRefillSuccessesByKey = ConcurrentHashMap<String, AtomicLong>()
     private val poolRefillErrorsByKey = ConcurrentHashMap<String, AtomicLong>()
+    private val poolRefillBackoffSuppressedByKey = ConcurrentHashMap<String, AtomicLong>()
     private val poolStaleByKey = ConcurrentHashMap<String, AtomicLong>()
     private val poolLastRefillErrorByKey = ConcurrentHashMap<String, String>()
     private val poolLastRefillTimeMsByKey = ConcurrentHashMap<String, AtomicLong>()
@@ -994,6 +1007,11 @@ class ProxyServer(
     private val frontingAttempts = AtomicLong(0)
     private val frontingSuccesses = AtomicLong(0)
     private val frontingFailures = AtomicLong(0)
+    private val frontingFirstAttempts = AtomicLong(0)
+    private val frontingFallbackAttempts = AtomicLong(0)
+    private val lastFrontingError = AtomicReference<String?>(null)
+    private val lastFrontingTimeMs = AtomicLong(0)
+    private val directFrontingPreferenceState = DirectFrontingPreferenceState()
     private val directFrontingConnector = DirectFrontingConnector(
         normalConnect = { targetHost, domain, path, timeoutMs ->
             webSocketConnector.connect(targetHost, domain, path, timeoutMs)
@@ -1001,8 +1019,11 @@ class ProxyServer(
         frontedConnect = { targetHost, domain, path, timeoutMs, sniHost ->
             webSocketConnector.connectWithSni(targetHost, domain, path, timeoutMs, sniHost)
         },
+        state = directFrontingPreferenceState,
         onFrontingAttempt = { key, frontingFirst ->
             frontingAttempts.incrementAndGet()
+            if (frontingFirst) frontingFirstAttempts.incrementAndGet() else frontingFallbackAttempts.incrementAndGet()
+            lastFrontingTimeMs.set(System.currentTimeMillis())
             logger.log(
                 "DC${key.dc} media=${key.isMedia} fronting ${if (frontingFirst) "first" else "fallback"} " +
                     "attempt SNI=${DirectFrontingConnector.DEFAULT_FRONTING_SNI} target=${key.targetHost}",
@@ -1010,16 +1031,31 @@ class ProxyServer(
         },
         onFrontingSuccess = { key, frontingFirst ->
             frontingSuccesses.incrementAndGet()
+            lastFrontingError.set(null)
+            lastFrontingTimeMs.set(System.currentTimeMillis())
             logger.log("DC${key.dc} media=${key.isMedia} fronting success first=$frontingFirst target=${key.targetHost}")
         },
         onFrontingFailure = { key, frontingFirst, error ->
             frontingFailures.incrementAndGet()
+            lastFrontingError.set(failureDetail(error))
+            lastFrontingTimeMs.set(System.currentTimeMillis())
             logger.log("DC${key.dc} media=${key.isMedia} fronting failed first=$frontingFirst: ${failureDetail(error)}")
         },
     )
     private val webSocketPool = WebSocketPool(
         poolSize = config.poolSize,
         connector = webSocketConnector,
+        refillConnector = DirectPoolRefillConnector { dc, isMedia, targetHost, domain, path, timeoutMs ->
+            directFrontingConnector.connect(
+                dc = dc,
+                isMedia = isMedia,
+                targetHost = targetHost,
+                domain = domain,
+                path = path,
+                normalTimeoutMs = timeoutMs,
+                networkGeneration = routeGeneration.get(),
+            ).stream
+        },
         logger = logger,
         onRefillError = { key, source, error ->
             poolRefillErrors.incrementAndGet()
@@ -1045,6 +1081,10 @@ class ProxyServer(
             directPoolSkippedBecauseTargetIpCooldown.incrementAndGet()
             directTargetIpCooldownHits.incrementAndGet()
             logger.log("DC${key.dc} direct target $targetHost in cooldown; direct pool $source skipped")
+        },
+        onRefillBackoffSuppressed = { key, source, remainingMs ->
+            incrementPoolCounter(poolRefillBackoffSuppressedByKey, key, source)
+            logger.log("DC${key.dc} direct WS pool $source suppressed by refill backoff for ${remainingMs}ms")
         },
     )
     private val cfWebSocketPool = CfWebSocketPool(
@@ -1167,6 +1207,10 @@ class ProxyServer(
                 refillAttemptsByKey = snapshotPoolLongMap(poolRefillAttemptsByKey),
                 refillSuccessesByKey = snapshotPoolLongMap(poolRefillSuccessesByKey),
                 refillErrorsByKey = snapshotPoolLongMap(poolRefillErrorsByKey),
+                refillFailureWavesByKey = webSocketPool.refillFailuresSnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap(),
+                refillBackoffRemainingMsByKey = webSocketPool.refillBackoffRemainingSnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap(),
+                refillBackoffSuppressedByKey = snapshotPoolLongMap(poolRefillBackoffSuppressedByKey),
+                closedIdlePrunedByKey = webSocketPool.closedIdlePrunedSnapshot().mapKeys { poolDiagnosticKey(it.key) }.toSortedMap(),
                 staleByKey = snapshotPoolLongMap(poolStaleByKey),
                 lastRefillErrorByKey = poolLastRefillErrorByKey.toSortedMap(),
                 lastRefillTimeMsByKey = snapshotPoolLongMap(poolLastRefillTimeMsByKey),
@@ -1205,6 +1249,17 @@ class ProxyServer(
         snapshot.lastEffectiveRouteModeUpdateTimeMs = routeSnapshot.lastRouteChangeTimeMs
         snapshot.lastRouteUsedUpdateTimeMs = lastRouteUsedUpdateTimeMs.get().takeIf { it > 0L }
         snapshot.directTimeouts = directTimeouts.get()
+        snapshot.frontingAttempts = frontingAttempts.get()
+        snapshot.frontingSuccesses = frontingSuccesses.get()
+        snapshot.frontingFailures = frontingFailures.get()
+        snapshot.frontingFirstAttempts = frontingFirstAttempts.get()
+        snapshot.frontingFallbackAttempts = frontingFallbackAttempts.get()
+        snapshot.frontingPreferredKeys = directFrontingPreferenceState
+            .preferredSnapshot(routeGeneration.get())
+            .map { key -> "dc${key.dc}${if (key.isMedia) "m" else ""}@${key.targetHost}" }
+            .sorted()
+        snapshot.lastFrontingError = lastFrontingError.get()
+        snapshot.lastFrontingTimeMs = lastFrontingTimeMs.get()
         snapshot.lastCfDomain = lastCfDomain
         snapshot.directAttempts = directAttempts.get()
         snapshot.directAttemptsSkippedBecauseRoute = directAttemptsSkippedBecauseRoute.get()
