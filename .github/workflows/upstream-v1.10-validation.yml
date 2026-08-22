@@ -21,6 +21,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - name: Check Cloudflare Worker JavaScript syntax
+        run: node --check tools/cloudflare-worker/worker.js
       - name: Run full unit suite and build private sideload APK
         run: |
           chmod +x ./gradlew
