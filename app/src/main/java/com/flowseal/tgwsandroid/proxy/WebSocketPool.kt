@@ -4,9 +4,9 @@ import java.util.ArrayDeque
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Android-independent idle direct WebSocket pool keyed by Telegram DC and media route.
@@ -18,6 +18,12 @@ import java.util.concurrent.atomic.AtomicBoolean
  * WebSocket servers and Android/mobile networks may close quiet pooled sockets
  * earlier than desktop/server environments. Only direct Telegram WebSocket routes are pooled; CF-proxy
  * fallback connections stay one-shot.
+ *
+ * Upstream v1.9 also suppresses repeated failed refill waves with exponential
+ * backoff. This Android port applies the same policy per DC/media key while
+ * preserving its parallel refill reservations: a backoff failure is counted only
+ * when the whole outstanding refill wave for the key completes without any
+ * successful connection.
  */
 class WebSocketPool(
     private val poolSize: Int,
@@ -26,6 +32,8 @@ class WebSocketPool(
     private val maxAgeMs: Long = DEFAULT_MAX_AGE_MS,
     private val path: String = ProxyServer.DEFAULT_WS_PATH,
     private val nowMs: () -> Long = { System.currentTimeMillis() },
+    private val refillBackoffInitialMs: Long = DEFAULT_REFILL_BACKOFF_INITIAL_MS,
+    private val refillBackoffMaxMs: Long = DEFAULT_REFILL_BACKOFF_MAX_MS,
     private val executor: ExecutorService = Executors.newFixedThreadPool(
         maxOf(1, minOf(DEFAULT_MAX_THREADS, maxOf(1, poolSize))),
         webSocketPoolThreadFactory(),
@@ -38,11 +46,16 @@ class WebSocketPool(
     private val onResultDiscardedAfterRouteChange: () -> Unit = {},
     private val shouldSkipTarget: (Key, String) -> Boolean = { _, _ -> false },
     private val onSkippedTarget: (Key, String, String) -> Unit = { _, _, _ -> },
+    private val onRefillBackoffSuppressed: (Key, String, Long) -> Unit = { _, _, _ -> },
 ) {
     private val lock = Any()
     private val enabled = AtomicBoolean(true)
     private val entries = mutableMapOf<Key, ArrayDeque<Entry>>()
     private val pendingRefills = mutableMapOf<Key, Int>()
+    private val refillWaveHadSuccess = mutableMapOf<Key, Boolean>()
+    private val refillFailures = mutableMapOf<Key, Int>()
+    private val refillAfterMs = mutableMapOf<Key, Long>()
+    private val closedIdlePrunedByKey = mutableMapOf<Key, Long>()
     private val generation = AtomicInteger(0)
 
     data class Key(
@@ -50,7 +63,7 @@ class WebSocketPool(
         val isMedia: Boolean,
     )
 
-    /** Returns one non-expired idle WebSocket for [dc]/[isMedia], or null on miss. */
+    /** Returns one non-expired, still-open idle WebSocket for [dc]/[isMedia], or null on miss. */
     fun get(
         dc: Int,
         isMedia: Boolean,
@@ -59,27 +72,39 @@ class WebSocketPool(
     ): WebSocketBinaryStream? {
         if (poolSize <= 0 || !enabled.get()) return null
         val key = Key(dc, isMedia)
-        if (shouldSkipTarget(Key(dc, isMedia), targetHost)) {
-            onSkippedTarget(Key(dc, isMedia), targetHost, REFILL_SOURCE_ON_MISS)
+        if (shouldSkipTarget(key, targetHost)) {
+            onSkippedTarget(key, targetHost, REFILL_SOURCE_ON_MISS)
             return null
         }
         var pooled: WebSocketBinaryStream? = null
-        val expired = mutableListOf<WebSocketBinaryStream>()
+        val stale = mutableListOf<WebSocketBinaryStream>()
         synchronized(lock) {
             val queue = entries[key]
             while (queue != null && queue.isNotEmpty() && pooled == null) {
                 val entry = queue.removeFirst()
-                if (isExpired(entry)) {
-                    expired.add(entry.webSocket)
+                val staleReason = staleReason(entry)
+                if (staleReason != null) {
+                    if (staleReason == STALE_REASON_CLOSED) incrementClosedIdlePrunedLocked(key)
+                    stale.add(entry.webSocket)
                 } else {
                     pooled = entry.webSocket
                 }
             }
             if (queue != null && queue.isEmpty()) entries.remove(key)
         }
-        expired.forEach { closeBestEffort(it) }
+        stale.forEach { closeBestEffort(it) }
+        if (pooled != null) reportSuccess(dc, isMedia)
         scheduleRefill(dc, isMedia, targetHost, domains, source = REFILL_SOURCE_ON_MISS)
         return pooled
+    }
+
+    /** Clears refill backoff after any confirmed usable direct route for this key. */
+    fun reportSuccess(dc: Int, isMedia: Boolean) {
+        val key = Key(dc, isMedia)
+        synchronized(lock) {
+            refillFailures.remove(key)
+            refillAfterMs.remove(key)
+        }
     }
 
     /** Starts non-blocking warmup for all configured direct DC redirects and both media modes. */
@@ -140,7 +165,7 @@ class WebSocketPool(
         enabled.set(true)
     }
 
-    /** Closes all idle sockets and forgets pending bookkeeping. */
+    /** Closes all idle sockets and forgets pending/backoff bookkeeping. */
     fun reset() = clearIdle()
 
     /** Alias for [closeAll] for callers that treat the pool as a closeable lifecycle object. */
@@ -159,6 +184,9 @@ class WebSocketPool(
             entries.clear()
             cancelled = if (countPendingAsCancelled) pendingRefills.values.sum() else 0
             pendingRefills.clear()
+            refillWaveHadSuccess.clear()
+            refillFailures.clear()
+            refillAfterMs.clear()
         }
         if (cancelled > 0) onRefillCancelled(cancelled)
         idle.forEach { closeBestEffort(it) }
@@ -187,6 +215,12 @@ class WebSocketPool(
 
     fun pendingRefillsSnapshot(): Map<Key, Int> = synchronized(lock) { pendingRefills.toMap() }
 
+    fun refillFailuresSnapshot(): Map<Key, Int> = synchronized(lock) { refillFailures.toMap() }
+
+    fun refillBackoffUntilSnapshot(): Map<Key, Long> = synchronized(lock) { refillAfterMs.toMap() }
+
+    fun closedIdlePrunedSnapshot(): Map<Key, Long> = synchronized(lock) { closedIdlePrunedByKey.toMap() }
+
     fun isEnabled(): Boolean = enabled.get()
 
     private fun scheduleRefill(
@@ -198,31 +232,49 @@ class WebSocketPool(
         source: String = REFILL_SOURCE_NORMAL,
     ) {
         if (poolSize <= 0 || domains.isEmpty() || !enabled.get()) return
-        if (shouldSkipTarget(Key(dc, isMedia), targetHost)) {
-            onSkippedTarget(Key(dc, isMedia), targetHost, source)
+        val key = Key(dc, isMedia)
+        if (shouldSkipTarget(key, targetHost)) {
+            onSkippedTarget(key, targetHost, source)
             return
         }
         val targetSize = desiredSize.coerceIn(0, poolSize)
         if (targetSize <= 0) return
         val refillGeneration = generation.get()
-        val key = Key(dc, isMedia)
-        val expired = mutableListOf<WebSocketBinaryStream>()
-        val reservations = synchronized(lock) {
-            expired.addAll(pruneExpiredLocked(key))
-            val ready = entries[key]?.size ?: 0
-            val pending = pendingRefills[key] ?: 0
-            val needed = (targetSize - ready - pending).coerceAtLeast(0)
-            if (needed > 0) pendingRefills[key] = pending + needed
-            needed
+        val stale = mutableListOf<WebSocketBinaryStream>()
+        val plan = synchronized(lock) {
+            stale.addAll(pruneStaleLocked(key))
+            val now = nowMs()
+            val refillAfter = refillAfterMs[key] ?: 0L
+            if (now < refillAfter) {
+                RefillPlan(reservations = 0, backoffRemainingMs = refillAfter - now)
+            } else {
+                val ready = entries[key]?.size ?: 0
+                val pending = pendingRefills[key] ?: 0
+                val needed = (targetSize - ready - pending).coerceAtLeast(0)
+                if (needed > 0) {
+                    if (pending == 0) refillWaveHadSuccess[key] = false
+                    pendingRefills[key] = pending + needed
+                }
+                RefillPlan(reservations = needed, backoffRemainingMs = 0L)
+            }
         }
-        expired.forEach { closeBestEffort(it) }
-        repeat(reservations) {
+        stale.forEach { closeBestEffort(it) }
+        if (plan.backoffRemainingMs > 0L) {
+            onRefillBackoffSuppressed(key, source, plan.backoffRemainingMs)
+            return
+        }
+        repeat(plan.reservations) {
             try {
                 executor.execute { refillOne(key, targetHost, domains, refillGeneration, source) }
             } catch (_: RejectedExecutionException) {
                 synchronized(lock) {
                     val remaining = (pendingRefills[key] ?: 1) - 1
-                    if (remaining > 0) pendingRefills[key] = remaining else pendingRefills.remove(key)
+                    if (remaining > 0) {
+                        pendingRefills[key] = remaining
+                    } else {
+                        pendingRefills.remove(key)
+                        refillWaveHadSuccess.remove(key)
+                    }
                 }
                 onRefillCancelled(1)
             }
@@ -253,40 +305,97 @@ class WebSocketPool(
             }
         } finally {
             val readyAfter: Int
+            var discardedAfterRouteChange = false
+            var backoffDelayMs = 0L
             synchronized(lock) {
-                val pending = (pendingRefills[key] ?: 1) - 1
-                if (pending > 0) pendingRefills[key] = pending else pendingRefills.remove(key)
-                if (connected != null && enabled.get() && generation.get() == refillGeneration) {
+                val validGeneration = enabled.get() && generation.get() == refillGeneration
+                if (connected != null && validGeneration) {
+                    refillWaveHadSuccess[key] = true
                     val queue = entries.getOrPut(key) { ArrayDeque() }
                     if (queue.size < poolSize) {
                         queue.addLast(Entry(connected!!, nowMs()))
                         connected = null
                     }
                 }
+
+                val pending = (pendingRefills[key] ?: 1) - 1
+                if (pending > 0) {
+                    pendingRefills[key] = pending
+                } else {
+                    pendingRefills.remove(key)
+                    val waveSucceeded = refillWaveHadSuccess.remove(key) == true
+                    if (validGeneration) {
+                        if (waveSucceeded) {
+                            refillFailures.remove(key)
+                            refillAfterMs.remove(key)
+                        } else {
+                            val failures = (refillFailures[key] ?: 0) + 1
+                            refillFailures[key] = failures
+                            backoffDelayMs = refillBackoffDelayMs(failures)
+                            refillAfterMs[key] = nowMs() + backoffDelayMs
+                        }
+                    }
+                }
+
+                if (connected != null) {
+                    discardedAfterRouteChange = true
+                }
                 readyAfter = entries[key]?.size ?: 0
             }
             connected?.let {
-                onResultDiscardedAfterRouteChange()
+                if (discardedAfterRouteChange) onResultDiscardedAfterRouteChange()
                 closeBestEffort(it)
-                logger.log("WS pool refill result discarded DC${key.dc} after route change")
+                logger.log("WS pool refill result discarded DC${key.dc} after route change or full pool")
+            }
+            if (backoffDelayMs > 0L) {
+                logger.log("WS pool refill failed for DC${key.dc}${if (key.isMedia) "m" else ""}, retry in ${backoffDelayMs / 1_000}s")
             }
             logger.log("WS pool refilled DC${key.dc}: $readyAfter ready")
         }
     }
 
-    private fun pruneExpiredLocked(key: Key): List<WebSocketBinaryStream> {
+    private fun pruneStaleLocked(key: Key): List<WebSocketBinaryStream> {
         val queue = entries[key] ?: return emptyList()
-        val expired = mutableListOf<WebSocketBinaryStream>()
+        val stale = mutableListOf<WebSocketBinaryStream>()
         val kept = ArrayDeque<Entry>()
         while (queue.isNotEmpty()) {
             val entry = queue.removeFirst()
-            if (isExpired(entry)) expired.add(entry.webSocket) else kept.addLast(entry)
+            val reason = staleReason(entry)
+            if (reason != null) {
+                if (reason == STALE_REASON_CLOSED) incrementClosedIdlePrunedLocked(key)
+                stale.add(entry.webSocket)
+            } else {
+                kept.addLast(entry)
+            }
         }
         if (kept.isEmpty()) entries.remove(key) else entries[key] = kept
-        return expired
+        return stale
     }
 
-    private fun isExpired(entry: Entry): Boolean = nowMs() - entry.createdAtMs >= maxAgeMs
+    private fun staleReason(entry: Entry): String? {
+        if (nowMs() - entry.createdAtMs >= maxAgeMs) return STALE_REASON_AGE
+        return if (isUsableForPool(entry.webSocket)) null else STALE_REASON_CLOSED
+    }
+
+    private fun isUsableForPool(webSocket: WebSocketBinaryStream): Boolean =
+        try {
+            webSocket.isUsableForPool()
+        } catch (_: Throwable) {
+            false
+        }
+
+    private fun incrementClosedIdlePrunedLocked(key: Key) {
+        closedIdlePrunedByKey[key] = (closedIdlePrunedByKey[key] ?: 0L) + 1L
+    }
+
+    private fun refillBackoffDelayMs(failures: Int): Long {
+        val exponent = minOf((failures - 1).coerceAtLeast(0), 6)
+        var delay = refillBackoffInitialMs.coerceAtLeast(0L)
+        repeat(exponent) {
+            delay = if (delay >= refillBackoffMaxMs / 2L) refillBackoffMaxMs else delay * 2L
+        }
+        return minOf(delay, refillBackoffMaxMs.coerceAtLeast(0L))
+    }
 
     private fun closeBestEffort(webSocket: WebSocketBinaryStream) {
         try {
@@ -301,19 +410,27 @@ class WebSocketPool(
         val createdAtMs: Long,
     )
 
+    private data class RefillPlan(
+        val reservations: Int,
+        val backoffRemainingMs: Long,
+    )
+
     companion object {
         const val DEFAULT_MAX_AGE_MS: Long = 30_000L
+        const val DEFAULT_REFILL_BACKOFF_INITIAL_MS: Long = 60_000L
+        const val DEFAULT_REFILL_BACKOFF_MAX_MS: Long = 3_600_000L
         private const val DEFAULT_MAX_THREADS = 4
         const val REFILL_SOURCE_NORMAL = "normal"
         const val REFILL_SOURCE_ON_MISS = "on-miss"
         const val REFILL_SOURCE_MAINTENANCE = "maintenance"
         const val REFILL_SOURCE_WAKE_PREWARM = "wake-prewarm"
+        private const val STALE_REASON_AGE = "age"
+        private const val STALE_REASON_CLOSED = "closed"
         private const val SHUTDOWN_WAIT_MS = 500L
         private fun failureDetail(error: Throwable): String =
             "${error::class.java.simpleName}: ${error.message ?: "no message"}"
     }
 }
-
 
 private val webSocketPoolThreadIds = AtomicInteger(0)
 
