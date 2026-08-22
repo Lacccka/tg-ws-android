@@ -23,7 +23,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Run affected transport, pool, fronting, runtime, and diagnostics tests
+      - name: Run affected transport, pool, fronting, runtime, diagnostics, and telemetry tests
         run: |
           chmod +x ./gradlew
           ./gradlew testDebugUnitTest \
@@ -38,6 +38,7 @@ jobs:
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerFrontingTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerFrontingPoolDiagnosticsTest' \
             --tests 'com.flowseal.tgwsandroid.service.FrontingDiagnosticReportTest' \
+            --tests 'com.flowseal.tgwsandroid.telemetry.TelemetryFrontingDiagnosticsTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerTest.validHandshakeConnectsToDcSendsRelayInitThenRunsBridge' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerTest.autoMobileCfFirstCfExhaustedAllowsBoundedDirectRescueWithoutPool' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerTest.autoMobileDirectRescueFailureSetsCooldownAndSuppressesRepeat' \
