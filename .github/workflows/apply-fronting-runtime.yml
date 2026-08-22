@@ -1,4 +1,4 @@
-name: Apply fronting runtime patch
+name: Apply fronting runtime edits
 
 on:
   push:
@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  apply-patch:
+  apply-edits:
     if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.event.pull_request.head.ref == 'upstream-v1.10-fronting-runtime')
     runs-on: ubuntu-latest
     steps:
@@ -20,11 +20,11 @@ jobs:
         with:
           ref: upstream-v1.10-fronting-runtime
           fetch-depth: 1
-      - name: Apply and verify scoped patch
+      - name: Apply exact runtime edits
         run: |
-          git apply --check .github/patches/fronting-runtime.patch
-          git apply .github/patches/fronting-runtime.patch
-          rm .github/patches/fronting-runtime.patch
+          python3 .github/scripts/apply_fronting_runtime.py
+          rm .github/scripts/apply_fronting_runtime.py
+          rm -f .github/patches/fronting-runtime.patch
           rm .github/workflows/apply-fronting-runtime.yml
           git diff --check
       - name: Commit applied runtime wiring
