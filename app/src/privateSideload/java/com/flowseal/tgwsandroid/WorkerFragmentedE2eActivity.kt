@@ -14,6 +14,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.flowseal.tgwsandroid.config.AppConfigStore
+import com.flowseal.tgwsandroid.proxy.FragmentedTlsDiagnosticTimeoutException
 import com.flowseal.tgwsandroid.proxy.FragmentedTlsTransportFactory
 import com.flowseal.tgwsandroid.proxy.RawWebSocket
 import java.net.Inet4Address
@@ -115,6 +116,7 @@ class WorkerFragmentedE2eActivity : Activity() {
                 "Target: $target:443",
                 "TLS: Android SSLEngine + system trust + HTTPS hostname verification",
                 "Fragmentation: first ClientHello TLS record split inside Worker SNI",
+                "Trace: ClientHello layout + TLS records + SSLEngine wrap/unwrap + HTTP application data",
                 "",
             )
 
@@ -138,6 +140,13 @@ class WorkerFragmentedE2eActivity : Activity() {
                     if (!tcpReachable) continue
                     attempted += 1
 
+                    lines += "--- fragmented TLS trace via $edge ---"
+                    publish(lines)
+                    val tracedTransport = FragmentedTlsTransportFactory.traced { event ->
+                        lines += "TRACE $event"
+                        publish(lines)
+                    }
+
                     val ws = try {
                         var connected: RawWebSocket? = null
                         val elapsed = measureTimeMillis {
@@ -146,14 +155,16 @@ class WorkerFragmentedE2eActivity : Activity() {
                                 domain = domain,
                                 timeoutMs = CONNECT_TIMEOUT_MS,
                                 path = workerProbePath(target),
-                                transportFactory = FragmentedTlsTransportFactory,
+                                transportFactory = tracedTransport,
                             )
                         }
                         lines += "OK   TLS + WebSocket upgrade via $edge (${elapsed}ms): system certificate/hostname validation passed; HTTP 101 received"
                         publish(lines)
                         connected
                     } catch (error: Throwable) {
-                        lines += "FAIL TLS + WebSocket upgrade via $edge: ${errorSummary(error)}"
+                        val stage = diagnosticTimeoutStage(error)
+                        val stageSuffix = stage?.let { " [$it]" }.orEmpty()
+                        lines += "FAIL TLS + WebSocket upgrade via $edge$stageSuffix: ${errorSummary(error)}"
                         publish(lines)
                         null
                     } ?: continue
@@ -195,7 +206,7 @@ class WorkerFragmentedE2eActivity : Activity() {
                 } else {
                     "TCP-reachable edges existed, but the full fragmented TLS/WebSocket probe did not complete."
                 }
-                lines += "The earlier ServerHello result still proves DPI bypass at the first handshake flight; inspect the first FAIL above for the next TLS/WS boundary."
+                lines += "Use the final TRACE/TIMEOUT lines of the first reachable edge to distinguish first TLS record, mid-handshake, and HTTP-response failures."
             } catch (error: Throwable) {
                 lines += ""
                 lines += "RESULT: TEST ERROR: ${errorSummary(error)}"
@@ -224,6 +235,12 @@ class WorkerFragmentedE2eActivity : Activity() {
         return true
     }
 
+    private fun diagnosticTimeoutStage(error: Throwable): String? =
+        generateSequence(error) { it.cause }
+            .filterIsInstance<FragmentedTlsDiagnosticTimeoutException>()
+            .firstOrNull()
+            ?.stage
+
     private fun finish(lines: List<String>) {
         publish(lines)
         runOnUiThread {
@@ -233,7 +250,8 @@ class WorkerFragmentedE2eActivity : Activity() {
     }
 
     private fun publish(lines: List<String>) {
-        runOnUiThread { resultText.text = lines.joinToString("\n") }
+        val snapshot = lines.toList()
+        runOnUiThread { resultText.text = snapshot.joinToString("\n") }
     }
 
     private fun copyResult() {
@@ -257,6 +275,13 @@ class WorkerFragmentedE2eActivity : Activity() {
     }
 
     private fun errorSummary(error: Throwable): String {
+        val diagnostic = generateSequence(error) { it.cause }
+            .filterIsInstance<FragmentedTlsDiagnosticTimeoutException>()
+            .firstOrNull()
+        if (diagnostic != null) {
+            return "${diagnostic::class.java.simpleName}: ${diagnostic.message.orEmpty()}"
+        }
+
         val root = generateSequence(error) { it.cause }.last()
         val message = root.message?.replace('\n', ' ')?.take(300).orEmpty()
         return if (message.isBlank()) root::class.java.simpleName else "${root::class.java.simpleName}: $message"
