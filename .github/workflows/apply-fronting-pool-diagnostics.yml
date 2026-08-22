@@ -27,6 +27,7 @@ jobs:
       - name: Apply exact source edits
         run: |
           python3 .github/scripts/apply_fronting_pool_diagnostics.py
+          git checkout -- .github/workflows/upstream-parity-check.yml
           rm .github/scripts/apply_fronting_pool_diagnostics.py
           rm .github/workflows/apply-fronting-pool-diagnostics.yml
           git diff --check
