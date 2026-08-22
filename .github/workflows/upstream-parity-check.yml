@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - upstream-v1.10-core-parity
+  pull_request:
+    branches:
+      - main
 
 jobs:
   unit-tests:
