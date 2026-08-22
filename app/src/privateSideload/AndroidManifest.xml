@@ -7,5 +7,15 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Local user-started Telegram proxy that maintains a visible foreground notification and relays Telegram traffic through a local loopback proxy while the user keeps the proxy enabled" />
         </service>
+
+        <activity
+            android:name=".WorkerDiagnosticsActivity"
+            android:exported="true"
+            android:label="SE Worker Test">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
     </application>
 </manifest>
