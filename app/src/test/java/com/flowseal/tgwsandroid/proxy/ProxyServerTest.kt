@@ -3296,7 +3296,10 @@ class ProxyServerTest {
 
         proxy.start()
         repeat(120) { server.enqueue(FakeTcpClientTransport(invalid)) }
-        waitUntil({ invalidHandshakeStormStatsMessage(proxy) }) { proxy.stats().recentInvalidHandshakeCount >= 100L }
+        waitUntil({ invalidHandshakeStormStatsMessage(proxy) }) {
+            val stats = proxy.stats()
+            stats.connectionsBad == 120L && stats.recentInvalidHandshakeCount >= 100L
+        }
         proxy.stop()
 
         val stats = proxy.stats()
