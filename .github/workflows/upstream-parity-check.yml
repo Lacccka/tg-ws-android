@@ -37,6 +37,7 @@ jobs:
             --tests 'com.flowseal.tgwsandroid.proxy.BridgeSessionTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerFrontingTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerFrontingPoolDiagnosticsTest' \
+            --tests 'com.flowseal.tgwsandroid.DeveloperDiagnosticsFormatterTest' \
             --tests 'com.flowseal.tgwsandroid.service.FrontingDiagnosticReportTest' \
             --tests 'com.flowseal.tgwsandroid.telemetry.TelemetryFrontingDiagnosticsTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.ProxyServerTest.validHandshakeConnectsToDcSendsRelayInitThenRunsBridge' \
