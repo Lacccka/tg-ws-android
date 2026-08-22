@@ -40,9 +40,9 @@ class FrontingDiagnosticReportTest {
         assertTrue(report.contains("successes: 5"))
         assertTrue(report.contains("failures: 2"))
         assertTrue(report.contains("preferredKeys: [dc2@149.154.167.220]"))
-        assertTrue(report.contains("refillFailureWavesByKey: {dc2=2}"))
-        assertTrue(report.contains("refillBackoffRemainingMsByKey: {dc2=60000}"))
-        assertTrue(report.contains("refillBackoffSuppressedByKey: {dc2|maintenance=3}"))
-        assertTrue(report.contains("closedIdlePrunedByKey: {dc2=1}"))
+        assertTrue(report.contains("refillFailureWavesByKey: dc2=2"))
+        assertTrue(report.contains("refillBackoffRemainingMsByKey: dc2=60000"))
+        assertTrue(report.contains("refillBackoffSuppressedByKey: dc2|maintenance=3"))
+        assertTrue(report.contains("closedIdlePrunedByKey: dc2=1"))
     }
 }
