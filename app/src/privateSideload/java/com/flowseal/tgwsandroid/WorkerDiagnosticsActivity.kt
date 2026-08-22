@@ -500,7 +500,7 @@ class WorkerDiagnosticsActivity : Activity() {
             LinearLayout.LayoutParams.WRAP_CONTENT,
         ).apply { this.topMargin = topMargin }
 
-    private fun toast(message: String) = Toast.makeText(this, Toast.LENGTH_SHORT).apply { setText(message) }.show()
+    private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
     private data class HttpResult(val code: Int, val body: String)
 
