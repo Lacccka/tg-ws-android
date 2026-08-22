@@ -1,0 +1,36 @@
+name: Apply validation test race fix
+
+on:
+  push:
+    branches:
+      - upstream-v1.10-validation
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-validation-test-race-fix
+  cancel-in-progress: true
+
+jobs:
+  apply-fix:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: upstream-v1.10-validation
+          fetch-depth: 1
+      - name: Apply exact test-only fix
+        run: |
+          python3 .github/scripts/fix_validation_flaky_test.py
+          rm .github/scripts/fix_validation_flaky_test.py
+          git diff --check
+      - name: Commit test-only fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Stabilize invalid handshake storm regression test'
+          git pull --rebase origin upstream-v1.10-validation
+          git push origin HEAD:upstream-v1.10-validation
