@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - upstream-v1.10-fronting-pool-diagnostics
+  pull_request:
+    branches:
+      - upstream-v1.10-fronting-runtime
 
 permissions:
   contents: write
@@ -14,7 +17,7 @@ concurrency:
 
 jobs:
   apply-edits:
-    if: github.actor != 'github-actions[bot]'
+    if: github.actor != 'github-actions[bot]' && (github.event_name == 'push' || github.event.pull_request.head.ref == 'upstream-v1.10-fronting-pool-diagnostics')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
