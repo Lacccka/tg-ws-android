@@ -15,14 +15,14 @@ import javax.net.ssl.SSLEngineResult
 
 /**
  * Diagnostic-only TLS transport that keeps Android's platform TLS stack and
- * certificate validation, but rewrites the first ClientHello from one TLS
- * handshake record into two standards-compliant handshake records split inside
- * the SNI hostname.
+ * certificate validation, but rewrites the first ClientHello into multiple
+ * standards-compliant TLS handshake records around the SNI hostname.
  *
  * The peer receives exactly the ClientHello handshake bytes produced by
- * Android's [SSLEngine]; only the TLS record boundaries change. This matches the
- * mobile-network experiment where the normal ClientHello was black-holed while
- * the record-fragmented ClientHello received a ServerHello.
+ * Android's [SSLEngine]; only TLS record boundaries change. The Worker hostname
+ * itself is emitted one byte per TLS record. This deliberately increases the
+ * amount of TLS-record reassembly a middlebox must perform while preserving the
+ * TLS transcript seen by both endpoints.
  */
 internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
     private const val BUFFER_SIZE = 256 * 1024
@@ -129,12 +129,12 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
                         val networkBytes = wrapHandshakeBytes()
                         val bytesToSend = if (firstWrap) {
                             firstWrap = false
-                            val fragmented = fragmentClientHelloInsideSni(networkBytes, tlsServerName)
+                            val fragmented = fragmentClientHelloAcrossSni(networkBytes, tlsServerName)
                             trace(
                                 "CLIENT_HELLO original=${fragmented.originalSize} bytes " +
-                                    "sniOffset=${fragmented.sniOffset} splitOffset=${fragmented.splitOffset} " +
+                                    "sniOffset=${fragmented.sniOffset} sniLength=${fragmented.sniLength} " +
                                     "fragmented=${fragmented.bytes.size} bytes records=${fragmented.recordLengths.size} " +
-                                    "recordLengths=${fragmented.recordLengths.joinToString(",")}",
+                                    "strategy=sni_byte_records recordLengths=${fragmented.recordLengths.joinToString(",")}",
                             )
                             fragmented.bytes
                         } else {
@@ -236,7 +236,9 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
                         throw IOException("TLS handshake application buffer overflow")
                     }
 
-                    SSLEngineResult.Status.BUFFER_UNDERFLOW -> Unit
+                    SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
+                        trace("UNDERFLOW ${describePendingTlsRecord(netInput)}")
+                    }
                     SSLEngineResult.Status.CLOSED -> throw IOException("TLS engine closed during handshake")
                 }
 
@@ -263,7 +265,7 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
                 val details =
                     "stage=$stage handshakeStatus=${engine.handshakeStatus} " +
                         "networkBytesReceived=$totalNetworkBytesReceived recordsReceived=$incomingRecordCount " +
-                        "bufferedEncrypted=${netInput.position()}"
+                        "bufferedEncrypted=${netInput.position()} ${describePendingTlsRecord(netInput)}"
                 trace("TIMEOUT $details")
                 throw FragmentedTlsDiagnosticTimeoutException(stage, details)
             }
@@ -295,6 +297,9 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
             if (offset > 0) {
                 incomingRecordTraceBuffer.reset()
                 incomingRecordTraceBuffer.write(bytes, offset, bytes.size - offset)
+            }
+            if (incomingRecordTraceBuffer.size() >= TLS_HEADER_SIZE) {
+                trace("RECV partial ${describePendingTlsRecord(incomingRecordTraceBuffer.toByteArray())}")
             }
             if (incomingRecordTraceBuffer.size() > BUFFER_SIZE) {
                 trace("RECV record parser reset after ${incomingRecordTraceBuffer.size()} buffered bytes")
@@ -375,7 +380,9 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
                         appOutput = growWriteBuffer(appOutput, engine.session.applicationBufferSize)
                     }
 
-                    SSLEngineResult.Status.BUFFER_UNDERFLOW -> Unit
+                    SSLEngineResult.Status.BUFFER_UNDERFLOW -> {
+                        trace("APP_UNDERFLOW ${describePendingTlsRecord(netInput)}")
+                    }
                     SSLEngineResult.Status.CLOSED -> {
                         plainInput = ByteBuffer.allocate(0)
                         return
@@ -461,11 +468,11 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
         val bytes: ByteArray,
         val originalSize: Int,
         val sniOffset: Int,
-        val splitOffset: Int,
+        val sniLength: Int,
         val recordLengths: List<Int>,
     )
 
-    private fun fragmentClientHelloInsideSni(bytes: ByteArray, domain: String): FragmentedClientHello {
+    private fun fragmentClientHelloAcrossSni(bytes: ByteArray, domain: String): FragmentedClientHello {
         val needle = domain.toByteArray(Charsets.US_ASCII)
         var offset = 0
         while (offset + TLS_HEADER_SIZE <= bytes.size) {
@@ -476,13 +483,17 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
             if ((bytes[offset].toInt() and 0xff) == TLS_TYPE_HANDSHAKE) {
                 val index = indexOf(bytes, needle, payloadStart, payloadEnd)
                 if (index >= 0) {
-                    val payloadSplit = index + (needle.size / 2).coerceAtLeast(1) - payloadStart
-                    val fragmented = splitHandshakeRecordAt(bytes, offset, payloadSplit)
+                    val fragmented = splitHandshakeRecordAcrossRange(
+                        bytes = bytes,
+                        recordOffset = offset,
+                        rangeStart = index,
+                        rangeLength = needle.size,
+                    )
                     return FragmentedClientHello(
                         bytes = fragmented,
                         originalSize = bytes.size,
                         sniOffset = index,
-                        splitOffset = payloadStart + payloadSplit,
+                        sniLength = needle.size,
                         recordLengths = tlsRecordLengths(fragmented),
                     )
                 }
@@ -492,19 +503,43 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
         throw IOException("Worker SNI was not found inside generated ClientHello")
     }
 
-    private fun splitHandshakeRecordAt(bytes: ByteArray, recordOffset: Int, payloadSplit: Int): ByteArray {
+    /**
+     * Replaces one TLS handshake record with: prefix, one record per byte in the
+     * selected range, and suffix. Concatenating all record payloads produces the
+     * exact original handshake payload.
+     */
+    private fun splitHandshakeRecordAcrossRange(
+        bytes: ByteArray,
+        recordOffset: Int,
+        rangeStart: Int,
+        rangeLength: Int,
+    ): ByteArray {
         val type = bytes[recordOffset]
         val major = bytes[recordOffset + 1]
         val minor = bytes[recordOffset + 2]
         val length = recordLength(bytes, recordOffset)
-        require(payloadSplit in 1 until length) { "invalid TLS split=$payloadSplit length=$length" }
         val payloadStart = recordOffset + TLS_HEADER_SIZE
         val payloadEnd = payloadStart + length
+        val rangeEnd = rangeStart + rangeLength
+        require(rangeLength > 0) { "range must not be empty" }
+        require(rangeStart in payloadStart until payloadEnd) { "range start outside TLS record" }
+        require(rangeEnd <= payloadEnd) { "range end outside TLS record" }
 
-        val output = ByteArrayOutputStream(bytes.size + TLS_HEADER_SIZE)
+        val output = ByteArrayOutputStream(bytes.size + (rangeLength + 1) * TLS_HEADER_SIZE)
         output.write(bytes, 0, recordOffset)
-        writeTlsRecord(output, type, major, minor, bytes, payloadStart, payloadSplit)
-        writeTlsRecord(output, type, major, minor, bytes, payloadStart + payloadSplit, length - payloadSplit)
+
+        val prefixLength = rangeStart - payloadStart
+        if (prefixLength > 0) {
+            writeTlsRecord(output, type, major, minor, bytes, payloadStart, prefixLength)
+        }
+        for (index in rangeStart until rangeEnd) {
+            writeTlsRecord(output, type, major, minor, bytes, index, 1)
+        }
+        val suffixLength = payloadEnd - rangeEnd
+        if (suffixLength > 0) {
+            writeTlsRecord(output, type, major, minor, bytes, rangeEnd, suffixLength)
+        }
+
         output.write(bytes, payloadEnd, bytes.size - payloadEnd)
         return output.toByteArray()
     }
@@ -556,6 +591,28 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
             offset = recordEnd
         }
         return result
+    }
+
+    private fun describePendingTlsRecord(buffer: ByteBuffer): String {
+        val copy = buffer.asReadOnlyBuffer()
+        copy.flip()
+        val bytes = ByteArray(copy.remaining())
+        copy.get(bytes)
+        return describePendingTlsRecord(bytes)
+    }
+
+    private fun describePendingTlsRecord(bytes: ByteArray): String {
+        if (bytes.size < TLS_HEADER_SIZE) {
+            return "pendingTlsHeader=${bytes.size}/$TLS_HEADER_SIZE bytes"
+        }
+        val type = bytes[0].toInt() and 0xff
+        val major = bytes[1].toInt() and 0xff
+        val minor = bytes[2].toInt() and 0xff
+        val payloadLength = recordLength(bytes, 0)
+        val required = TLS_HEADER_SIZE + payloadLength
+        val missing = (required - bytes.size).coerceAtLeast(0)
+        return "pendingRecordType=$type(${tlsContentTypeName(type)}) version=$major.$minor " +
+            "declaredPayload=$payloadLength available=${bytes.size} required=$required missing=$missing"
     }
 
     private fun tlsContentTypeName(type: Int): String = when (type) {
