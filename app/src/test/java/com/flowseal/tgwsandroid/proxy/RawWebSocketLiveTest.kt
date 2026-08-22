@@ -21,6 +21,7 @@ class RawWebSocketLiveTest {
         assertNotNull(ws)
         assertEquals(listOf(ConnectionCall("edge.example", 443, "ws.example", 5_000)), fake.calls)
         assertFalse(fake.transport.closed)
+        assertTrue(ws.isUsableForPool())
         assertEquals(expectedUpgradeRequest(), fake.transport.outputBytes().toString(Charsets.UTF_8))
     }
 
@@ -76,6 +77,7 @@ class RawWebSocketLiveTest {
         val parsed = RawWebSocketCodec.parseFrame(frame)
         assertEquals(RawWebSocketCodec.OP_BINARY, parsed.opcode)
         assertTrue(parsed.masked)
+        assertTrue(parsed.fin)
         assertEquals("hello", parsed.payload.toString(Charsets.UTF_8))
         assertEquals(2, fake.transport.flushCount)
     }
@@ -98,6 +100,9 @@ class RawWebSocketLiveTest {
         assertTrue(first.masked)
         assertTrue(second.masked)
         assertTrue(third.masked)
+        assertTrue(first.fin)
+        assertTrue(second.fin)
+        assertTrue(third.fin)
         assertEquals(0, frames.available())
         assertEquals(2, fake.transport.flushCount)
     }
@@ -116,6 +121,64 @@ class RawWebSocketLiveTest {
         val ws = connect(fake)
 
         assertEquals("payload", ws.recv()!!.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun recvReassemblesFragmentedBinaryMessage() {
+        val fake =
+            FakeTransportFactory(
+                httpResponse(101, "Switching Protocols") +
+                    RawWebSocketCodec.buildFrame(
+                        opcode = RawWebSocketCodec.OP_BINARY,
+                        data = "AAA".bytes(),
+                        fin = false,
+                    ) +
+                    RawWebSocketCodec.buildFrame(
+                        opcode = RawWebSocketCodec.OP_CONT,
+                        data = "BBB".bytes(),
+                        fin = false,
+                    ) +
+                    RawWebSocketCodec.buildFrame(
+                        opcode = RawWebSocketCodec.OP_CONT,
+                        data = "CCC".bytes(),
+                        fin = true,
+                    ),
+            )
+        val ws = connect(fake)
+
+        assertEquals("AAABBBCCC", ws.recv()!!.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun recvKeepsFragmentStateAcrossControlFrames() {
+        val pingPayload = "ping-between-fragments".bytes()
+        val fake =
+            FakeTransportFactory(
+                httpResponse(101, "Switching Protocols") +
+                    RawWebSocketCodec.buildFrame(
+                        opcode = RawWebSocketCodec.OP_BINARY,
+                        data = "left-".bytes(),
+                        fin = false,
+                    ) +
+                    RawWebSocketCodec.buildFrame(
+                        opcode = RawWebSocketCodec.OP_PING,
+                        data = pingPayload,
+                    ) +
+                    RawWebSocketCodec.buildFrame(
+                        opcode = RawWebSocketCodec.OP_CONT,
+                        data = "right".bytes(),
+                        fin = true,
+                    ),
+            )
+        val ws = connect(fake)
+        val requestLength = fake.transport.outputBytes().size
+
+        assertEquals("left-right", ws.recv()!!.toString(Charsets.UTF_8))
+
+        val pongBytes = fake.transport.outputBytes().copyOfRange(requestLength, fake.transport.outputBytes().size)
+        val pong = RawWebSocketCodec.parseFrame(pongBytes)
+        assertEquals(RawWebSocketCodec.OP_PONG, pong.opcode)
+        assertArrayEquals(pingPayload, pong.payload)
     }
 
     @Test
@@ -171,12 +234,16 @@ class RawWebSocketLiveTest {
         val requestLength = fake.transport.outputBytes().size
 
         assertNull(ws.recv())
+        assertFalse(ws.isUsableForPool())
 
         val closeAckBytes = fake.transport.outputBytes().copyOfRange(requestLength, fake.transport.outputBytes().size)
         val closeAck = RawWebSocketCodec.parseFrame(closeAckBytes)
         assertEquals(RawWebSocketCodec.OP_CLOSE, closeAck.opcode)
         assertTrue(closeAck.masked)
         assertArrayEquals(byteArrayOf(0x03, 0xE8.toByte()), closeAck.payload)
+
+        ws.close()
+        assertTrue(fake.transport.closed)
     }
 
     @Test
@@ -193,6 +260,7 @@ class RawWebSocketLiveTest {
         assertTrue(closeFrame.masked)
         assertEquals(0, closeFrame.payload.size)
         assertTrue(fake.transport.closed)
+        assertFalse(ws.isUsableForPool())
     }
 
     @Test
@@ -313,6 +381,8 @@ class RawWebSocketLiveTest {
             flushCount += 1
             output.flush()
         }
+
+        override fun isOpen(): Boolean = !closed
 
         override fun close() {
             closed = true
