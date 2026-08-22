@@ -85,7 +85,7 @@ class RawWebSocketCodecParityTest {
         val length = RawWebSocketCodec.MAX_MESSAGE_LEN.toLong() + 1L
         val frame = ByteArray(10)
         frame[0] = 0x82.toByte()
-        frame[1] = 0x7f
+        frame[1] = 0x7f.toByte()
         for (index in 0 until 8) {
             frame[2 + index] = ((length ushr (56 - index * 8)) and 0xff).toByte()
         }
