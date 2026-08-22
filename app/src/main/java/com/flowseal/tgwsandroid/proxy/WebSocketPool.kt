@@ -8,6 +8,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.TimeUnit
 
+/** Strategy hook used by direct pool refill when routing needs DC/media context. */
+fun interface DirectPoolRefillConnector {
+    fun connect(
+        dc: Int,
+        isMedia: Boolean,
+        targetHost: String,
+        domain: String,
+        path: String,
+        timeoutMs: Int,
+    ): WebSocketBinaryStream
+}
+
 /**
  * Android-independent idle direct WebSocket pool keyed by Telegram DC and media route.
  *
@@ -28,6 +40,7 @@ import java.util.concurrent.TimeUnit
 class WebSocketPool(
     private val poolSize: Int,
     private val connector: RawWebSocketConnector,
+    private val refillConnector: DirectPoolRefillConnector? = null,
     private val logger: ProxyLogger = ProxyLogger {},
     private val maxAgeMs: Long = DEFAULT_MAX_AGE_MS,
     private val path: String = ProxyServer.DEFAULT_WS_PATH,
@@ -223,6 +236,13 @@ class WebSocketPool(
 
     fun refillBackoffUntilSnapshot(): Map<Key, Long> = synchronized(lock) { refillAfterMs.toMap() }
 
+    fun refillBackoffRemainingSnapshot(): Map<Key, Long> = synchronized(lock) {
+        val now = nowMs()
+        refillAfterMs
+            .mapValues { (_, untilMs) -> (untilMs - now).coerceAtLeast(0L) }
+            .filterValues { it > 0L }
+    }
+
     fun closedIdlePrunedSnapshot(): Map<Key, Long> = synchronized(lock) { closedIdlePrunedByKey.toMap() }
 
     fun isEnabled(): Boolean = enabled.get()
@@ -299,7 +319,14 @@ class WebSocketPool(
                 if (!enabled.get() || generation.get() != refillGeneration) break
                 try {
                     onRefillAttempt(key, source)
-                    connected = connector.connect(targetHost, domain, path, RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)
+                    connected = refillConnector?.connect(
+                        key.dc,
+                        key.isMedia,
+                        targetHost,
+                        domain,
+                        path,
+                        RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS,
+                    ) ?: connector.connect(targetHost, domain, path, RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)
                     onRefillSuccess(key, source)
                     break
                 } catch (error: Throwable) {

@@ -363,6 +363,7 @@ object DiagnosticReportFormatter {
         appendLine("Last effective route mode update time ms: ${snapshot.lastEffectiveRouteModeUpdateTimeMs?.toString() ?: "unknown"}")
         appendLine("Last route used update time ms: ${snapshot.lastRouteUsedUpdateTimeMs?.toString() ?: "unknown"}")
         appendClientExperienceDiagnostics(snapshot.stats)
+        appendFrontingDiagnostics(snapshot.stats)
         appendDirectPoolReadiness(snapshot.stats)
         appendLine("Stats: ${formatStats(snapshot.stats)}")
         appendCfHealth(snapshot.stats)
@@ -559,13 +560,21 @@ object DiagnosticReportFormatter {
             "directPoolSkippedBecauseTargetIpCooldown=${stats.directPoolSkippedBecauseTargetIpCooldown}, lastDirectTargetIpCooldownTarget=${stats.lastDirectTargetIpCooldownTarget ?: "none"}, " +
             "lastDirectTargetIpCooldownReason=${stats.lastDirectTargetIpCooldownReason ?: "none"}, lastDirectTargetIpCooldownSetTimeMs=${stats.lastDirectTargetIpCooldownSetTimeMs}, " +
             "directTargetIpCooldownUntilByTarget=${formatCompactMap(stats.directTargetIpCooldownUntilByTarget)}, " +
-            "directTimeouts=${stats.directTimeouts}, cfConnections=${stats.cfProxyConnections}, " +
+            "directTimeouts=${stats.directTimeouts}, frontingAttempts=${stats.frontingAttempts}, " +
+            "frontingSuccesses=${stats.frontingSuccesses}, frontingFailures=${stats.frontingFailures}, " +
+            "frontingFirstAttempts=${stats.frontingFirstAttempts}, frontingFallbackAttempts=${stats.frontingFallbackAttempts}, " +
+            "frontingPreferredKeys=${stats.frontingPreferredKeys}, lastFrontingError=${stats.lastFrontingError ?: "none"}, " +
+            "lastFrontingTimeMs=${stats.lastFrontingTimeMs}, cfConnections=${stats.cfProxyConnections}, " +
             "cfErrors=${stats.cfProxyErrors}, lastCfDomain=${stats.lastCfDomain ?: "none"}, poolHits=${stats.poolHits}, " +
             "poolMisses=${stats.poolMisses}, poolRefillErrors=${stats.poolRefillErrors}, poolStale=${stats.poolStale}, " +
             "directPoolReadyByKey=${formatCompactMap(stats.directPoolDiagnostics.readyByKey)}, " +
             "directPoolHitsByKey=${formatCompactMap(stats.directPoolDiagnostics.hitsByKey)}, " +
             "directPoolMissesByKey=${formatCompactMap(stats.directPoolDiagnostics.missesByKey)}, " +
             "directPoolRefillErrorsByKey=${formatCompactMap(stats.directPoolDiagnostics.refillErrorsByKey)}, " +
+            "directPoolRefillFailureWavesByKey=${formatCompactMap(stats.directPoolDiagnostics.refillFailureWavesByKey)}, " +
+            "directPoolRefillBackoffRemainingMsByKey=${formatCompactMap(stats.directPoolDiagnostics.refillBackoffRemainingMsByKey)}, " +
+            "directPoolRefillBackoffSuppressedByKey=${formatCompactMap(stats.directPoolDiagnostics.refillBackoffSuppressedByKey)}, " +
+            "directPoolClosedIdlePrunedByKey=${formatCompactMap(stats.directPoolDiagnostics.closedIdlePrunedByKey)}, " +
             "directPoolStaleByKey=${formatCompactMap(stats.directPoolDiagnostics.staleByKey)}, " +
             "poolRefillsCancelled=${stats.poolRefillsCancelled}, " +
             "poolResultsDiscardedAfterRouteChange=${stats.poolResultsDiscardedAfterRouteChange}, " +
@@ -681,6 +690,18 @@ object DiagnosticReportFormatter {
             "lastNetworkAvailableAtMs=${stats.lastNetworkAvailableAtMs}, networkGeneration=${stats.networkGeneration}"
     }
 
+    private fun StringBuilder.appendFrontingDiagnostics(stats: ProxyServerStats?) {
+        appendLine("Fronting:")
+        appendLine("  attempts: ${stats?.frontingAttempts ?: "unknown"}")
+        appendLine("  successes: ${stats?.frontingSuccesses ?: "unknown"}")
+        appendLine("  failures: ${stats?.frontingFailures ?: "unknown"}")
+        appendLine("  frontingFirstAttempts: ${stats?.frontingFirstAttempts ?: "unknown"}")
+        appendLine("  fallbackAttempts: ${stats?.frontingFallbackAttempts ?: "unknown"}")
+        appendLine("  preferredKeys: ${stats?.frontingPreferredKeys ?: "unknown"}")
+        appendLine("  lastError: ${stats?.lastFrontingError ?: "none"}")
+        appendLine("  lastTimeMs: ${stats?.lastFrontingTimeMs?.takeIf { it > 0L }?.toString() ?: "unknown"}")
+    }
+
     private fun StringBuilder.appendDirectPoolReadiness(stats: ProxyServerStats?) {
         appendLine("Direct pool readiness:")
         appendLine("  readyByKey: ${stats?.directPoolDiagnostics?.readyByKey?.let(::formatCompactMap) ?: "unknown"}")
@@ -690,6 +711,10 @@ object DiagnosticReportFormatter {
         appendLine("  refillAttemptsByKey: ${stats?.directPoolDiagnostics?.refillAttemptsByKey?.let(::formatCompactMap) ?: "unknown"}")
         appendLine("  refillSuccessesByKey: ${stats?.directPoolDiagnostics?.refillSuccessesByKey?.let(::formatCompactMap) ?: "unknown"}")
         appendLine("  refillErrorsByKey: ${stats?.directPoolDiagnostics?.refillErrorsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  refillFailureWavesByKey: ${stats?.directPoolDiagnostics?.refillFailureWavesByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  refillBackoffRemainingMsByKey: ${stats?.directPoolDiagnostics?.refillBackoffRemainingMsByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  refillBackoffSuppressedByKey: ${stats?.directPoolDiagnostics?.refillBackoffSuppressedByKey?.let(::formatCompactMap) ?: "unknown"}")
+        appendLine("  closedIdlePrunedByKey: ${stats?.directPoolDiagnostics?.closedIdlePrunedByKey?.let(::formatCompactMap) ?: "unknown"}")
         appendLine("  staleByKey: ${stats?.directPoolDiagnostics?.staleByKey?.let(::formatCompactMap) ?: "unknown"}")
         appendLine("  lastRefillErrorByKey: ${stats?.directPoolDiagnostics?.lastRefillErrorByKey?.let(::formatCompactMap) ?: "unknown"}")
         appendLine("  lastRefillTimeMsByKey: ${stats?.directPoolDiagnostics?.lastRefillTimeMsByKey?.let(::formatCompactMap) ?: "unknown"}")
