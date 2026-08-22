@@ -1,0 +1,33 @@
+name: Apply fronting runtime patch
+
+on:
+  push:
+    branches:
+      - upstream-v1.10-fronting-runtime
+
+permissions:
+  contents: write
+
+jobs:
+  apply-patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: upstream-v1.10-fronting-runtime
+          fetch-depth: 1
+      - name: Apply and verify scoped patch
+        run: |
+          git apply --check .github/patches/fronting-runtime.patch
+          git apply .github/patches/fronting-runtime.patch
+          rm .github/patches/fronting-runtime.patch
+          rm .github/workflows/apply-fronting-runtime.yml
+          git diff --check
+      - name: Commit applied runtime wiring
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'Wire fronting into direct runtime [fronting-runtime-applied]'
+          git push origin HEAD:upstream-v1.10-fronting-runtime
