@@ -170,13 +170,8 @@ internal class DirectFrontingConnector(
         internal fun isTimeout(error: Throwable): Boolean {
             var current: Throwable? = error
             while (current != null) {
-                if (current is SocketTimeoutException) return true
-                val message = current.message.orEmpty()
-                if (message.contains("timed out", ignoreCase = true) ||
-                    message.contains("timeout", ignoreCase = true)
-                ) {
-                    return true
-                }
+                if (current is SocketTimeoutException || current is java.util.concurrent.TimeoutException) return true
+                if (current.message.orEmpty().contains("timed out", ignoreCase = true)) return true
                 current = current.cause
             }
             return false
