@@ -325,7 +325,8 @@ class WorkerDiagnosticsActivity : Activity() {
         try {
             raw.soTimeout = CONNECT_TIMEOUT_MS
             raw.connect(InetSocketAddress(address, 443), CONNECT_TIMEOUT_MS)
-            val ssl = SSLSocketFactory.getDefault().createSocket(raw, domain, 443, true) as SSLSocket
+            val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
+            val ssl = factory.createSocket(raw, domain, 443, true) as SSLSocket
             ssl.use {
                 it.soTimeout = CONNECT_TIMEOUT_MS
                 configureTls(it, domain, protocol)
