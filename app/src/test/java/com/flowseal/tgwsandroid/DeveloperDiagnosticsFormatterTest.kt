@@ -1,5 +1,6 @@
 package com.flowseal.tgwsandroid
 
+import com.flowseal.tgwsandroid.proxy.DirectPoolDiagnosticsSnapshot
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -18,12 +19,25 @@ class DeveloperDiagnosticsFormatterTest {
             directTimeouts = 1
             directCooldownUntil = 1234
             lastRouteUsed = "direct"
+            frontingAttempts = 4
+            frontingSuccesses = 3
+            frontingFailures = 1
+            frontingFirstAttempts = 2
+            frontingFallbackAttempts = 2
+            frontingPreferredKeys = listOf("dc2@149.154.167.220")
+            lastFrontingError = "SocketTimeoutException: timed out"
             poolHits = 10
             poolMisses = 3
             poolStale = 2
             poolRefillErrors = 1
             poolRefillsCancelled = 4
             poolResultsDiscardedAfterRouteChange = 6
+            directPoolDiagnostics = DirectPoolDiagnosticsSnapshot(
+                refillFailureWavesByKey = mapOf("dc2" to 2),
+                refillBackoffRemainingMsByKey = mapOf("dc2" to 60_000L),
+                refillBackoffSuppressedByKey = mapOf("dc2|maintenance" to 3L),
+                closedIdlePrunedByKey = mapOf("dc2" to 1L),
+            )
         }
 
         val details = DeveloperDiagnosticsFormatter.directPoolDetails(stats)
@@ -35,6 +49,9 @@ class DeveloperDiagnosticsFormatterTest {
         assertTrue(details.contains("timeouts=1"))
         assertTrue(details.contains("cooldownUntil=1234"))
         assertTrue(details.contains("lastRoute=direct"))
+        assertTrue(details.contains("fronting attempts=4"))
+        assertTrue(details.contains("successes=3"))
+        assertTrue(details.contains("preferred=[dc2@149.154.167.220]"))
         assertTrue(details.contains("pool hits=10"))
         assertTrue(details.contains("misses=3"))
         assertTrue(details.contains("stale=2"))
@@ -43,6 +60,10 @@ class DeveloperDiagnosticsFormatterTest {
         assertTrue(details.contains("discardedAfterRouteChange=6"))
         assertTrue(details.contains("readyByKey="))
         assertTrue(details.contains("inFlightRefillsByKey="))
+        assertTrue(details.contains("failureWavesByKey={dc2=2}"))
+        assertTrue(details.contains("backoffRemainingMsByKey={dc2=60000}"))
+        assertTrue(details.contains("backoffSuppressedByKey={dc2|maintenance=3}"))
+        assertTrue(details.contains("closedIdlePrunedByKey={dc2=1}"))
         assertTrue(details.contains("lastRefillErrorByKey="))
     }
 
