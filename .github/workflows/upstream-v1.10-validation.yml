@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - upstream-v1.10-validation
+      - fix-private-sideload-special-use
   pull_request:
     branches:
       - upstream-v1.10-fronting-pool-diagnostics
+      - upstream-v1.10-validation
 
 jobs:
   full-validation:
@@ -17,14 +19,21 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Run full unit suite and build debug APK
+      - name: Run full unit suite and build private sideload APK
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest assembleDebug
+          ./gradlew testDebugUnitTest assemblePrivateSideload
+      - name: Verify private sideload special-use manifest
+        run: |
+          merged_manifest="$(find app/build/intermediates/merged_manifest/privateSideload -name AndroidManifest.xml -print -quit)"
+          test -n "$merged_manifest"
+          grep -q 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' "$merged_manifest"
+          grep -q 'android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE' "$merged_manifest"
+          grep -q 'android:foregroundServiceType="specialUse"' "$merged_manifest"
       - name: Upload validation APK
         uses: actions/upload-artifact@v4
         with:
-          name: tg-ws-android-v1.10-validation-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: tg-ws-android-v1.10-private-sideload-apk
+          path: app/build/outputs/apk/privateSideload/*.apk
           if-no-files-found: error
           retention-days: 7
