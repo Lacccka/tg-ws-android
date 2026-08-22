@@ -105,6 +105,9 @@ internal class DirectFrontingConnector(
     private val state: DirectFrontingPreferenceState = DirectFrontingPreferenceState(),
     private val frontingSniHost: String = DEFAULT_FRONTING_SNI,
     private val frontingTimeoutMs: Int = DEFAULT_FRONTING_TIMEOUT_MS,
+    private val onFrontingAttempt: (DirectFrontingRouteKey, Boolean) -> Unit = { _, _ -> },
+    private val onFrontingSuccess: (DirectFrontingRouteKey, Boolean) -> Unit = { _, _ -> },
+    private val onFrontingFailure: (DirectFrontingRouteKey, Boolean, Throwable) -> Unit = { _, _, _ -> },
 ) {
     fun connect(
         dc: Int,
@@ -120,6 +123,7 @@ internal class DirectFrontingConnector(
         var firstFrontingError: Throwable? = null
 
         if (frontingFirst) {
+            onFrontingAttempt(key, true)
             try {
                 val stream = frontedConnect(
                     targetHost,
@@ -129,9 +133,11 @@ internal class DirectFrontingConnector(
                     frontingSniHost,
                 )
                 state.recordFrontingSuccess(key, networkGeneration)
+                onFrontingSuccess(key, true)
                 return DirectFrontingConnectResult(stream, fronted = true, frontingTriedFirst = true)
             } catch (error: Throwable) {
                 firstFrontingError = error
+                onFrontingFailure(key, true, error)
             }
         }
 
@@ -143,6 +149,7 @@ internal class DirectFrontingConnector(
             firstFrontingError?.let(normalError::addSuppressed)
             if (!isTimeout(normalError) || frontingFirst) throw normalError
 
+            onFrontingAttempt(key, false)
             try {
                 val stream = frontedConnect(
                     targetHost,
@@ -152,8 +159,10 @@ internal class DirectFrontingConnector(
                     frontingSniHost,
                 )
                 state.recordFrontingSuccess(key, networkGeneration)
+                onFrontingSuccess(key, false)
                 return DirectFrontingConnectResult(stream, fronted = true, frontingTriedFirst = false)
             } catch (frontingError: Throwable) {
+                onFrontingFailure(key, false, frontingError)
                 normalError.addSuppressed(frontingError)
                 throw normalError
             }
