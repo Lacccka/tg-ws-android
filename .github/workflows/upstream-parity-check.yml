@@ -27,5 +27,6 @@ jobs:
             --tests 'com.flowseal.tgwsandroid.proxy.RawWebSocketLiveTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.RawWebSocketSniTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.DirectFrontingConnectorTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.DirectFrontingTimeoutClassificationTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.WebSocketPoolTest' \
             --tests 'com.flowseal.tgwsandroid.proxy.BridgeSessionTest'
