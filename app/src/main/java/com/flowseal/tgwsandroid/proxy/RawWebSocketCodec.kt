@@ -116,7 +116,7 @@ object RawWebSocketCodec {
         } else if (length == 127L) {
             length = readUnsignedBigEndian(input, 8)
         }
-        if (length > MAX_MESSAGE_LEN.toLong()) {
+        if (length < 0L || length > MAX_MESSAGE_LEN.toLong()) {
             throw IOException("WebSocket frame too large: $length bytes")
         }
 
