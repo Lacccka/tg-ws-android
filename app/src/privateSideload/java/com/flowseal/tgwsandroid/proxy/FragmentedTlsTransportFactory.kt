@@ -92,9 +92,7 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
                 status != SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING
             ) {
                 when (status) {
-                    SSLEngineResult.HandshakeStatus.NEED_TASK -> {
-                        runTasks()
-                    }
+                    SSLEngineResult.HandshakeStatus.NEED_TASK -> runTasks()
 
                     SSLEngineResult.HandshakeStatus.NEED_WRAP -> {
                         val networkBytes = wrapHandshakeBytes()
@@ -110,9 +108,7 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
                         }
                     }
 
-                    SSLEngineResult.HandshakeStatus.NEED_UNWRAP,
-                    SSLEngineResult.HandshakeStatus.NEED_UNWRAP_AGAIN,
-                    -> unwrapHandshakeData()
+                    SSLEngineResult.HandshakeStatus.NEED_UNWRAP -> unwrapHandshakeData()
 
                     SSLEngineResult.HandshakeStatus.FINISHED,
                     SSLEngineResult.HandshakeStatus.NOT_HANDSHAKING,
@@ -181,8 +177,6 @@ internal object FragmentedTlsTransportFactory : RawWebSocket.TransportFactory {
                     }
 
                     SSLEngineResult.Status.BUFFER_OVERFLOW -> {
-                        // Handshake messages should not produce application data. Retrying
-                        // after a larger scratch buffer is unnecessary for the normal path.
                         throw IOException("TLS handshake application buffer overflow")
                     }
 
