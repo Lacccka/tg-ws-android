@@ -36,6 +36,10 @@ jobs:
           grep -q 'android:foregroundServiceType="specialUse"' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.WorkerDiagnosticsActivity' "$merged_manifest"
           grep -q 'SE Worker Test' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.WorkerPreferredEdgeActivity' "$merged_manifest"
+          grep -q 'SE Edge Test' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.WorkerTlsFragmentActivity' "$merged_manifest"
+          grep -q 'SE TLS Frag Test' "$merged_manifest"
       - name: Upload validation APK
         uses: actions/upload-artifact@v4
         with:
