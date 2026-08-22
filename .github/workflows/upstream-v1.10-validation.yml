@@ -44,6 +44,8 @@ jobs:
           grep -q 'SE Worker Frag E2E' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.WorkerNoSniE2eActivity' "$merged_manifest"
           grep -q 'SE Worker No-SNI E2E' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.WorkerTlsMatrixActivity' "$merged_manifest"
+          grep -q 'SE Worker TLS Matrix' "$merged_manifest"
       - name: Upload validation APK
         uses: actions/upload-artifact@v4
         with:
