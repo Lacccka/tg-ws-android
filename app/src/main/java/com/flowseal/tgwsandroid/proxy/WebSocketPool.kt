@@ -31,7 +31,7 @@ class WebSocketPool(
     private val logger: ProxyLogger = ProxyLogger {},
     private val maxAgeMs: Long = DEFAULT_MAX_AGE_MS,
     private val path: String = ProxyServer.DEFAULT_WS_PATH,
-    private val nowMs: () -> Long = { System.currentTimeMillis() },
+    private val nowMs: () -> Long = { System.nanoTime() / 1_000_000L },
     private val refillBackoffInitialMs: Long = DEFAULT_REFILL_BACKOFF_INITIAL_MS,
     private val refillBackoffMaxMs: Long = DEFAULT_REFILL_BACKOFF_MAX_MS,
     private val executor: ExecutorService = Executors.newFixedThreadPool(
@@ -165,8 +165,11 @@ class WebSocketPool(
         enabled.set(true)
     }
 
-    /** Closes all idle sockets and forgets pending/backoff bookkeeping. */
-    fun reset() = clearIdle()
+    /** Closes all idle sockets and invalidates in-flight refill results. */
+    fun reset() {
+        generation.incrementAndGet()
+        clearIdle()
+    }
 
     /** Alias for [closeAll] for callers that treat the pool as a closeable lifecycle object. */
     fun close() = closeAll()
@@ -195,6 +198,7 @@ class WebSocketPool(
     /** Closes all currently idle sockets. In-flight refills are best-effort cancelled by shutdown on owned executors. */
     fun closeAll() {
         enabled.set(false)
+        generation.incrementAndGet()
         clearIdle()
         if (ownsExecutor) {
             executor.shutdownNow()
@@ -305,7 +309,7 @@ class WebSocketPool(
             }
         } finally {
             val readyAfter: Int
-            var discardedAfterRouteChange = false
+            var discardReason: String? = null
             var backoffDelayMs = 0L
             synchronized(lock) {
                 val validGeneration = enabled.get() && generation.get() == refillGeneration
@@ -315,7 +319,11 @@ class WebSocketPool(
                     if (queue.size < poolSize) {
                         queue.addLast(Entry(connected!!, nowMs()))
                         connected = null
+                    } else {
+                        discardReason = "pool already full"
                     }
+                } else if (connected != null) {
+                    discardReason = "route change"
                 }
 
                 val pending = (pendingRefills[key] ?: 1) - 1
@@ -336,16 +344,12 @@ class WebSocketPool(
                         }
                     }
                 }
-
-                if (connected != null) {
-                    discardedAfterRouteChange = true
-                }
                 readyAfter = entries[key]?.size ?: 0
             }
             connected?.let {
-                if (discardedAfterRouteChange) onResultDiscardedAfterRouteChange()
+                if (discardReason == "route change") onResultDiscardedAfterRouteChange()
                 closeBestEffort(it)
-                logger.log("WS pool refill result discarded DC${key.dc} after route change or full pool")
+                logger.log("WS pool refill result discarded DC${key.dc}: ${discardReason ?: "unused result"}")
             }
             if (backoffDelayMs > 0L) {
                 logger.log("WS pool refill failed for DC${key.dc}${if (key.isMedia) "m" else ""}, retry in ${backoffDelayMs / 1_000}s")
@@ -389,12 +393,14 @@ class WebSocketPool(
     }
 
     private fun refillBackoffDelayMs(failures: Int): Long {
+        val maxDelay = refillBackoffMaxMs.coerceAtLeast(0L)
+        if (maxDelay == 0L) return 0L
         val exponent = minOf((failures - 1).coerceAtLeast(0), 6)
-        var delay = refillBackoffInitialMs.coerceAtLeast(0L)
+        var delay = minOf(refillBackoffInitialMs.coerceAtLeast(0L), maxDelay)
         repeat(exponent) {
-            delay = if (delay >= refillBackoffMaxMs / 2L) refillBackoffMaxMs else delay * 2L
+            delay = if (delay >= maxDelay / 2L) maxDelay else delay * 2L
         }
-        return minOf(delay, refillBackoffMaxMs.coerceAtLeast(0L))
+        return minOf(delay, maxDelay)
     }
 
     private fun closeBestEffort(webSocket: WebSocketBinaryStream) {
