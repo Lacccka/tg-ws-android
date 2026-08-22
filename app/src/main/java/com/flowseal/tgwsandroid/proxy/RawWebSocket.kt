@@ -23,9 +23,10 @@ import javax.net.ssl.X509TrustManager
  * The upstream Python implementation opens a TLS connection with hostname checks
  * and certificate verification disabled (`ssl.CERT_NONE`). For parity, the
  * default Kotlin transport below intentionally uses a clearly named trust-all
- * TLS factory while still setting SNI to the supplied `domain` where the JVM
- * supports it. Callers that need platform certificate validation can inject a
- * different [TransportFactory].
+ * TLS factory. HTTP Host and TLS SNI are independent so the v1.9+ fronting path
+ * can keep Host on the Telegram WebSocket domain while overriding only SNI.
+ * Callers that need platform certificate validation can inject a different
+ * [TransportFactory].
  */
 class RawWebSocket private constructor(
     private val transport: Transport,
@@ -55,7 +56,7 @@ class RawWebSocket private constructor(
         fun connect(
             host: String,
             port: Int,
-            domain: String,
+            tlsServerName: String,
             timeoutMs: Int,
         ): Transport
     }
@@ -203,13 +204,15 @@ class RawWebSocket private constructor(
             domain: String,
             timeoutMs: Int = DEFAULT_CONNECT_TIMEOUT_MS,
             path: String = "/apiws",
+            sni: String? = null,
             transportFactory: TransportFactory = TrustAllTlsTransportFactory,
             randomProvider: (Int) -> ByteArray = { length ->
                 ByteArray(length).also { secureRandom.nextBytes(it) }
             },
         ): RawWebSocket {
             val boundedTimeoutMs = minOf(timeoutMs, DEFAULT_CONNECT_TIMEOUT_MS)
-            val transport = transportFactory.connect(host, 443, domain, boundedTimeoutMs)
+            val tlsServerName = sni ?: domain
+            val transport = transportFactory.connect(host, 443, tlsServerName, boundedTimeoutMs)
             try {
                 transport.setReadTimeout(boundedTimeoutMs)
                 val wsKey = Base64.getEncoder().encodeToString(randomProvider(16))
@@ -278,8 +281,9 @@ class RawWebSocket private constructor(
  * Default RawWebSocket TLS transport that mirrors upstream `ssl.CERT_NONE`.
  *
  * This is intentionally trust-all and hostname-verification-free for parity with
- * `tg-ws-proxy`. SNI is still set to `domain` where practical, and basic socket
- * options mirror upstream `set_sock_opts` best-effort behavior.
+ * `tg-ws-proxy`. SNI is set to the independently supplied TLS server name where
+ * practical, and basic socket options mirror upstream `set_sock_opts`
+ * best-effort behavior.
  */
 internal object TrustAllTlsTransportFactory : RawWebSocket.TransportFactory {
     private const val BUFFER_SIZE = 256 * 1024
@@ -287,7 +291,7 @@ internal object TrustAllTlsTransportFactory : RawWebSocket.TransportFactory {
     override fun connect(
         host: String,
         port: Int,
-        domain: String,
+        tlsServerName: String,
         timeoutMs: Int,
     ): RawWebSocket.Transport {
         val socket = trustAllSocketFactory().createSocket() as SSLSocket
@@ -299,7 +303,7 @@ internal object TrustAllTlsTransportFactory : RawWebSocket.TransportFactory {
         } catch (_: Exception) {
             // Best effort, matching upstream set_sock_opts behavior.
         }
-        setSni(socket, domain)
+        setSni(socket, tlsServerName)
         socket.connect(InetSocketAddress(host, port), timeoutMs)
         socket.startHandshake()
         return SocketTransport(socket)
@@ -313,11 +317,11 @@ internal object TrustAllTlsTransportFactory : RawWebSocket.TransportFactory {
 
     private fun setSni(
         socket: SSLSocket,
-        domain: String,
+        tlsServerName: String,
     ) {
         try {
             val parameters = socket.sslParameters
-            parameters.serverNames = listOf(SNIHostName(domain))
+            parameters.serverNames = listOf(SNIHostName(tlsServerName))
             socket.sslParameters = parameters
         } catch (_: Exception) {
             // Some runtimes reject unusual host names; upstream also treats SNI as practical best effort.
