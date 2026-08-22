@@ -32,7 +32,8 @@ class RawWebSocket private constructor(
     private val randomProvider: (Int) -> ByteArray,
 ) {
     private val writeLock = Object()
-    private var closed: Boolean = false
+    @Volatile private var closed: Boolean = false
+    private val fragmentBuffer = ByteArrayOutputStream()
 
     /** Testable blocking stream transport used by the live connection layer. */
     interface Transport {
@@ -42,6 +43,9 @@ class RawWebSocket private constructor(
         fun flush() = output.flush()
 
         fun setReadTimeout(timeoutMs: Int) = Unit
+
+        /** Best-effort liveness hint used only for idle pool pruning. */
+        fun isOpen(): Boolean = true
 
         fun close()
     }
@@ -84,6 +88,13 @@ class RawWebSocket private constructor(
         }
     }
 
+    /**
+     * Receives one complete WebSocket message.
+     *
+     * Upstream v1.10 fixed continuation handling: fragmented text/binary messages
+     * are reassembled across opcode 0x0 continuation frames, while control frames
+     * may appear between fragments. The aggregate message is bounded to 16 MiB.
+     */
     fun recv(): ByteArray? {
         while (!closed) {
             val frame = RawWebSocketCodec.parseFrame(transport.input)
@@ -93,9 +104,7 @@ class RawWebSocket private constructor(
                     try {
                         val closePayload =
                             if (frame.payload.isEmpty()) {
-                                ByteArray(
-                                    0,
-                                )
+                                ByteArray(0)
                             } else {
                                 frame.payload.copyOfRange(0, minOf(2, frame.payload.size))
                             }
@@ -120,32 +129,50 @@ class RawWebSocket private constructor(
                     }
                 }
 
-                RawWebSocketCodec.OP_PONG -> {
-                    Unit
+                RawWebSocketCodec.OP_PONG -> Unit
+
+                RawWebSocketCodec.OP_CONT, OP_TEXT, RawWebSocketCodec.OP_BINARY -> {
+                    if (frame.fin && fragmentBuffer.size() == 0) {
+                        return frame.payload
+                    }
+                    fragmentBuffer.write(frame.payload)
+                    if (fragmentBuffer.size() > RawWebSocketCodec.MAX_MESSAGE_LEN) {
+                        throw IOException("WebSocket message too large: ${fragmentBuffer.size()} bytes")
+                    }
+                    if (!frame.fin) {
+                        continue
+                    }
+                    val message = fragmentBuffer.toByteArray()
+                    fragmentBuffer.reset()
+                    return message
                 }
 
-                OP_TEXT, RawWebSocketCodec.OP_BINARY -> {
-                    return frame.payload
-                }
-
-                else -> {
-                    Unit
-                }
+                else -> Unit
             }
         }
         return null
     }
 
+    /** Safe, non-consuming idle-pool liveness check. */
+    fun isUsableForPool(): Boolean = !closed && transport.isOpen()
+
     fun close() {
-        try {
-            synchronized(writeLock) {
-                if (closed) return
+        var shouldSendClose = false
+        synchronized(writeLock) {
+            if (!closed) {
                 closed = true
-                transport.output.write(maskedFrame(RawWebSocketCodec.OP_CLOSE, ByteArray(0)))
-                transport.flush()
+                shouldSendClose = true
             }
-        } catch (_: Exception) {
-            // Match upstream: close is best-effort.
+        }
+        if (shouldSendClose) {
+            try {
+                synchronized(writeLock) {
+                    transport.output.write(maskedFrame(RawWebSocketCodec.OP_CLOSE, ByteArray(0)))
+                    transport.flush()
+                }
+            } catch (_: Exception) {
+                // Match upstream: close is best-effort.
+            }
         }
         try {
             transport.close()
@@ -320,6 +347,9 @@ internal object TrustAllTlsTransportFactory : RawWebSocket.TransportFactory {
         override fun setReadTimeout(timeoutMs: Int) {
             socket.soTimeout = timeoutMs
         }
+
+        override fun isOpen(): Boolean =
+            socket.isConnected && !socket.isClosed && !socket.isInputShutdown && !socket.isOutputShutdown
 
         override fun close() = socket.close()
     }
