@@ -1,0 +1,27 @@
+name: Upstream parity check
+
+on:
+  push:
+    branches:
+      - upstream-v1.10-core-parity
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  parity-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Run affected transport and pool tests
+        run: |
+          chmod +x ./gradlew
+          ./gradlew testDebugUnitTest \
+            --tests 'com.flowseal.tgwsandroid.proxy.RawWebSocketCodecParityTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.RawWebSocketLiveTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.WebSocketPoolTest' \
+            --tests 'com.flowseal.tgwsandroid.proxy.BridgeSessionTest'

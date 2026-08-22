@@ -22,6 +22,14 @@ interface WebSocketBinaryStream {
 
     fun recv(): ByteArray?
 
+    /**
+     * Non-consuming liveness hint for idle-pool pruning.
+     *
+     * Test/fake streams default to usable so existing callers remain source-compatible.
+     * Live RawWebSocket adapters override this with their underlying transport state.
+     */
+    fun isUsableForPool(): Boolean = true
+
     fun close()
 }
 
@@ -34,6 +42,8 @@ class RawWebSocketBinaryStream(
     override fun sendBatch(parts: List<ByteArray>) = rawWebSocket.sendBatch(parts)
 
     override fun recv(): ByteArray? = rawWebSocket.recv()
+
+    override fun isUsableForPool(): Boolean = rawWebSocket.isUsableForPool()
 
     override fun close() = rawWebSocket.close()
 }

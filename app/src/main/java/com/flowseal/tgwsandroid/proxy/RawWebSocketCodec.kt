@@ -2,6 +2,7 @@ package com.flowseal.tgwsandroid.proxy
 
 import java.io.ByteArrayInputStream
 import java.io.EOFException
+import java.io.IOException
 import java.io.InputStream
 import java.security.SecureRandom
 
@@ -14,10 +15,12 @@ import java.security.SecureRandom
  * sockets, perform TLS, or manage a live WebSocket connection.
  */
 object RawWebSocketCodec {
+    const val OP_CONT: Int = 0x0
     const val OP_BINARY: Int = 0x2
     const val OP_CLOSE: Int = 0x8
     const val OP_PING: Int = 0x9
     const val OP_PONG: Int = 0xA
+    const val MAX_MESSAGE_LEN: Int = 16 * 1024 * 1024
 
     private val secureRandom = SecureRandom()
 
@@ -27,6 +30,7 @@ object RawWebSocketCodec {
         val payload: ByteArray,
         val masked: Boolean,
         val length: Long,
+        val fin: Boolean,
     )
 
     /** Offline result equivalent for `RawWebSocket.connect` response handling. */
@@ -54,8 +58,9 @@ object RawWebSocketCodec {
     }
 
     /**
-     * Builds a final WebSocket frame with upstream `RawWebSocket._build_frame`
-     * length and masking behavior.
+     * Builds a WebSocket frame with upstream `RawWebSocket._build_frame`
+     * length and masking behavior. Frames are final by default; [fin] is exposed
+     * for parity/regression tests covering fragmented upstream messages.
      */
     fun buildFrame(
         opcode: Int,
@@ -64,9 +69,10 @@ object RawWebSocketCodec {
         randomProvider: (Int) -> ByteArray = { length ->
             ByteArray(length).also { secureRandom.nextBytes(it) }
         },
+        fin: Boolean = true,
     ): ByteArray {
         val length = data.size
-        val firstByte = 0x80 or (opcode and 0x0f)
+        val firstByte = (if (fin) 0x80 else 0x00) or (opcode and 0x0f)
         val header = mutableListOf<Byte>()
         header.add(firstByte.toByte())
 
@@ -101,6 +107,7 @@ object RawWebSocketCodec {
     fun parseFrame(input: InputStream): Frame {
         val first = readByteOrThrow(input)
         val second = readByteOrThrow(input)
+        val fin = (first and 0x80) != 0
         val opcode = first and 0x0f
         val masked = (second and 0x80) != 0
         var length = (second and 0x7f).toLong()
@@ -109,7 +116,9 @@ object RawWebSocketCodec {
         } else if (length == 127L) {
             length = readUnsignedBigEndian(input, 8)
         }
-        require(length <= Int.MAX_VALUE) { "frame payload too large for ByteArray: $length" }
+        if (length < 0L || length > MAX_MESSAGE_LEN.toLong()) {
+            throw IOException("WebSocket frame too large: $length bytes")
+        }
 
         val maskKey = if (masked) readExact(input, 4) else null
         val payload = readExact(input, length.toInt())
@@ -118,6 +127,7 @@ object RawWebSocketCodec {
             payload = if (maskKey != null) xorMask(payload, maskKey) else payload,
             masked = masked,
             length = length,
+            fin = fin,
         )
     }
 

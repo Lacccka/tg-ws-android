@@ -7,6 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.IOException
 
 class RawWebSocketCodecParityTest {
     @Test
@@ -48,7 +49,50 @@ class RawWebSocketCodecParityTest {
                     .toLong(),
                 parsed.length,
             )
+            assertTrue("${vector.getString("name")} FIN", parsed.fin)
         }
+    }
+
+    @Test
+    fun fragmentedFramesPreserveFinAndContinuationOpcode() {
+        val first =
+            RawWebSocketCodec.parseFrame(
+                RawWebSocketCodec.buildFrame(
+                    opcode = RawWebSocketCodec.OP_BINARY,
+                    data = "AAA".toByteArray(Charsets.UTF_8),
+                    fin = false,
+                ),
+            )
+        val continuation =
+            RawWebSocketCodec.parseFrame(
+                RawWebSocketCodec.buildFrame(
+                    opcode = RawWebSocketCodec.OP_CONT,
+                    data = "BBB".toByteArray(Charsets.UTF_8),
+                    fin = true,
+                ),
+            )
+
+        assertEquals(RawWebSocketCodec.OP_BINARY, first.opcode)
+        assertFalse(first.fin)
+        assertEquals("AAA", first.payload.toString(Charsets.UTF_8))
+        assertEquals(RawWebSocketCodec.OP_CONT, continuation.opcode)
+        assertTrue(continuation.fin)
+        assertEquals("BBB", continuation.payload.toString(Charsets.UTF_8))
+    }
+
+    @Test
+    fun oversizedFrameIsRejectedBeforePayloadAllocation() {
+        val length = RawWebSocketCodec.MAX_MESSAGE_LEN.toLong() + 1L
+        val frame = ByteArray(10)
+        frame[0] = 0x82.toByte()
+        frame[1] = 0x7f.toByte()
+        for (index in 0 until 8) {
+            frame[2 + index] = ((length ushr (56 - index * 8)) and 0xff).toByte()
+        }
+
+        val error = assertThrowsIo { RawWebSocketCodec.parseFrame(frame) }
+
+        assertTrue(error.message.orEmpty().contains("frame too large"))
     }
 
     @Test
@@ -101,6 +145,7 @@ class RawWebSocketCodecParityTest {
             )
         val parsed = RawWebSocketCodec.parseFrame(frame)
         assertTrue(parsed.masked)
+        assertTrue(parsed.fin)
         assertEquals(RawWebSocketCodec.OP_BINARY, parsed.opcode)
         assertArrayEquals(payload, parsed.payload)
     }
@@ -130,4 +175,13 @@ class RawWebSocketCodecParityTest {
         }
 
     private fun JSONObject.nullableString(name: String): String? = if (isNull(name)) null else getString(name)
+
+    private fun assertThrowsIo(block: () -> Unit): IOException {
+        try {
+            block()
+        } catch (error: IOException) {
+            return error
+        }
+        throw AssertionError("Expected IOException")
+    }
 }
