@@ -216,6 +216,7 @@ class ProxyForegroundService : Service() {
             val runtime = TorFallbackRuntimeLoader.create(applicationContext, logger)
             torFallbackRuntime = runtime
             runtime?.onNetworkChanged(State.networkStatus)
+            State.updateTorFallbackRuntimeSnapshot(runCatching { runtime?.snapshot() }.getOrNull())
             val serverConfig = ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus).copy(
                 torSnowflakeFallbackEnabled = runtime != null,
             )
@@ -247,6 +248,7 @@ class ProxyForegroundService : Service() {
                 torFallbackRuntime = null
                 runCatching { runtime?.stop() }
                     .onFailure { State.addLog("Tor/Snowflake cleanup after start failure failed: ${it.javaClass.simpleName}: ${it.message.orEmpty()}", LogSeverity.WARN, "service") }
+                State.updateTorFallbackRuntimeSnapshot(null)
                 State.setLiveStatsProvider(null)
                 State.updateStats(null)
                 State.setRunning(false, "proxy start failed with exception: ${error.message ?: error::class.java.simpleName}")
@@ -293,6 +295,7 @@ class ProxyForegroundService : Service() {
         }
         runCatching { torRuntime?.stop() }
             .onFailure { State.addLog("Tor/Snowflake stop failed: ${it.javaClass.simpleName}: ${it.message.orEmpty()}", LogSeverity.WARN, "service") }
+        State.updateTorFallbackRuntimeSnapshot(null)
         telemetryAggregator.flushOnStop()
         sendQueuedTelemetrySnapshots()
         releaseWakeLock()
@@ -504,6 +507,7 @@ class ProxyForegroundService : Service() {
 
     private fun applyRouteForNetwork(networkStatus: String, immediate: Boolean = false) {
         torFallbackRuntime?.onNetworkChanged(networkStatus)
+        State.updateTorFallbackRuntimeSnapshot(runCatching { torFallbackRuntime?.snapshot() }.getOrNull())
         val server = synchronized(lock) { proxyServer }
         if (server?.isRunning != true) {
             State.addLog("route unchanged: proxy not running for network=$networkStatus", LogSeverity.INFO, "network")
@@ -546,7 +550,9 @@ class ProxyForegroundService : Service() {
             } catch (_: Throwable) {
                 null
             }
+            val torRuntimeSnapshot = runCatching { torFallbackRuntime?.snapshot() }.getOrNull()
             State.updateStats(stats)
+            State.updateTorFallbackRuntimeSnapshot(torRuntimeSnapshot)
             State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
             if (stats != null) {
                 telemetryAggregator.recordStats(
@@ -560,7 +566,7 @@ class ProxyForegroundService : Service() {
                 sendQueuedTelemetrySnapshots()
             }
             State.markWatchdogHeartbeat()
-            val line = "watchdog: running=${server?.isRunning == true} ${compactStats(stats)} " +
+            val line = "watchdog: running=${server?.isRunning == true} ${compactStats(stats, torRuntimeSnapshot)} " +
                 "network=${State.networkStatus} route=${stats?.effectiveRouteMode ?: "unknown"} battery=${State.batteryOptimizationStatus}"
             State.addLog(line, LogSeverity.INFO, "service")
         }, WATCHDOG_INTERVAL_SECONDS, WATCHDOG_INTERVAL_SECONDS, TimeUnit.SECONDS)
@@ -585,7 +591,7 @@ class ProxyForegroundService : Service() {
         }
     }
 
-    private fun compactStats(stats: ProxyServerStats?): String = if (stats == null) {
+    private fun compactStats(stats: ProxyServerStats?, torRuntime: TorFallbackRuntimeSnapshot?): String = if (stats == null) {
         "stats=unknown"
     } else {
         "active=${stats.connectionsActive} total=${stats.connectionsTotal} wsErr=${stats.wsConnectErrors} " +
@@ -608,7 +614,15 @@ class ProxyForegroundService : Service() {
             "cfPoolLastDomainByKey=${compactMap(stats.cfPoolLastDomainByKey)} " +
             "torSnowflake=${stats.torSnowflakeSuccesses}/${stats.torSnowflakeAttempts}/${stats.torSnowflakeFailures} " +
             "torUnavailable=${stats.torSnowflakeUnavailable} " +
+            "torRuntime=${compactTorRuntime(torRuntime)} " +
             "directHealth=${stats.directHealthState} route=${stats.effectiveRouteMode} lastRoute=${stats.lastRouteUsed ?: "none"}"
+    }
+
+    private fun compactTorRuntime(snapshot: TorFallbackRuntimeSnapshot?): String = if (snapshot == null) {
+        "unavailable"
+    } else {
+        "desired=${snapshot.desired},running=${snapshot.running},ready=${snapshot.ready}," +
+            "bootstrap=${snapshot.bootstrapProgress},phase=${snapshot.phase},lastError=${snapshot.lastError ?: "none"}"
     }
 
     private fun compactMap(values: Map<*, *>): String =
@@ -703,6 +717,8 @@ class ProxyForegroundService : Service() {
             private set
         @Volatile
         private var statsSnapshot: ProxyServerStats? = null
+        @Volatile
+        private var torFallbackRuntimeSnapshot: TorFallbackRuntimeSnapshot? = null
         @Volatile
         private var liveStatsProvider: (() -> ProxyServerStats?)? = null
         @Volatile
@@ -886,6 +902,10 @@ class ProxyForegroundService : Service() {
             statsSnapshot = stats
         }
 
+        fun updateTorFallbackRuntimeSnapshot(snapshot: TorFallbackRuntimeSnapshot?) {
+            torFallbackRuntimeSnapshot = snapshot
+        }
+
         fun setLiveStatsProvider(provider: (() -> ProxyServerStats?)?) {
             liveStatsProvider = provider
         }
@@ -972,6 +992,7 @@ class ProxyForegroundService : Service() {
                     lastRouteChangeTimeMs = stats?.lastRouteChangeTimeMs,
                     networkAtLastRouteChange = stats?.networkAtLastRouteChange ?: "unknown",
                     stats = stats,
+                    torFallbackRuntime = torFallbackRuntimeSnapshot,
                     statsSnapshotTimeMs = stats?.statsSnapshotTimeMs?.takeIf { it > 0L },
                     runtimeLogTailUntilMs = runtimeLogTailUntilMs,
                     lastEffectiveRouteModeUpdateTimeMs = stats?.lastEffectiveRouteModeUpdateTimeMs,

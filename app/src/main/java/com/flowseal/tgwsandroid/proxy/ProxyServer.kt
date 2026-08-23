@@ -1675,9 +1675,20 @@ class ProxyServer(
             if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) {
                 return true
             }
+            val torAllowedForUnknownDirectDc =
+                effectiveRouteMode() != NetworkRouteMode.CF_ONLY &&
+                    config.torSnowflakeFallbackEnabled &&
+                    isMobile(currentNetworkStatus)
+            if (torAllowedForUnknownDirectDc) {
+                logger.log("DC${parsed.dcId} has no direct redirect; trying Tor/Snowflake with tunnel-side DNS")
+                if (tryTorSnowflakeFallback(client, parsed, null, relayInit, cryptoContext, splitter)) return true
+                recordNoRoute(parsed.dcId)
+                logger.log("DC${parsed.dcId} no route available after CF/Tor attempts; no direct redirect configured")
+                return true
+            }
             recordUnsupportedDc(parsed.dcId)
             recordNoRoute(parsed.dcId)
-            markBad("Unsupported DC ${parsed.dcId} from ${client.remoteLabel}; no direct redirect or CF proxy route available")
+            markBad("Unsupported DC ${parsed.dcId} from ${client.remoteLabel}; no direct redirect or allowed CF/Tor route available")
             return true
         }
 
@@ -1758,7 +1769,7 @@ class ProxyServer(
     private fun tryTorSnowflakeFallback(
         client: TcpClientTransport,
         parsed: MtprotoHandshake.Result,
-        targetHost: String,
+        targetHost: String?,
         relayInit: ByteArray,
         cryptoContext: CryptoContext,
         splitter: MsgSplitter,
@@ -1766,11 +1777,12 @@ class ProxyServer(
         if (!config.torSnowflakeFallbackEnabled || !isMobile(currentNetworkStatus)) return false
         val connector = torSnowflakeConnector ?: return false
         for (domain in wsDomains(parsed.dcId, parsed.isMedia)) {
+            val outboundTarget = targetHost ?: domain
             lastTorSnowflakeTimeMs.set(System.currentTimeMillis())
-            logger.log("DC${parsed.dcId} media=${parsed.isMedia} -> trying Tor/Snowflake wss://$domain$DEFAULT_WS_PATH via $targetHost")
+            logger.log("DC${parsed.dcId} media=${parsed.isMedia} -> trying Tor/Snowflake wss://$domain$DEFAULT_WS_PATH via $outboundTarget")
             val webSocket = try {
                 torSnowflakeAttempts.incrementAndGet()
-                connector.connect(targetHost, domain, DEFAULT_WS_PATH, config.torSnowflakeConnectTimeoutMs)
+                connector.connect(outboundTarget, domain, DEFAULT_WS_PATH, config.torSnowflakeConnectTimeoutMs)
             } catch (error: TorSnowflakeUnavailableException) {
                 torSnowflakeUnavailable.incrementAndGet()
                 lastTorSnowflakeError.set(error.message)

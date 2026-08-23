@@ -78,7 +78,7 @@ class SnowflakeTorFallbackRuntime(
 
     override fun snapshot(): TorFallbackRuntimeSnapshot = TorFallbackRuntimeSnapshot(
         desired = wanted.get(),
-        running = task?.isDone == false,
+        running = wanted.get() && (readyConnector.get() != null || task?.isDone == false || controller != null || torConnection != null),
         ready = readyConnector.get() != null,
         bootstrapProgress = progress.get(),
         phase = phase.get(),

@@ -107,6 +107,7 @@ data class DiagnosticSnapshot(
     val lastRouteUsedUpdateTimeMs: Long? = null,
     val stats: ProxyServerStats?,
     val logs: List<RuntimeLogEntry>,
+    val torFallbackRuntime: TorFallbackRuntimeSnapshot? = null,
 )
 
 object DiagnosticReportFormatter {
@@ -144,6 +145,7 @@ object DiagnosticReportFormatter {
         lastRouteEvaluationTimeMs: Long? = null,
         networkAtLastRouteEvaluation: String = "",
         stats: ProxyServerStats? = null,
+        torFallbackRuntime: TorFallbackRuntimeSnapshot? = null,
         statsSnapshotTimeMs: Long? = stats?.statsSnapshotTimeMs?.takeIf { it > 0L },
         runtimeLogTailUntilMs: Long? = null,
         lastEffectiveRouteModeUpdateTimeMs: Long? = stats?.lastEffectiveRouteModeUpdateTimeMs,
@@ -263,6 +265,7 @@ object DiagnosticReportFormatter {
         lastRouteUsedUpdateTimeMs = lastRouteUsedUpdateTimeMs,
         stats = stats,
         logs = logs,
+        torFallbackRuntime = torFallbackRuntime,
     )
 
     fun format(snapshot: DiagnosticSnapshot): String = buildString {
@@ -362,6 +365,7 @@ object DiagnosticReportFormatter {
         appendLine("Runtime log tail until ms: ${snapshot.runtimeLogTailUntilMs?.toString() ?: "unknown"}")
         appendLine("Last effective route mode update time ms: ${snapshot.lastEffectiveRouteModeUpdateTimeMs?.toString() ?: "unknown"}")
         appendLine("Last route used update time ms: ${snapshot.lastRouteUsedUpdateTimeMs?.toString() ?: "unknown"}")
+        appendTorFallbackRuntime(snapshot.torFallbackRuntime)
         appendClientExperienceDiagnostics(snapshot.stats)
         appendFrontingDiagnostics(snapshot.stats)
         appendDirectPoolReadiness(snapshot.stats)
@@ -370,6 +374,17 @@ object DiagnosticReportFormatter {
         appendLine("---")
         snapshot.logs.forEach { appendLine(it.formatLine()) }
     }.trimEnd()
+
+    private fun StringBuilder.appendTorFallbackRuntime(runtime: TorFallbackRuntimeSnapshot?) {
+        appendLine("Tor/Snowflake runtime:")
+        appendLine("  available: ${runtime != null}")
+        appendLine("  desired: ${runtime?.desired?.toString() ?: "unknown"}")
+        appendLine("  running: ${runtime?.running?.toString() ?: "unknown"}")
+        appendLine("  ready: ${runtime?.ready?.toString() ?: "unknown"}")
+        appendLine("  bootstrapProgress: ${runtime?.bootstrapProgress?.toString() ?: "unknown"}")
+        appendLine("  phase: ${runtime?.phase ?: "unknown"}")
+        appendLine("  lastError: ${runtime?.lastError ?: "none"}")
+    }
 
     private fun formatPreviousRun(previous: PreviousRunCheck?): String = if (previous == null) {
         "unknown"
