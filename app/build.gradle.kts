@@ -83,6 +83,11 @@ dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("com.google.android.material:material:1.12.0")
 
+    // Private diagnostic only: package the native Chromium network stack so the
+    // Huawei/mobile-network control does not depend on Google Play Services and
+    // does not increase normal debug/release/sideload APKs.
+    add("privateSideloadImplementation", "org.chromium.net:cronet-bundled:500.0.1")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
 }
