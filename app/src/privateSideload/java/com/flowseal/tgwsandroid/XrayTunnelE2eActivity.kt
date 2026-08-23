@@ -32,7 +32,8 @@ import kotlin.system.measureTimeMillis
  *
  * This does not start VpnService and does not alter production ProxyServer routing.
  * The VLESS link is held only in this Activity instance and is never copied into
- * diagnostic output, logs or SharedPreferences.
+ * diagnostic output, logs or SharedPreferences. Error text is sanitized before
+ * it can be copied from the diagnostic screen.
  */
 class XrayTunnelE2eActivity : Activity() {
     private lateinit var networkText: TextView
@@ -87,7 +88,7 @@ class XrayTunnelE2eActivity : Activity() {
                 typeface = Typeface.DEFAULT_BOLD
             }, matchWrap())
             addView(TextView(this@XrayTunnelE2eActivity).apply {
-                text = "Private diagnostic only. Поднимает локальный SOCKS через libXray без Android VPN и проверяет наш обычный WebSocket к Telegram через этот туннель. VLESS-ссылка не сохраняется и не попадает в результат."
+                text = "Private diagnostic only. Поднимает локальный SOCKS через libXray без Android VPN и проверяет наш обычный WebSocket к Telegram через этот туннель. VLESS-ссылка и адрес сервера не сохраняются и не попадают в результат."
             }, matchWrap(gap))
             addView(networkText, matchWrap(gap))
             addView(linkInput, matchWrap(gap))
@@ -118,6 +119,7 @@ class XrayTunnelE2eActivity : Activity() {
             toast("Нужна VLESS-ссылка")
             return
         }
+        val sensitiveValues = sensitiveValues(link)
 
         runButton.isEnabled = false
         val network = currentNetworkLabel()
@@ -132,8 +134,8 @@ class XrayTunnelE2eActivity : Activity() {
                 "libXray AAR packaged by Gradle: ${BuildConfig.LIBXRAY_AAR_PACKAGED}",
                 "Android VpnService: not used",
                 "VLESS link: REDACTED",
-                "Endpoint hint: ${safeEndpointHint(link)}",
-                "Upstream DNS mode: SOCKS5 ATYP=DOMAIN (resolved behind tunnel when hostname is used)",
+                "VLESS endpoint: REDACTED",
+                "Upstream DNS mode: hostname=SOCKS5 ATYP=DOMAIN behind tunnel; numeric Telegram IP=no DNS",
                 "WebSocket implementation: existing RawWebSocket",
                 "",
             )
@@ -205,7 +207,7 @@ class XrayTunnelE2eActivity : Activity() {
                         runCatching { ws?.close() }
                     } catch (error: Throwable) {
                         failures += 1
-                        lines += "FAIL ${errorSummary(error)}"
+                        lines += "FAIL ${errorSummary(error, sensitiveValues)}"
                     }
                     publish(lines)
                 }
@@ -221,11 +223,15 @@ class XrayTunnelE2eActivity : Activity() {
                 }
             } catch (error: Throwable) {
                 lines += ""
-                lines += "RESULT: TEST ERROR: ${errorSummary(error)}"
+                lines += "RESULT: TEST ERROR: ${errorSummary(error, sensitiveValues)}"
             } finally {
                 val stopError = LibXrayCompat.stopBestEffort()
                 lines += ""
-                lines += if (stopError == null) "Xray stopped" else "Xray stop warning: $stopError"
+                lines += if (stopError == null) {
+                    "Xray stopped"
+                } else {
+                    "Xray stop warning: ${sanitizeDiagnosticText(stopError, sensitiveValues)}"
+                }
                 finish(lines)
             }
         }
@@ -263,7 +269,7 @@ class XrayTunnelE2eActivity : Activity() {
         thread(name = "XrayStop") {
             val warning = LibXrayCompat.stopBestEffort()
             runOnUiThread {
-                toast(if (warning == null) "Xray остановлен" else "Xray stop: $warning")
+                toast(if (warning == null) "Xray остановлен" else "Xray остановлен с предупреждением")
             }
         }
     }
@@ -285,12 +291,14 @@ class XrayTunnelE2eActivity : Activity() {
         return false
     }
 
-    private fun safeEndpointHint(link: String): String = runCatching {
-        val uri = Uri.parse(link)
-        val host = uri.host.orEmpty()
-        val port = uri.port.takeIf { it > 0 }?.toString() ?: "default"
-        if (host.isBlank()) "unparsed" else "$host:$port"
-    }.getOrDefault("unparsed")
+    private fun sensitiveValues(link: String): List<String> = buildList {
+        add(link)
+        runCatching { Uri.parse(link) }.getOrNull()?.let { uri ->
+            uri.host?.takeIf { it.isNotBlank() }?.let(::add)
+            uri.userInfo?.takeIf { it.isNotBlank() }?.let(::add)
+        }
+        UUID_REGEX.findAll(link).forEach { add(it.value) }
+    }.distinct().sortedByDescending { it.length }
 
     private fun initialText(): String = if (BuildConfig.LIBXRAY_AAR_PACKAGED) {
         "libXray AAR обнаружен. Вставьте рабочую VLESS/REALITY ссылку и запустите E2E."
@@ -331,10 +339,24 @@ class XrayTunnelE2eActivity : Activity() {
         "Неизвестно"
     }
 
-    private fun errorSummary(error: Throwable): String {
+    private fun errorSummary(error: Throwable, sensitiveValues: List<String>): String {
         val root = generateSequence(error) { it.cause }.last()
-        val message = root.message?.replace('\n', ' ')?.take(500).orEmpty()
+        val message = sanitizeDiagnosticText(root.message.orEmpty(), sensitiveValues)
+            .replace('\n', ' ')
+            .take(500)
         return if (message.isBlank()) root::class.java.simpleName else "${root::class.java.simpleName}: $message"
+    }
+
+    private fun sanitizeDiagnosticText(text: String, sensitiveValues: List<String>): String {
+        var sanitized = VLESS_URL_REGEX.replace(text, "vless://<redacted>")
+        for (value in sensitiveValues) {
+            if (value.length >= 4) sanitized = sanitized.replace(value, "<redacted>")
+        }
+        sanitized = UUID_REGEX.replace(sanitized, "<uuid-redacted>")
+        sanitized = VLESS_SECRET_QUERY_REGEX.replace(sanitized) { match ->
+            "${match.groupValues[1]}=<redacted>"
+        }
+        return sanitized
     }
 
     private fun matchWrap(topMargin: Int = 0): LinearLayout.LayoutParams =
@@ -352,6 +374,9 @@ class XrayTunnelE2eActivity : Activity() {
     )
 
     companion object {
+        private val UUID_REGEX = Regex("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b")
+        private val VLESS_URL_REGEX = Regex("(?i)vless://\\S+")
+        private val VLESS_SECRET_QUERY_REGEX = Regex("(?i)(pbk|password|sid|pqv|spx)=([^&\\s]+)")
         private val TELEGRAM_TARGETS = listOf(
             TelegramTarget("Telegram DC2 WebSocket", "149.154.167.220", "kws2.web.telegram.org"),
             TelegramTarget("Telegram DC4 WebSocket", "149.154.167.220", "kws4.web.telegram.org"),
