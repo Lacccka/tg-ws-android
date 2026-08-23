@@ -112,7 +112,12 @@ dependencies {
     // TorService + local Tor SOCKS port. IPtProxy supplies current Snowflake
     // 2.14.1 as a pluggable transport. No user-owned VPS/VLESS/bridge is needed.
     // 0.4.9.9.1 is deliberately pinned below tor-android's API-37 toolchain move.
-    add("privateSideloadImplementation", "info.guardianproject:tor-android:0.4.9.9.1")
+    add("privateSideloadImplementation", "info.guardianproject:tor-android:0.4.9.9.1") {
+        // tor-android itself is Java. Its publication currently brings a newer
+        // Kotlin stdlib only because of the upstream build plugin; do not let
+        // that transitive dependency upgrade this app's Kotlin runtime/compiler.
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+    }
     add("privateSideloadImplementation", "info.guardianproject:jtorctl:0.4.5.7")
     add("privateSideloadImplementation", "com.netzarchitekten:IPtProxy:5.5.1")
 
