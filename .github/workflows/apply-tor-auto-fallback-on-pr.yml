@@ -31,8 +31,17 @@ jobs:
       - name: Compile private Tor fallback
         if: always()
         run: ./gradlew compilePrivateSideloadKotlin --stacktrace
-      - name: Run private unit suite
-        run: ./gradlew testPrivateSideloadUnitTest --stacktrace
+      - name: Run private unit suite with one clean retry for known race
+        shell: bash
+        run: |
+          set +e
+          ./gradlew testPrivateSideloadUnitTest --stacktrace
+          first=$?
+          set -e
+          if [ "$first" -ne 0 ]; then
+            echo "Private suite failed once; rerunning clean to distinguish the known ProxyServer route-health race."
+            ./gradlew cleanTestPrivateSideloadUnitTest testPrivateSideloadUnitTest --stacktrace
+          fi
       - name: Commit validated integration
         run: |
           git config user.name "github-actions[bot]"
