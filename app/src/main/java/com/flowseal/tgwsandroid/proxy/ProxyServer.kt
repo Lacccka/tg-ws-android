@@ -1002,6 +1002,8 @@ class ProxyServer(
     private val networkSettlingControlledFailures = AtomicLong(0)
     private val networkSettlingStaleAttemptsIgnored = AtomicLong(0)
     private val routeGeneration = AtomicLong(0)
+    /** Serializes network-route commits with asynchronous direct-health promotions. */
+    private val routePolicyMonitor = Object()
     private val networkStateMonitor = Object()
     private val networkSettlingUntilMs = AtomicLong(0)
     private val lastNetworkLostAtMs = AtomicLong(0)
@@ -1451,7 +1453,7 @@ class ProxyServer(
     fun applyNetworkRouteImmediately(networkStatus: String): RouteChangeResult =
         applyNetworkRoute(networkStatus, immediate = true)
 
-    private fun applyNetworkRoute(networkStatus: String, immediate: Boolean): RouteChangeResult {
+    private fun applyNetworkRoute(networkStatus: String, immediate: Boolean): RouteChangeResult = synchronized(routePolicyMonitor) {
         val normalized = networkStatus.ifBlank { "unknown" }
         val previousNetworkStatus = currentNetworkStatus
         if (shouldIgnoreHealthyWifiCapabilityEvent(previousNetworkStatus, normalized)) {
@@ -1510,7 +1512,7 @@ class ProxyServer(
             source = if (immediate) "immediate" else "debounce",
         )
         maybeStartAutoWifiDirectProbe(normalized, previousNetworkStatus)
-        return result
+        result
     }
 
     private fun isMobileGenerationRecoveryTransition(previousNetworkStatus: String, networkStatus: String): Boolean {
@@ -3236,6 +3238,41 @@ class ProxyServer(
     }
 
 
+    /**
+     * Commits an asynchronous Wi-Fi health promotion only if the route policy is
+     * still the same one for which the probe was started. The network callback
+     * path uses the same monitor, closing the canPromote -> onPromote race where
+     * a Wi-Fi probe could otherwise repromote DIRECT_FIRST after MOBILE arrived.
+     */
+    private fun commitAutoWifiDirectPromotionIfStillValid(): RouteChangeResult? = synchronized(routePolicyMonitor) {
+        val network = currentNetworkStatus
+        if (
+            !running.get() ||
+            routeState.configuredRouteMode != NetworkRouteMode.AUTO ||
+            !isWifi(network) ||
+            effectiveRouteMode() != NetworkRouteMode.CF_FIRST
+        ) {
+            logger.log(
+                "direct promotion discarded: stale Wi-Fi health probe " +
+                    "network=$network route=${effectiveRouteMode().configValue}",
+            )
+            return@synchronized null
+        }
+
+        val before = effectiveRouteMode()
+        val result = applyEffectiveRouteMode(
+            NetworkRouteMode.DIRECT_FIRST,
+            "direct health probe success",
+            network,
+            source = "direct-health",
+        )
+        if (result.changed) {
+            directRouteHealth.recordPromotion()
+            logger.log("direct promoted: ${before.configValue} -> ${NetworkRouteMode.DIRECT_FIRST.configValue}")
+        }
+        result
+    }
+
     private fun maybeStartAutoWifiDirectProbe(
         networkStatus: String,
         previousNetworkStatus: String = "unknown",
@@ -3271,17 +3308,7 @@ class ProxyServer(
                     effectiveRouteMode() == NetworkRouteMode.CF_FIRST
             },
             onPromote = {
-                val before = effectiveRouteMode()
-                val result = applyEffectiveRouteMode(
-                    NetworkRouteMode.DIRECT_FIRST,
-                    "direct health probe success",
-                    currentNetworkStatus,
-                    source = "direct-health",
-                )
-                if (result.changed) {
-                    directRouteHealth.recordPromotion()
-                    logger.log("direct promoted: ${before.configValue} -> ${NetworkRouteMode.DIRECT_FIRST.configValue}")
-                }
+                commitAutoWifiDirectPromotionIfStillValid()
             },
             throttleMs = DIRECT_PROBE_THROTTLE_MS,
         )

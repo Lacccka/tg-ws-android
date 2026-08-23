@@ -2018,6 +2018,32 @@ class ProxyServerTest {
     }
 
     @Test
+    fun staleWifiHealthPromotionCallbackCannotRepromoteAfterMobileTransition() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "mobile", poolSize = 0),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
+        proxy.applyNetworkRouteImmediately("mobile")
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+
+        val method = ProxyServer::class.java.getDeclaredMethod("commitAutoWifiDirectPromotionIfStillValid")
+        method.isAccessible = true
+        val staleResult = method.invoke(proxy)
+        proxy.stop()
+
+        assertNull("stale Wi-Fi health callback must be discarded on mobile", staleResult)
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertTrue(logs.any { it.contains("direct promotion discarded: stale Wi-Fi health probe") && it.contains("network=mobile") })
+        assertFalse(logs.dropWhile { !it.contains("network=mobile") }.any { it.contains("direct promoted:") })
+    }
+
+    @Test
     fun networkChangeWifiToMobileUpdatesEffectiveRouteToCfFirst() {
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
