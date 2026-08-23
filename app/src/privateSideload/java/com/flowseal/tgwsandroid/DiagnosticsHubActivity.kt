@@ -43,11 +43,19 @@ class DiagnosticsHubActivity : Activity() {
 
             addSection("Актуальные", gap)
             addProbeButton(
-                label = "Chromium/Cronet TLS control",
-                description = "Сравнивает native Chromium TLS stack с Android SSLSocket на той же мобильной сети. QUIC и HTTP/2 отключены.",
+                label = "VLESS/REALITY tunnel E2E",
+                description = "Новый основной prototype: libXray → local SOCKS5 → существующий RawWebSocket → Telegram. Без Android VPN и без изменения production routing.",
+                target = XrayTunnelE2eActivity::class.java,
+                gap = gap,
+            )
+            addProbeButton(
+                label = "Chromium/Cronet transport control",
+                description = "Закрывающий Cloudflare control: сравнивает обычный TCP/TLS и QUIC/HTTP3 через native Chromium/Cronet.",
                 target = CronetTlsControlActivity::class.java,
                 gap = gap,
             )
+
+            addSection("Архивные / точечные", gap)
             addProbeButton(
                 label = "CF proxy matrix",
                 description = "Проверяет CF-proxy IPv4/IPv6, TLS stage и same-edge SNI controls.",
@@ -66,8 +74,6 @@ class DiagnosticsHubActivity : Activity() {
                 target = WorkerTlsMatrixActivity::class.java,
                 gap = gap,
             )
-
-            addSection("Архивные / точечные", gap)
             addProbeButton(
                 label = "Worker basic E2E",
                 description = "Базовая Worker/DNS/TCP/WebSocket диагностика.",
