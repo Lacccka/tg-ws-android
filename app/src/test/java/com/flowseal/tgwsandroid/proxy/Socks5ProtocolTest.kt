@@ -26,7 +26,7 @@ class Socks5ProtocolTest {
             targetPort = 443,
         )
 
-        val host = "kws2.pclead.co.uk".toByteArray(Charsets.UTF_8)
+        val host = "kws2.pclead.co.uk".toByteArray(Charsets.US_ASCII)
         val expected = ByteArrayOutputStream().apply {
             write(byteArrayOf(0x05, 0x01, 0x00))
             write(byteArrayOf(0x05, 0x01, 0x00, 0x03, host.size.toByte()))
@@ -35,6 +35,30 @@ class Socks5ProtocolTest {
         }.toByteArray()
 
         assertArrayEquals(expected, output.toByteArray())
+    }
+
+    @Test
+    fun buildConnectRequestEncodesTelegramIpv4Numerically() {
+        assertArrayEquals(
+            byteArrayOf(
+                0x05, 0x01, 0x00, 0x01,
+                149.toByte(), 154.toByte(), 167.toByte(), 220.toByte(),
+                0x01, 0xBB.toByte(),
+            ),
+            Socks5Protocol.buildConnectRequest("149.154.167.220", 443),
+        )
+    }
+
+    @Test
+    fun buildConnectRequestEncodesIpv6Numerically() {
+        val request = Socks5Protocol.buildConnectRequest("2606:4700::6810:84e5", 443)
+
+        assertEquals(0x05, request[0].toInt() and 0xFF)
+        assertEquals(0x01, request[1].toInt() and 0xFF)
+        assertEquals(0x04, request[3].toInt() and 0xFF)
+        assertEquals(22, request.size) // 4-byte header + 16-byte IPv6 + 2-byte port
+        assertEquals(0x01, request[20].toInt() and 0xFF)
+        assertEquals(0xBB, request[21].toInt() and 0xFF)
     }
 
     @Test
