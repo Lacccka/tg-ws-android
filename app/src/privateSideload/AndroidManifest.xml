@@ -1,0 +1,42 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <application>
+        <service android:name=".service.ProxyForegroundService">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local user-started Telegram proxy that maintains a visible foreground notification and relays Telegram traffic through a local loopback proxy while the user keeps the proxy enabled" />
+        </service>
+
+        <service
+            android:name=".SnowflakeTorProxyService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Private user-started diagnostic Telegram proxy that keeps Snowflake, embedded Tor and a local loopback ProxyServer active while the user tests Telegram connectivity" />
+        </service>
+
+        <activity
+            android:name=".DiagnosticsHubActivity"
+            android:exported="true"
+            android:label="SE Diagnostics">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".SnowflakeTorProxyActivity" android:exported="false" />
+        <activity android:name=".SnowflakeTorE2eActivity" android:exported="false" />
+        <activity android:name=".CronetTlsControlActivity" android:exported="false" />
+        <activity android:name=".CfProxyMatrixActivity" android:exported="false" />
+        <activity android:name=".WorkerDiagnosticsActivity" android:exported="false" />
+        <activity android:name=".WorkerPreferredEdgeActivity" android:exported="false" />
+        <activity android:name=".WorkerTlsFragmentActivity" android:exported="false" />
+        <activity android:name=".WorkerFragmentedE2eActivity" android:exported="false" />
+        <activity android:name=".WorkerNoSniE2eActivity" android:exported="false" />
+        <activity android:name=".WorkerTlsMatrixActivity" android:exported="false" />
+        <activity android:name=".DirectFrontingE2eActivity" android:exported="false" />
+    </application>
+</manifest>

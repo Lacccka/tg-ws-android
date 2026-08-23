@@ -193,6 +193,8 @@ class RawWebSocket private constructor(
 
     companion object {
         const val DEFAULT_CONNECT_TIMEOUT_MS = 5_000
+        /** Upstream caps TCP/TLS establishment at 10 seconds and CF fallback asks for the full 10 seconds. */
+        const val MAX_CONNECT_TIMEOUT_MS = 10_000
         private const val OP_TEXT = 0x1
         private val REDIRECT_STATUS_CODES = setOf(301, 302, 303, 307, 308)
         private val secureRandom = SecureRandom()
@@ -210,7 +212,7 @@ class RawWebSocket private constructor(
                 ByteArray(length).also { secureRandom.nextBytes(it) }
             },
         ): RawWebSocket {
-            val boundedTimeoutMs = minOf(timeoutMs, DEFAULT_CONNECT_TIMEOUT_MS)
+            val boundedTimeoutMs = minOf(timeoutMs, MAX_CONNECT_TIMEOUT_MS)
             val tlsServerName = sni ?: domain
             val transport = transportFactory.connect(host, 443, tlsServerName, boundedTimeoutMs)
             try {

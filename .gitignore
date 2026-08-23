@@ -104,7 +104,7 @@ ipython_config.py
 #   Similar to Pipfile.lock, it is generally recommended to include poetry.lock in version control.
 #   This is especially recommended for binary packages to ensure reproducibility, and is more
 #   commonly ignored for libraries.
-#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-to-version-control
+#   https://python-poetry.org/docs/basic-usage/#commit-your-poetrylock-file-into-version-control
 #poetry.lock
 
 # pdm
@@ -191,3 +191,8 @@ local.properties
 *.iml
 .idea/
 /diagnostics
+
+# Local native tunnel build artifacts (reproducible via tools/build-libxray.ps1)
+/.cache/libxray/
+/app/libs/libXray.aar
+/app/libs/libXray-sources.jar
