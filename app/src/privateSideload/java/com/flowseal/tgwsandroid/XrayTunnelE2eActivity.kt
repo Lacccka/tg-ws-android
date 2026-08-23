@@ -16,6 +16,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.flowseal.tgwsandroid.config.AppConfig
+import com.flowseal.tgwsandroid.config.AppConfigStore
 import com.flowseal.tgwsandroid.proxy.RawWebSocket
 import com.flowseal.tgwsandroid.proxy.Socks5TlsTransportFactory
 import org.json.JSONArray
@@ -120,6 +122,7 @@ class XrayTunnelE2eActivity : Activity() {
             return
         }
         val sensitiveValues = sensitiveValues(link)
+        val telegramTargets = currentTelegramTargets()
 
         runButton.isEnabled = false
         val network = currentNetworkLabel()
@@ -135,6 +138,7 @@ class XrayTunnelE2eActivity : Activity() {
                 "Android VpnService: not used",
                 "VLESS link: REDACTED",
                 "VLESS endpoint: REDACTED",
+                "Telegram targets: current AppConfig.dcIp (${telegramTargets.size})",
                 "Upstream DNS mode: hostname=SOCKS5 ATYP=DOMAIN behind tunnel; numeric Telegram IP=no DNS",
                 "WebSocket implementation: existing RawWebSocket",
                 "",
@@ -184,7 +188,7 @@ class XrayTunnelE2eActivity : Activity() {
                 var successes = 0
                 var failures = 0
 
-                for (target in TELEGRAM_TARGETS) {
+                for (target in telegramTargets) {
                     lines += ""
                     lines += "=== ${target.label} ==="
                     lines += "SOCKS CONNECT target=${target.targetHost}:443"
@@ -214,7 +218,7 @@ class XrayTunnelE2eActivity : Activity() {
 
                 lines += ""
                 lines += "RESULT: XRAY TUNNEL E2E COMPLETE"
-                lines += "Telegram WebSocket successes: $successes/${TELEGRAM_TARGETS.size}"
+                lines += "Telegram WebSocket successes: $successes/${telegramTargets.size}"
                 lines += "Failures: $failures"
                 lines += if (successes > 0) {
                     "VERDICT: VLESS/REALITY + local SOCKS can carry the existing Telegram WebSocket transport on this network. Next step is injecting SocksRawWebSocketConnector into ProxyServer as the mobile fallback and testing a real Telegram session."
@@ -263,6 +267,35 @@ class XrayTunnelE2eActivity : Activity() {
             .put("log", JSONObject().put("loglevel", "warning"))
             .put("inbounds", JSONArray().put(socksInbound))
             .put("outbounds", cleanOutbounds)
+    }
+
+    private fun currentTelegramTargets(): List<TelegramTarget> {
+        val configured = AppConfigStore.getConfig(this).dcIp
+            .mapNotNull(::parseDcRedirect)
+            .distinctBy { it.dc }
+        val redirects = if (configured.isNotEmpty()) {
+            configured
+        } else {
+            AppConfig.DEFAULT_DC_IP.mapNotNull(::parseDcRedirect)
+        }
+
+        return redirects.map { redirect ->
+            val websocketDc = if (redirect.dc == 203) 2 else redirect.dc
+            TelegramTarget(
+                label = "Telegram DC${redirect.dc} WebSocket",
+                targetHost = redirect.host,
+                domain = "kws$websocketDc.web.telegram.org",
+            )
+        }
+    }
+
+    private fun parseDcRedirect(value: String): DcRedirect? {
+        val parts = value.split(':', limit = 2)
+        if (parts.size != 2) return null
+        val dc = parts[0].trim().toIntOrNull() ?: return null
+        val host = parts[1].trim()
+        if (host.isBlank()) return null
+        return DcRedirect(dc, host)
     }
 
     private fun stopXray() {
@@ -367,6 +400,11 @@ class XrayTunnelE2eActivity : Activity() {
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
+    private data class DcRedirect(
+        val dc: Int,
+        val host: String,
+    )
+
     private data class TelegramTarget(
         val label: String,
         val targetHost: String,
@@ -377,9 +415,5 @@ class XrayTunnelE2eActivity : Activity() {
         private val UUID_REGEX = Regex("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b")
         private val VLESS_URL_REGEX = Regex("(?i)vless://\\S+")
         private val VLESS_SECRET_QUERY_REGEX = Regex("(?i)(pbk|password|sid|pqv|spx)=([^&\\s]+)")
-        private val TELEGRAM_TARGETS = listOf(
-            TelegramTarget("Telegram DC2 WebSocket", "149.154.167.220", "kws2.web.telegram.org"),
-            TelegramTarget("Telegram DC4 WebSocket", "149.154.167.220", "kws4.web.telegram.org"),
-        )
     }
 }
