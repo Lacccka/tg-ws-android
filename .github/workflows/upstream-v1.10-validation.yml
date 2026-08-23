@@ -13,12 +13,6 @@ on:
       - upstream-v1.10-validation
       - fix-private-sideload-special-use
 
-env:
-  LIBXRAY_TAG: v26.7.28
-  # SHA-256 of libXray.aar inside the official XTLS/libXray Android artifact
-  # from Build libXray run 30426588453 for v26.7.28.
-  LIBXRAY_AAR_SHA256: 4708a361a74f7e955635dbe3661cefb459bdc867423c3b1826a2c5a6ea4ac77d
-
 jobs:
   full-validation:
     runs-on: ubuntu-latest
@@ -28,26 +22,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Bootstrap pinned official libXray with the Windows-facing script
-        shell: pwsh
-        run: |
-          ./tools/build-libxray.ps1 -Tag $env:LIBXRAY_TAG -Mode release -Force
-
-      - name: Independently verify pinned libXray artifact and Java ABI
-        run: |
-          set -euo pipefail
-          test -f app/libs/libXray.aar
-          echo "$LIBXRAY_AAR_SHA256  app/libs/libXray.aar" | sha256sum --check --strict
-          unzip -Z1 app/libs/libXray.aar | grep -qx 'classes.jar'
-          unzip -Z1 app/libs/libXray.aar | grep -qx 'jni/arm64-v8a/libgojni.so'
-
-          rm -rf /tmp/tgws-libxray-abi
-          mkdir -p /tmp/tgws-libxray-abi
-          unzip -q app/libs/libXray.aar classes.jar -d /tmp/tgws-libxray-abi
-          jar tf /tmp/tgws-libxray-abi/classes.jar | grep -q '^libXray/LibXray.class$'
-          javap -classpath /tmp/tgws-libxray-abi/classes.jar libXray.LibXray > /tmp/tgws-libxray-abi/javap.txt
-          grep -Eq 'invoke\(java\.lang\.String\)' /tmp/tgws-libxray-abi/javap.txt
 
       - name: Check Cloudflare Worker JavaScript syntax
         run: node --check tools/cloudflare-worker/worker.js
@@ -72,8 +46,9 @@ jobs:
           echo "Native libraries:"
           find app/build -type f -name '*.so' -printf '%s %p\n' 2>/dev/null | sort -nr || true
 
-      - name: Verify private sideload special-use manifest
+      - name: Verify private sideload special-use and Tor manifest
         run: |
+          set -euo pipefail
           merged_manifest="$(find app/build/intermediates/merged_manifest/privateSideload -name AndroidManifest.xml -print -quit)"
           test -n "$merged_manifest"
           grep -q 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' "$merged_manifest"
@@ -81,7 +56,8 @@ jobs:
           grep -q 'android:foregroundServiceType="specialUse"' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.DiagnosticsHubActivity' "$merged_manifest"
           grep -q 'SE Diagnostics' "$merged_manifest"
-          grep -q 'com.flowseal.tgwsandroid.XrayTunnelE2eActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.SnowflakeTorE2eActivity' "$merged_manifest"
+          grep -q 'org.torproject.jni.TorService' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.CronetTlsControlActivity' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.CfProxyMatrixActivity' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.WorkerDiagnosticsActivity' "$merged_manifest"
@@ -92,31 +68,35 @@ jobs:
           grep -q 'com.flowseal.tgwsandroid.WorkerTlsMatrixActivity' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.DirectFrontingE2eActivity' "$merged_manifest"
 
-      - name: Verify libXray packaged in private APK
+      - name: Verify Snowflake Tor packaged in private APK
         run: |
           set -euo pipefail
-          test -f app/libs/libXray.aar
-          echo "$LIBXRAY_AAR_SHA256  app/libs/libXray.aar" | sha256sum --check --strict
 
           build_config="$(find app/build/generated/source/buildConfig/privateSideload -name BuildConfig.java -print -quit)"
           test -n "$build_config"
-          grep -q 'LIBXRAY_AAR_PACKAGED' "$build_config"
-          grep -q 'LIBXRAY_AAR_PACKAGED = true' "$build_config"
+          grep -q 'SNOWFLAKE_TOR_PACKAGED' "$build_config"
+          grep -q 'SNOWFLAKE_TOR_PACKAGED = true' "$build_config"
+          grep -q 'LIBXRAY_AAR_PACKAGED = false' "$build_config"
 
           apk="$(find app/build/outputs/apk/privateSideload -type f -name '*.apk' -print -quit)"
           test -n "$apk"
+          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libtor.so'
           unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libgojni.so'
-          if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64|armeabi-v7a)/libgojni\.so$'; then
-            echo "Unexpected non-arm64 libXray native library packaged in private sideload APK" >&2
+
+          if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64|armeabi-v7a)/(libtor|libgojni)\.so$'; then
+            echo "Unexpected non-arm64 Tor/IPtProxy native library packaged in private sideload APK" >&2
             exit 1
           fi
-          echo "Verified Xray-enabled APK: $apk"
+
+          echo "Verified Snowflake/Tor-enabled APK: $apk"
+          echo "Native transport payload:"
+          unzip -Z1 "$apk" | grep -E '^lib/arm64-v8a/(libtor|libgojni)\.so$'
           ls -lh "$apk"
 
       - name: Upload validation APK
         uses: actions/upload-artifact@v4
         with:
-          name: tg-ws-android-v1.10-private-sideload-apk
+          name: tg-ws-android-snowflake-tor-private-sideload-apk
           path: app/build/outputs/apk/privateSideload/*.apk
           if-no-files-found: error
           retention-days: 7
