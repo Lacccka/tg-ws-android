@@ -14,7 +14,10 @@ fun gitCommitSha(): String = runCatching {
 
 android {
     namespace = "com.flowseal.tgwsandroid"
-    compileSdk = 35
+    // tor-android 0.4.9.9.1 predates the API 37 migration and is compatible
+    // with the current AGP 8.13.x toolchain at compileSdk 36. targetSdk stays
+    // 35, so this does not opt production runtime behavior into a new SDK.
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.flowseal.tgwsandroid"
@@ -106,10 +109,10 @@ dependencies {
     add("privateSideloadImplementation", "org.chromium.net:cronet-bundled:500.0.1")
 
     // Zero-config censorship-circumvention PoC. tor-android exposes an embedded
-    // TorService + local Tor SOCKS port. IPtProxy supplies Snowflake 2.14.1 as a
-    // pluggable transport. Unlike the archived libXray experiment, these do not
-    // require a user-owned VPS, VLESS profile, or local native build artifact.
-    add("privateSideloadImplementation", "info.guardianproject:tor-android:0.4.9.11")
+    // TorService + local Tor SOCKS port. IPtProxy supplies current Snowflake
+    // 2.14.1 as a pluggable transport. No user-owned VPS/VLESS/bridge is needed.
+    // 0.4.9.9.1 is deliberately pinned below tor-android's API-37 toolchain move.
+    add("privateSideloadImplementation", "info.guardianproject:tor-android:0.4.9.9.1")
     add("privateSideloadImplementation", "info.guardianproject:jtorctl:0.4.5.7")
     add("privateSideloadImplementation", "com.netzarchitekten:IPtProxy:5.5.1")
 
