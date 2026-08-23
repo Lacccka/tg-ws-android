@@ -43,8 +43,14 @@ class DiagnosticsHubActivity : Activity() {
 
             addSection("Актуальные", gap)
             addProbeButton(
+                label = "Snowflake/Tor — реальный Telegram",
+                description = "Следующий интеграционный тест: настоящий локальный ProxyServer → Tor SOCKS → Snowflake. Foreground service остаётся активным, пока вы открываете Telegram и проверяете реальные чаты/медиа.",
+                target = SnowflakeTorProxyActivity::class.java,
+                gap = gap,
+            )
+            addProbeButton(
                 label = "Snowflake/Tor tunnel E2E",
-                description = "Zero-config prototype: публичный Snowflake → embedded Tor SOCKS → SocksRawWebSocketConnector → Telegram. Без VPS, VLESS, пользовательского bridge и Android VPN.",
+                description = "Уже подтверждённый zero-config probe: публичный Snowflake → embedded Tor SOCKS → SocksRawWebSocketConnector → Telegram WebSocket HTTP 101. Без VPS, VLESS, пользовательского bridge и Android VPN.",
                 target = SnowflakeTorE2eActivity::class.java,
                 gap = gap,
             )
