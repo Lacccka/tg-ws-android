@@ -18,6 +18,7 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".CronetTlsControlActivity" android:exported="false" />
         <activity android:name=".CfProxyMatrixActivity" android:exported="false" />
         <activity android:name=".WorkerDiagnosticsActivity" android:exported="false" />
         <activity android:name=".WorkerPreferredEdgeActivity" android:exported="false" />
