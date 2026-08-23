@@ -3326,6 +3326,68 @@ class ProxyServerTest {
     }
 
     @Test
+    fun autoMobileUsesTorSnowflakeAfterOrdinaryRoutesAreUnavailable() {
+        val server = FakeTcpServerTransport()
+        val direct = RecordingConnector(FakeWebSocketBinaryStream())
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = direct,
+            torSnowflakeConnector = tor,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = false,
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil("Tor/Snowflake route") { proxy.stats().lastRouteUsed == TOR_SNOWFLAKE_ROUTE_TYPE }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(TOR_SNOWFLAKE_ROUTE_TYPE, stats.lastRouteUsed)
+        assertEquals(0L, stats.directAttempts)
+        assertEquals(1L, stats.torSnowflakeAttempts)
+        assertEquals(1L, stats.torSnowflakeSuccesses)
+        assertEquals(0L, stats.torSnowflakeFailures)
+        assertTrue(direct.domains.isEmpty())
+        assertEquals(listOf("kws2.web.telegram.org"), tor.domains)
+    }
+
+    @Test
+    fun warmingTorFallbackDoesNotCountAsTorNetworkFailure() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            torSnowflakeConnector = RawWebSocketConnector { _, _, _, _ ->
+                throw TorSnowflakeUnavailableException("bootstrap=72%")
+            },
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = false,
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        server.enqueue(client)
+        waitUntil("client closes after warming Tor fallback") { client.closed }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(1L, stats.torSnowflakeAttempts)
+        assertEquals(0L, stats.torSnowflakeSuccesses)
+        assertEquals(0L, stats.torSnowflakeFailures)
+        assertEquals(1L, stats.torSnowflakeUnavailable)
+        assertTrue(stats.lastTorSnowflakeError.orEmpty().contains("72%"))
+    }
+
+    @Test
     fun protoTagsMapToExpectedSplitterProtoInts() {
         assertEquals(MsgSplitter.PROTO_ABRIDGED_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_ABRIDGED))
         assertEquals(MsgSplitter.PROTO_INTERMEDIATE_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_INTERMEDIATE))
@@ -3354,11 +3416,13 @@ class ProxyServerTest {
         config: ProxyServerConfig = baseConfig(),
         logger: ProxyLogger = ProxyLogger {},
         cfDomainHealth: CfDomainHealth = CfDomainHealth(config.cfProxyDomains),
+        torSnowflakeConnector: RawWebSocketConnector? = null,
     ): ProxyServer =
         ProxyServer(
             config = config,
             serverTransport = server,
             webSocketConnector = connector,
+            torSnowflakeConnector = torSnowflakeConnector,
             bridgeRunner = runner,
             cfDomainHealth = cfDomainHealth,
             randomBytes = DeterministicRandomBytes,

@@ -51,6 +51,7 @@ class ProxyForegroundService : Service() {
         executor.execute { applyRouteForNetwork(status) }
     }
     private var proxyServer: ProxyServer? = null
+    private var torFallbackRuntime: TorFallbackRuntime? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var watchdogFuture: ScheduledFuture<*>? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -212,7 +213,17 @@ class ProxyForegroundService : Service() {
             State.markServiceEvent("proxy_start_requested")
             registerNetworkCallback()
             val logger = ProxyLogger { message -> State.addProxyLog(message) }
-            val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus), logger = logger)
+            val runtime = TorFallbackRuntimeLoader.create(applicationContext, logger)
+            torFallbackRuntime = runtime
+            runtime?.onNetworkChanged(State.networkStatus)
+            val serverConfig = ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus).copy(
+                torSnowflakeFallbackEnabled = runtime != null,
+            )
+            val server = ProxyServer(
+                config = serverConfig,
+                torSnowflakeConnector = runtime?.connector,
+                logger = logger,
+            )
             proxyServer = server
             State.setLiveStatsProvider { synchronized(lock) { proxyServer }?.stats() }
             try {
@@ -266,6 +277,10 @@ class ProxyForegroundService : Service() {
             proxyServer.also { proxyServer = null }
         }
         State.setLiveStatsProvider(null)
+        val torRuntime = synchronized(lock) {
+            torFallbackRuntime.also { torFallbackRuntime = null }
+        }
+        torRuntime?.stop()
         if (server != null) {
             try {
                 server.stop()
@@ -484,6 +499,7 @@ class ProxyForegroundService : Service() {
     }
 
     private fun applyRouteForNetwork(networkStatus: String, immediate: Boolean = false) {
+        torFallbackRuntime?.onNetworkChanged(networkStatus)
         val server = synchronized(lock) { proxyServer }
         if (server?.isRunning != true) {
             State.addLog("route unchanged: proxy not running for network=$networkStatus", LogSeverity.INFO, "network")
