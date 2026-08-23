@@ -40,6 +40,7 @@ class SnowflakeTorFallbackRuntime(
     }
     private val wanted = AtomicBoolean(false)
     private val stopped = AtomicBoolean(false)
+    private val restartScheduled = AtomicBoolean(false)
     private val progress = AtomicInteger(0)
     private val phase = AtomicReference("idle")
     private val lastError = AtomicReference<String?>(null)
@@ -87,6 +88,7 @@ class SnowflakeTorFallbackRuntime(
     override fun stop() {
         if (!stopped.compareAndSet(false, true)) return
         wanted.set(false)
+        restartScheduled.set(false)
         task?.cancel(true)
         task = null
         cleanup()
@@ -102,6 +104,7 @@ class SnowflakeTorFallbackRuntime(
     }
 
     private fun stopTransport(reason: String) {
+        restartScheduled.set(false)
         task?.cancel(true)
         task = null
         cleanup()
@@ -180,10 +183,21 @@ class SnowflakeTorFallbackRuntime(
                 boundTor = (service as? TorService.LocalBinder)?.service
                 serviceLatch.countDown()
             }
+
             override fun onServiceDisconnected(name: ComponentName?) {
                 boundTor = null
-                readyConnector.set(null)
-                if (wanted.get() && !stopped.get()) phase.set("tor_disconnected")
+                handleTorServiceLost("service disconnected")
+            }
+
+            override fun onBindingDied(name: ComponentName?) {
+                boundTor = null
+                handleTorServiceLost("binding died")
+            }
+
+            override fun onNullBinding(name: ComponentName?) {
+                boundTor = null
+                serviceLatch.countDown()
+                handleTorServiceLost("null binding")
             }
         }
         torConnection = connection
@@ -213,6 +227,25 @@ class SnowflakeTorFallbackRuntime(
         phase.set("ready")
         lastError.set(null)
         logger.log("Tor/Snowflake fallback READY on SOCKS 127.0.0.1:$socksPort")
+    }
+
+    private fun handleTorServiceLost(reason: String) {
+        readyConnector.set(null)
+        if (!wanted.get() || stopped.get()) return
+        phase.set("tor_disconnected")
+        lastError.set(reason)
+        logger.log("Tor/Snowflake $reason; scheduling transport restart")
+        if (!restartScheduled.compareAndSet(false, true)) return
+        executor.execute {
+            try {
+                if (!wanted.get() || stopped.get()) return@execute
+                cleanup()
+                synchronized(lifecycleLock) { task = null }
+                ensureStarted()
+            } finally {
+                restartScheduled.set(false)
+            }
+        }
     }
 
     private fun waitForBootstrap(tor: TorService) {
