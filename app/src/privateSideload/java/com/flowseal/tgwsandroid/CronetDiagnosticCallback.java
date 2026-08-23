@@ -1,5 +1,6 @@
 package com.flowseal.tgwsandroid;
 
+import androidx.annotation.Nullable;
 import java.nio.ByteBuffer;
 import org.chromium.net.CronetException;
 import org.chromium.net.UrlRequest;
@@ -17,7 +18,7 @@ import org.chromium.net.UrlResponseInfo;
 final class CronetDiagnosticCallback extends UrlRequest.Callback {
     interface Listener {
         void onHeaders(UrlRequest request, UrlResponseInfo info, String detail);
-        void onFailure(UrlRequest request, UrlResponseInfo info, CronetException error);
+        void onFailure(UrlRequest request, @Nullable UrlResponseInfo info, CronetException error);
     }
 
     private final Listener listener;
