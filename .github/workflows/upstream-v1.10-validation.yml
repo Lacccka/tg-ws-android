@@ -26,10 +26,16 @@ jobs:
       - name: Check Cloudflare Worker JavaScript syntax
         run: node --check tools/cloudflare-worker/worker.js
 
-      - name: Run unit suites
+      - name: Run debug unit suite
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest testPrivateSideloadUnitTest --stacktrace
+          ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Compile private Snowflake Tor diagnostics
+        run: ./gradlew compilePrivateSideloadKotlin --stacktrace
+
+      - name: Run private sideload unit suite
+        run: ./gradlew testPrivateSideloadUnitTest --stacktrace
 
       - name: Build private sideload APK with package diagnostics
         run: |
