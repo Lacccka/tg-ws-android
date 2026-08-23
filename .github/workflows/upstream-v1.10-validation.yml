@@ -32,6 +32,7 @@ jobs:
           ./gradlew testDebugUnitTest --stacktrace
 
       - name: Compile private Snowflake Tor diagnostics
+        if: always()
         run: ./gradlew compilePrivateSideloadKotlin --stacktrace
 
       - name: Run private sideload unit suite
