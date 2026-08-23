@@ -69,6 +69,16 @@ android {
             buildConfigField("String", "BUILD_FLAVOR_NAME", "\"privateSideload\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "true")
             buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", privateLibXrayAar.exists().toString())
+
+            // This build type is an on-device diagnostic for the current physical
+            // ARM64 test phone. Keeping only arm64-v8a prevents the large native
+            // Cronet + libXray payload from packaging unused x86/x86_64/32-bit
+            // binaries into a single APK. Normal debug/release/sideload builds
+            // remain ABI-unrestricted.
+            ndk {
+                abiFilters.clear()
+                abiFilters += "arm64-v8a"
+            }
         }
     }
 
