@@ -43,8 +43,14 @@ class DiagnosticsHubActivity : Activity() {
 
             addSection("Актуальные", gap)
             addProbeButton(
+                label = "CF proxy matrix",
+                description = "Проверяет промежуточные CF-proxy домены без прямого TCP к Telegram IP и без workers.dev.",
+                target = CfProxyMatrixActivity::class.java,
+                gap = gap,
+            )
+            addProbeButton(
                 label = "Direct fronting E2E",
-                description = "Проверяет direct Telegram WebSocket и альтернативный TLS SNI.",
+                description = "Проверяет direct Telegram WebSocket и альтернативный TLS SNI. На сети с заблокированным Telegram TCP ожидаемо остановится до TLS.",
                 target = DirectFrontingE2eActivity::class.java,
                 gap = gap,
             )
