@@ -1,3 +1,5 @@
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,7 +15,7 @@ fun gitCommitSha(): String = runCatching {
 }.getOrElse { "unknown" }
 
 fun sha256(file: File): String {
-    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    val digest = MessageDigest.getInstance("SHA-256")
     file.inputStream().buffered().use { input ->
         val buffer = ByteArray(128 * 1024)
         while (true) {
@@ -22,7 +24,7 @@ fun sha256(file: File): String {
             if (read > 0) digest.update(buffer, 0, read)
         }
     }
-    return digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
+    return digest.digest().joinToString(separator = "") { byte: Byte -> "%02x".format(byte) }
 }
 
 val privateLibXrayAar = file("libs/libXray.aar")
