@@ -20,7 +20,8 @@ import com.flowseal.tgwsandroid.config.AppConfig
 import com.flowseal.tgwsandroid.config.AppConfigStore
 import com.flowseal.tgwsandroid.proxy.RawWebSocket
 import com.flowseal.tgwsandroid.proxy.Socks5Credentials
-import com.flowseal.tgwsandroid.proxy.Socks5TlsTransportFactory
+import com.flowseal.tgwsandroid.proxy.SocksRawWebSocketConnector
+import com.flowseal.tgwsandroid.proxy.WebSocketBinaryStream
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetSocketAddress
@@ -92,7 +93,7 @@ class XrayTunnelE2eActivity : Activity() {
                 typeface = Typeface.DEFAULT_BOLD
             }, matchWrap())
             addView(TextView(this@XrayTunnelE2eActivity).apply {
-                text = "Private diagnostic only. Поднимает защищённый локальный SOCKS через libXray без Android VPN и проверяет наш обычный WebSocket к Telegram через этот туннель. VLESS-ссылка, адрес сервера и SOCKS credentials не сохраняются и не попадают в результат."
+                text = "Private diagnostic only. Поднимает защищённый локальный SOCKS через libXray без Android VPN и проверяет production-shaped SocksRawWebSocketConnector к Telegram. VLESS-ссылка, адрес сервера и SOCKS credentials не сохраняются и не попадают в результат."
             }, matchWrap(gap))
             addView(networkText, matchWrap(gap))
             addView(linkInput, matchWrap(gap))
@@ -134,7 +135,7 @@ class XrayTunnelE2eActivity : Activity() {
 
         thread(name = "XrayTunnelE2E") {
             val lines = mutableListOf(
-                "SE Xray VLESS/REALITY -> authenticated SOCKS5 -> Telegram WebSocket E2E",
+                "SE Xray VLESS/REALITY -> authenticated SOCKS5 -> SocksRawWebSocketConnector -> Telegram E2E",
                 "Network: $network",
                 "libXray pinned tag: ${LibXrayCompat.PINNED_TAG}",
                 "libXray AAR packaged by Gradle: ${BuildConfig.LIBXRAY_AAR_PACKAGED}",
@@ -144,7 +145,7 @@ class XrayTunnelE2eActivity : Activity() {
                 "Local SOCKS authentication: RFC1929 random per-run credentials (REDACTED)",
                 "Telegram targets: current AppConfig.dcIp (${telegramTargets.size})",
                 "Upstream DNS mode: hostname=SOCKS5 ATYP=DOMAIN behind tunnel; numeric Telegram IP=no DNS",
-                "WebSocket implementation: existing RawWebSocket",
+                "WebSocket boundary: SocksRawWebSocketConnector -> existing RawWebSocket",
                 "",
             )
 
@@ -188,7 +189,7 @@ class XrayTunnelE2eActivity : Activity() {
                 }
                 lines += "OK   local SOCKS accepts TCP connections"
 
-                val transportFactory = Socks5TlsTransportFactory(
+                val connector = SocksRawWebSocketConnector(
                     socksHost = "127.0.0.1",
                     socksPort = socksPort,
                     credentials = socksCredentials,
@@ -203,23 +204,23 @@ class XrayTunnelE2eActivity : Activity() {
                     lines += "TLS/Host=${target.domain} path=/apiws"
                     publish(lines)
 
+                    var stream: WebSocketBinaryStream? = null
                     try {
-                        var ws: RawWebSocket? = null
                         val elapsed = measureTimeMillis {
-                            ws = RawWebSocket.connect(
-                                host = target.targetHost,
+                            stream = connector.connect(
+                                targetHost = target.targetHost,
                                 domain = target.domain,
                                 path = "/apiws",
                                 timeoutMs = RawWebSocket.MAX_CONNECT_TIMEOUT_MS,
-                                transportFactory = transportFactory,
                             )
                         }
                         successes += 1
-                        lines += "OK   WebSocket HTTP 101 through VLESS/SOCKS (${elapsed}ms)"
-                        runCatching { ws?.close() }
+                        lines += "OK   WebSocket HTTP 101 through VLESS/SOCKS connector (${elapsed}ms)"
                     } catch (error: Throwable) {
                         failures += 1
                         lines += "FAIL ${errorSummary(error, sensitiveValues)}"
+                    } finally {
+                        runCatching { stream?.close() }
                     }
                     publish(lines)
                 }
@@ -229,7 +230,7 @@ class XrayTunnelE2eActivity : Activity() {
                 lines += "Telegram WebSocket successes: $successes/${telegramTargets.size}"
                 lines += "Failures: $failures"
                 lines += if (successes > 0) {
-                    "VERDICT: VLESS/REALITY + authenticated local SOCKS can carry the existing Telegram WebSocket transport on this network. Next step is injecting SocksRawWebSocketConnector into ProxyServer as the mobile fallback and testing a real Telegram session."
+                    "VERDICT: VLESS/REALITY + authenticated local SOCKS can carry the production-shaped SocksRawWebSocketConnector on this network. Next step is a full ProxyServer Telegram-session prototype using the same connector."
                 } else {
                     "VERDICT: the VLESS core started, but no Telegram WebSocket reached HTTP 101 through the tunnel. Inspect the supplied VLESS endpoint/server reachability before production routing changes."
                 }
