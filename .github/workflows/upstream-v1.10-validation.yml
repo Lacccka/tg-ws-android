@@ -7,6 +7,7 @@ on:
       - fix-private-sideload-special-use
       - worker-diagnostics-probe
       - worker-diagnostics-probe-fronting-test
+      - snowflake-tor-proxy-test
   pull_request:
     branches:
       - upstream-v1.10-fronting-pool-diagnostics
@@ -63,6 +64,8 @@ jobs:
           grep -q 'android:foregroundServiceType="specialUse"' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.DiagnosticsHubActivity' "$merged_manifest"
           grep -q 'SE Diagnostics' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.SnowflakeTorProxyActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.SnowflakeTorProxyService' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.SnowflakeTorE2eActivity' "$merged_manifest"
           grep -q 'org.torproject.jni.TorService' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.CronetTlsControlActivity' "$merged_manifest"
