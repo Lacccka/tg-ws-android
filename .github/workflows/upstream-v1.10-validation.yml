@@ -56,6 +56,9 @@ jobs:
             cp .third_party/libXray/libXray-sources.jar app/libs/libXray-sources.jar
           fi
           sha256sum app/libs/libXray.aar
+          ls -lh app/libs/libXray.aar
+          echo "AAR native payload:"
+          unzip -l app/libs/libXray.aar | grep -E 'jni/.+\.so$|classes\.jar$' || true
       - name: Verify pinned libXray Java ABI
         run: |
           rm -rf /tmp/tgws-libxray-abi
@@ -66,10 +69,23 @@ jobs:
           grep -Eq 'invoke\(java\.lang\.String\)' /tmp/tgws-libxray-abi/javap.txt
       - name: Check Cloudflare Worker JavaScript syntax
         run: node --check tools/cloudflare-worker/worker.js
-      - name: Run full unit suite and build private sideload APK
+      - name: Run unit suite
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest assemblePrivateSideload
+          ./gradlew testDebugUnitTest --stacktrace
+      - name: Build private sideload APK with package diagnostics
+        run: |
+          df -h .
+          ./gradlew assemblePrivateSideload --stacktrace --info
+      - name: Inspect packaging intermediates on failure
+        if: failure()
+        run: |
+          echo "Disk:"
+          df -h . || true
+          echo "Largest app build files:"
+          find app/build -type f -printf '%s %p\n' 2>/dev/null | sort -nr | head -40 || true
+          echo "Native libraries:"
+          find app/build -type f -name '*.so' -printf '%s %p\n' 2>/dev/null | sort -nr || true
       - name: Verify private sideload special-use manifest
         run: |
           merged_manifest="$(find app/build/intermediates/merged_manifest/privateSideload -name AndroidManifest.xml -print -quit)"
