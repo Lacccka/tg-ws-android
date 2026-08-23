@@ -1,0 +1,58 @@
+name: Apply shared Snowflake controller once
+
+on:
+  pull_request:
+    branches:
+      - snowflake-tor-proxy-test
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-verify:
+    if: github.head_ref == 'snowflake-tor-auto-fallback'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: snowflake-tor-auto-fallback
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Enable Gradle wrapper
+        run: chmod +x gradlew
+
+      - name: Apply shared controller migration
+        run: python3 .github/scripts/apply_shared_snowflake_controller.py
+
+      - name: Verify only one IPtProxy Controller constructor remains
+        run: |
+          count=$(grep -R --include='*.kt' -n 'Controller(' app/src/privateSideload/java/com/flowseal/tgwsandroid | grep -E 'SharedSnowflakeController|IPtProxy' | wc -l)
+          echo "candidate Controller constructor lines: $count"
+          test "$(grep -R --include='*.kt' -n 'return Controller(' app/src/privateSideload/java/com/flowseal/tgwsandroid | wc -l)" -eq 1
+          ! grep -R --include='*.kt' -n 'start(IPtProxy.Snowflake, null)' app/src/privateSideload/java
+
+      - name: Compile private sideload
+        run: ./gradlew compilePrivateSideloadKotlin --stacktrace
+
+      - name: Run private unit suite
+        run: ./gradlew testPrivateSideloadUnitTest --stacktrace
+
+      - name: Build private sideload APK
+        run: ./gradlew assemblePrivateSideload --stacktrace
+
+      - name: Commit migration and remove one-shot scaffolding
+        run: |
+          rm -f .github/scripts/apply_shared_snowflake_controller.py
+          rm -f .github/workflows/apply-shared-snowflake-controller-once.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add app/src/privateSideload .github
+          git commit -m 'Reuse one Snowflake controller per process'
+          git push origin HEAD:snowflake-tor-auto-fallback
