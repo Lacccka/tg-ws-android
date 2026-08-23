@@ -124,7 +124,7 @@ class SnowflakeTorE2eActivity : Activity() {
             val lines = mutableListOf(
                 "SE Snowflake -> embedded Tor -> SOCKS -> Telegram WebSocket E2E",
                 "Network: $network",
-                "tor-android: 0.4.9.11",
+                "tor-android: 0.4.8.19",
                 "IPtProxy: 5.5.1 (Snowflake 2.14.1)",
                 "User-owned VPS/bridge/VLESS: not required",
                 "Android VpnService: not used",
