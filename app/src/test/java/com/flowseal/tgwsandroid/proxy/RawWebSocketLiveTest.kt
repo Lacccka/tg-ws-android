@@ -275,8 +275,8 @@ class RawWebSocketLiveTest {
             randomProvider = deterministicRandomProvider(),
         )
 
-        assertEquals(5_000, fake.calls.single().timeoutMs)
-        assertEquals(listOf(5_000, 0), fake.transport.readTimeouts)
+        assertEquals(RawWebSocket.MAX_CONNECT_TIMEOUT_MS, fake.calls.single().timeoutMs)
+        assertEquals(listOf(RawWebSocket.MAX_CONNECT_TIMEOUT_MS, 0), fake.transport.readTimeouts)
     }
 
     @Test
@@ -293,7 +293,7 @@ class RawWebSocketLiveTest {
             )
         }
 
-        assertEquals(listOf(5_000), fake.transport.readTimeouts)
+        assertEquals(listOf(RawWebSocket.MAX_CONNECT_TIMEOUT_MS), fake.transport.readTimeouts)
         assertTrue(fake.transport.closed)
     }
 
