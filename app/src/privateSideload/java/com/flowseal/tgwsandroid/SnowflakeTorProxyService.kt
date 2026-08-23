@@ -1,7 +1,5 @@
 package com.flowseal.tgwsandroid
 
-import IPtProxy.Controller
-import IPtProxy.IPtProxy
 import IPtProxy.OnTransportEvents
 import android.app.Notification
 import android.app.NotificationChannel
@@ -26,7 +24,6 @@ import com.flowseal.tgwsandroid.proxy.SocksRawWebSocketConnector
 import com.flowseal.tgwsandroid.service.ProxyForegroundService
 import com.flowseal.tgwsandroid.service.ProxyRuntimeConfig
 import org.torproject.jni.TorService
-import java.io.File
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.util.concurrent.CountDownLatch
@@ -56,7 +53,7 @@ class SnowflakeTorProxyService : Service() {
     @Volatile
     private var startInProgress = false
 
-    private var controller: Controller? = null
+    private var snowflakeTransportOwned: Boolean = false
     private var torServiceConnection: ServiceConnection? = null
     private var proxyServer: ProxyServer? = null
     private var statsFuture: ScheduledFuture<*>? = null
@@ -124,7 +121,6 @@ class SnowflakeTorProxyService : Service() {
             waitForLocalPortFree(serverConfig.host, serverConfig.port)
 
             SnowflakeTorProxyTestStatus.setPhase("SNOWFLAKE", "Starting Snowflake pluggable transport")
-            val stateDir = File(noBackupFilesDir, "snowflake-pt-proxy").apply { mkdirs() }
             val transportEvents = object : OnTransportEvents {
                 override fun connected(name: String?) {
                     SnowflakeTorProxyTestStatus.log("PT connected=${name ?: "unknown"}")
@@ -142,24 +138,19 @@ class SnowflakeTorProxyService : Service() {
                 }
             }
 
-            val newController = Controller(
-                stateDir.absolutePath,
-                true,
-                false,
-                "INFO",
-                transportEvents,
-            ).also {
-                it.snowflakeBrokerUrl = SNOWFLAKE_BROKER_URL
-                it.snowflakeFrontDomains = SNOWFLAKE_FRONT_DOMAINS
-                it.snowflakeIceServers = SNOWFLAKE_ICE_SERVERS
-                it.snowflakeAmpCacheUrl = ""
-                it.snowflakeSqsUrl = ""
-                it.snowflakeSqsCreds = ""
+            val ptPort = SharedSnowflakeController.start(
+                context = applicationContext,
+                owner = SNOWFLAKE_OWNER,
+                events = transportEvents,
+            ) { sharedController ->
+                sharedController.snowflakeBrokerUrl = SNOWFLAKE_BROKER_URL
+                sharedController.snowflakeFrontDomains = SNOWFLAKE_FRONT_DOMAINS
+                sharedController.snowflakeIceServers = SNOWFLAKE_ICE_SERVERS
+                sharedController.snowflakeAmpCacheUrl = ""
+                sharedController.snowflakeSqsUrl = ""
+                sharedController.snowflakeSqsCreds = ""
             }
-            controller = newController
-            newController.start(IPtProxy.Snowflake, null)
-            val ptPort = newController.port(IPtProxy.Snowflake).toInt()
-            check(ptPort in 1..65535) { "Snowflake listener returned invalid port: $ptPort" }
+            snowflakeTransportOwned = true
             SnowflakeTorProxyTestStatus.log("Snowflake SOCKS listener=127.0.0.1:$ptPort")
 
             SnowflakeTorProxyTestStatus.setPhase("TOR_CONFIG", "Configuring embedded Tor")
@@ -260,9 +251,11 @@ class SnowflakeTorProxyService : Service() {
         if (connection != null) runCatching { unbindService(connection) }
         runCatching { stopService(Intent(this, TorService::class.java)) }
 
-        val activeController = controller
-        controller = null
-        if (activeController != null) runCatching { activeController.stop(IPtProxy.Snowflake) }
+        if (snowflakeTransportOwned) {
+            snowflakeTransportOwned = false
+            runCatching { SharedSnowflakeController.stop(SNOWFLAKE_OWNER) }
+                .onFailure { SnowflakeTorProxyTestStatus.log("Shared Snowflake stop failed: ${it.javaClass.simpleName}: ${sanitize(it.message)}") }
+        }
     }
 
     private fun waitForTorBootstrap(service: TorService) {
@@ -399,6 +392,7 @@ class SnowflakeTorProxyService : Service() {
         .take(1000)
 
     companion object {
+        private const val SNOWFLAKE_OWNER = "real-telegram-proof"
         const val ACTION_START = "com.flowseal.tgwsandroid.action.START_SNOWFLAKE_TOR_PROXY_TEST"
         const val ACTION_STOP = "com.flowseal.tgwsandroid.action.STOP_SNOWFLAKE_TOR_PROXY_TEST"
 

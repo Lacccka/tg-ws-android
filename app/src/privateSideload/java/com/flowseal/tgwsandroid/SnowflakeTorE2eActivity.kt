@@ -1,7 +1,5 @@
 package com.flowseal.tgwsandroid
 
-import IPtProxy.Controller
-import IPtProxy.IPtProxy
 import IPtProxy.OnTransportEvents
 import android.app.Activity
 import android.content.ClipData
@@ -26,7 +24,6 @@ import com.flowseal.tgwsandroid.config.AppConfigStore
 import com.flowseal.tgwsandroid.proxy.RawWebSocket
 import com.flowseal.tgwsandroid.proxy.SocksRawWebSocketConnector
 import org.torproject.jni.TorService
-import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.concurrent.thread
@@ -46,7 +43,7 @@ class SnowflakeTorE2eActivity : Activity() {
     private lateinit var runButton: Button
 
     @Volatile
-    private var activeController: Controller? = null
+    private var activeSnowflakeTransport: Boolean = false
 
     @Volatile
     private var activeConnection: ServiceConnection? = null
@@ -133,13 +130,12 @@ class SnowflakeTorE2eActivity : Activity() {
                 "",
             )
 
-            var controller: Controller? = null
+            var snowflakeTransportOwned = false
             var connection: ServiceConnection? = null
             try {
                 lines += "=== Start Snowflake pluggable transport ==="
                 publish(lines)
 
-                val stateDir = File(noBackupFilesDir, "snowflake-pt").apply { mkdirs() }
                 val transportEvents = object : OnTransportEvents {
                     override fun connected(name: String?) {
                         appendAsync(lines, "PT EVENT connected=${name ?: "unknown"}")
@@ -158,27 +154,23 @@ class SnowflakeTorE2eActivity : Activity() {
                     }
                 }
 
-                controller = Controller(
-                    stateDir.absolutePath,
-                    true,
-                    false,
-                    "INFO",
-                    transportEvents,
-                ).also {
-                    it.snowflakeBrokerUrl = SNOWFLAKE_BROKER_URL
-                    it.snowflakeFrontDomains = SNOWFLAKE_FRONT_DOMAINS
-                    it.snowflakeIceServers = SNOWFLAKE_ICE_SERVERS
-                    it.snowflakeAmpCacheUrl = ""
-                    it.snowflakeSqsUrl = ""
-                    it.snowflakeSqsCreds = ""
-                }
-                activeController = controller
-
+                var ptPort = 0
                 val ptStartMs = measureTimeMillis {
-                    controller.start(IPtProxy.Snowflake, null)
+                    ptPort = SharedSnowflakeController.start(
+                        context = applicationContext,
+                        owner = SNOWFLAKE_OWNER,
+                        events = transportEvents,
+                    ) { sharedController ->
+                        sharedController.snowflakeBrokerUrl = SNOWFLAKE_BROKER_URL
+                        sharedController.snowflakeFrontDomains = SNOWFLAKE_FRONT_DOMAINS
+                        sharedController.snowflakeIceServers = SNOWFLAKE_ICE_SERVERS
+                        sharedController.snowflakeAmpCacheUrl = ""
+                        sharedController.snowflakeSqsUrl = ""
+                        sharedController.snowflakeSqsCreds = ""
+                    }
                 }
-                val ptPort = controller.port(IPtProxy.Snowflake).toInt()
-                check(ptPort in 1..65535) { "Snowflake listener returned invalid port: $ptPort" }
+                snowflakeTransportOwned = true
+                activeSnowflakeTransport = true
                 lines += "OK   Snowflake SOCKS listener started (${ptStartMs}ms)"
                 lines += "Snowflake PT listener: 127.0.0.1:$ptPort"
 
@@ -290,9 +282,9 @@ class SnowflakeTorE2eActivity : Activity() {
                 lines += ""
                 lines += "RESULT: TEST ERROR: ${errorSummary(error)}"
             } finally {
-                cleanupTransport(connection, controller)
+                cleanupTransport(connection, snowflakeTransportOwned)
                 activeConnection = null
-                activeController = null
+                activeSnowflakeTransport = false
                 lines += ""
                 lines += "Snowflake/Tor stopped"
                 finish(lines)
@@ -358,19 +350,19 @@ class SnowflakeTorE2eActivity : Activity() {
 
     private fun cleanupActiveTransport() {
         val connection = activeConnection
-        val controller = activeController
+        val snowflakeOwned = activeSnowflakeTransport
         activeConnection = null
-        activeController = null
-        cleanupTransport(connection, controller)
+        activeSnowflakeTransport = false
+        cleanupTransport(connection, snowflakeOwned)
     }
 
-    private fun cleanupTransport(connection: ServiceConnection?, controller: Controller?) {
+    private fun cleanupTransport(connection: ServiceConnection?, snowflakeOwned: Boolean) {
         if (connection != null) {
             runCatching { unbindService(connection) }
         }
         runCatching { stopService(Intent(this, TorService::class.java)) }
-        if (controller != null) {
-            runCatching { controller.stop(IPtProxy.Snowflake) }
+        if (snowflakeOwned) {
+            runCatching { SharedSnowflakeController.stop(SNOWFLAKE_OWNER) }
         }
     }
 
@@ -447,6 +439,7 @@ class SnowflakeTorE2eActivity : Activity() {
     private class TorBootstrapException(message: String) : IllegalStateException(message)
 
     companion object {
+        private const val SNOWFLAKE_OWNER = "snowflake-tor-e2e"
         private const val SNOWFLAKE_BROKER_URL = "https://1098762253.rsc.cdn77.org/"
         private const val SNOWFLAKE_FRONT_DOMAINS = "app.datapacket.com,www.datapacket.com"
         private const val SNOWFLAKE_ICE_SERVERS =

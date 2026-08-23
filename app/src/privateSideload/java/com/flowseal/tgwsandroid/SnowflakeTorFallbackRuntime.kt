@@ -1,7 +1,5 @@
 package com.flowseal.tgwsandroid
 
-import IPtProxy.Controller
-import IPtProxy.IPtProxy
 import IPtProxy.OnTransportEvents
 import android.content.ComponentName
 import android.content.Context
@@ -15,7 +13,6 @@ import com.flowseal.tgwsandroid.proxy.TorSnowflakeUnavailableException
 import com.flowseal.tgwsandroid.service.TorFallbackRuntime
 import com.flowseal.tgwsandroid.service.TorFallbackRuntimeSnapshot
 import org.torproject.jni.TorService
-import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.Future
@@ -48,7 +45,7 @@ class SnowflakeTorFallbackRuntime(
     private val lifecycleLock = Any()
 
     @Volatile private var task: Future<*>? = null
-    @Volatile private var controller: Controller? = null
+    private val snowflakeTransportOwned = AtomicBoolean(false)
     @Volatile private var torConnection: ServiceConnection? = null
 
     override val connector: RawWebSocketConnector = object : RawWebSocketConnector {
@@ -78,7 +75,7 @@ class SnowflakeTorFallbackRuntime(
 
     override fun snapshot(): TorFallbackRuntimeSnapshot = TorFallbackRuntimeSnapshot(
         desired = wanted.get(),
-        running = wanted.get() && (readyConnector.get() != null || task?.isDone == false || controller != null || torConnection != null),
+        running = wanted.get() && (readyConnector.get() != null || task?.isDone == false || snowflakeTransportOwned.get() || torConnection != null),
         ready = readyConnector.get() != null,
         bootstrapProgress = progress.get(),
         phase = phase.get(),
@@ -142,7 +139,6 @@ class SnowflakeTorFallbackRuntime(
         lastError.set(null)
         phase.set("snowflake")
 
-        val stateDir = File(appContext.noBackupFilesDir, "snowflake-pt-fallback").apply { mkdirs() }
         val transportEvents = object : OnTransportEvents {
             override fun connected(name: String?) {
                 logger.log("Tor/Snowflake PT connected=${name ?: "unknown"}")
@@ -157,19 +153,20 @@ class SnowflakeTorFallbackRuntime(
             }
         }
 
-        val newController = Controller(stateDir.absolutePath, true, false, "INFO", transportEvents).also {
-            it.snowflakeBrokerUrl = SNOWFLAKE_BROKER_URL
-            it.snowflakeFrontDomains = SNOWFLAKE_FRONT_DOMAINS
-            it.snowflakeIceServers = SNOWFLAKE_ICE_SERVERS
-            it.snowflakeAmpCacheUrl = ""
-            it.snowflakeSqsUrl = ""
-            it.snowflakeSqsCreds = ""
+        val ptPort = SharedSnowflakeController.start(
+            context = appContext,
+            owner = SNOWFLAKE_OWNER,
+            events = transportEvents,
+        ) { sharedController ->
+            sharedController.snowflakeBrokerUrl = SNOWFLAKE_BROKER_URL
+            sharedController.snowflakeFrontDomains = SNOWFLAKE_FRONT_DOMAINS
+            sharedController.snowflakeIceServers = SNOWFLAKE_ICE_SERVERS
+            sharedController.snowflakeAmpCacheUrl = ""
+            sharedController.snowflakeSqsUrl = ""
+            sharedController.snowflakeSqsCreds = ""
         }
-        controller = newController
-        newController.start(IPtProxy.Snowflake, null)
-        val ptPort = newController.port(IPtProxy.Snowflake).toInt()
-        check(ptPort in 1..65535) { "Snowflake listener returned invalid port: $ptPort" }
-        logger.log("Tor/Snowflake PT ready on 127.0.0.1:$ptPort")
+        snowflakeTransportOwned.set(true)
+        logger.log("Tor/Snowflake PT ready on 127.0.0.1:$ptPort using shared process controller")
 
         phase.set("tor_config")
         val torrc = TorService.getTorrc(appContext)
@@ -282,9 +279,10 @@ class SnowflakeTorFallbackRuntime(
         torConnection = null
         if (connection != null) runCatching { appContext.unbindService(connection) }
         runCatching { appContext.stopService(Intent(appContext, TorService::class.java)) }
-        val activeController = controller
-        controller = null
-        if (activeController != null) runCatching { activeController.stop(IPtProxy.Snowflake) }
+        if (snowflakeTransportOwned.getAndSet(false)) {
+            runCatching { SharedSnowflakeController.stop(SNOWFLAKE_OWNER) }
+                .onFailure { logger.log("Tor/Snowflake shared controller stop failed: ${it.javaClass.simpleName}: ${sanitize(it.message)}") }
+        }
     }
 
     private fun buildTorrc(ptPort: Int): String = buildString {
@@ -318,6 +316,7 @@ class SnowflakeTorFallbackRuntime(
     private fun sanitize(value: String?): String = value.orEmpty().replace('\n', ' ').replace('\r', ' ').take(700)
 
     companion object {
+        private const val SNOWFLAKE_OWNER = "production-fallback"
         private const val TOR_SERVICE_BIND_TIMEOUT_SECONDS = 10L
         private const val TOR_CONTROL_TIMEOUT_MS = 15_000L
         private const val TOR_BOOTSTRAP_STALL_TIMEOUT_MS = 90_000L
