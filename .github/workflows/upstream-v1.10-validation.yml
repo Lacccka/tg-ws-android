@@ -14,69 +14,73 @@ on:
       - fix-private-sideload-special-use
 
 env:
-  LIBXRAY_NDK_VERSION: r29
+  LIBXRAY_TAG: v26.7.28
+  # SHA-256 of libXray.aar inside the official XTLS/libXray Android artifact
+  # from Build libXray run 30426588453 for v26.7.28.
+  LIBXRAY_AAR_SHA256: 4708a361a74f7e955635dbe3661cefb459bdc867423c3b1826a2c5a6ea4ac77d
 
 jobs:
   full-validation:
     runs-on: ubuntu-latest
-    env:
-      CGO_ENABLED: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.26.3'
-      - name: Setup Android SDK for libXray
-        uses: android-actions/setup-android@v3
-      - name: Setup Android NDK for libXray
-        uses: nttld/setup-ndk@v1
-        with:
-          ndk-version: ${{ env.LIBXRAY_NDK_VERSION }}
-          add-to-path: true
-      - name: Checkout pinned libXray
-        uses: actions/checkout@v4
-        with:
-          repository: XTLS/libXray
-          ref: v26.7.28
-          path: .third_party/libXray
-      - name: Build pinned libXray Android AAR
+
+      - name: Download pinned official libXray Android artifact
         run: |
-          export PATH="$(go env GOPATH)/bin:$PATH"
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_NDK_HOME=$ANDROID_NDK_HOME"
-          python3 .third_party/libXray/build/main.py android
-          test -f .third_party/libXray/libXray.aar
-          mkdir -p app/libs
-          cp .third_party/libXray/libXray.aar app/libs/libXray.aar
-          if test -f .third_party/libXray/libXray-sources.jar; then
-            cp .third_party/libXray/libXray-sources.jar app/libs/libXray-sources.jar
+          set -euo pipefail
+          archive=/tmp/libxray-android.zip
+          extracted=/tmp/libxray-android
+          url="https://github.com/XTLS/libXray/releases/download/${LIBXRAY_TAG}/libxray-android.zip"
+
+          echo "Downloading $url"
+          curl --fail --location --retry 3 --retry-all-errors "$url" --output "$archive"
+          rm -rf "$extracted"
+          mkdir -p "$extracted" app/libs
+          unzip -q "$archive" -d "$extracted"
+
+          aar="$(find "$extracted" -type f -name libXray.aar -print -quit)"
+          test -n "$aar"
+          actual_sha="$(sha256sum "$aar" | awk '{print $1}')"
+          echo "libXray.aar sha256=$actual_sha"
+          test "$actual_sha" = "$LIBXRAY_AAR_SHA256"
+
+          unzip -Z1 "$aar" | grep -qx 'classes.jar'
+          unzip -Z1 "$aar" | grep -qx 'jni/arm64-v8a/libgojni.so'
+          cp "$aar" app/libs/libXray.aar
+
+          sources="$(find "$extracted" -type f -name libXray-sources.jar -print -quit)"
+          if test -n "$sources"; then
+            cp "$sources" app/libs/libXray-sources.jar
           fi
-          sha256sum app/libs/libXray.aar
           ls -lh app/libs/libXray.aar
-          echo "AAR native payload:"
-          unzip -l app/libs/libXray.aar | grep -E 'jni/.+\.so$|classes\.jar$' || true
+
       - name: Verify pinned libXray Java ABI
         run: |
+          set -euo pipefail
           rm -rf /tmp/tgws-libxray-abi
           mkdir -p /tmp/tgws-libxray-abi
           unzip -q app/libs/libXray.aar classes.jar -d /tmp/tgws-libxray-abi
           jar tf /tmp/tgws-libxray-abi/classes.jar | grep -q '^libXray/LibXray.class$'
           javap -classpath /tmp/tgws-libxray-abi/classes.jar libXray.LibXray > /tmp/tgws-libxray-abi/javap.txt
           grep -Eq 'invoke\(java\.lang\.String\)' /tmp/tgws-libxray-abi/javap.txt
+
       - name: Check Cloudflare Worker JavaScript syntax
         run: node --check tools/cloudflare-worker/worker.js
-      - name: Run unit suite
+
+      - name: Run unit suites
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest --stacktrace
+          ./gradlew testDebugUnitTest testPrivateSideloadUnitTest --stacktrace
+
       - name: Build private sideload APK with package diagnostics
         run: |
           df -h .
           ./gradlew assemblePrivateSideload --stacktrace --info
+
       - name: Inspect packaging intermediates on failure
         if: failure()
         run: |
@@ -86,6 +90,7 @@ jobs:
           find app/build -type f -printf '%s %p\n' 2>/dev/null | sort -nr | head -40 || true
           echo "Native libraries:"
           find app/build -type f -name '*.so' -printf '%s %p\n' 2>/dev/null | sort -nr || true
+
       - name: Verify private sideload special-use manifest
         run: |
           merged_manifest="$(find app/build/intermediates/merged_manifest/privateSideload -name AndroidManifest.xml -print -quit)"
@@ -105,13 +110,28 @@ jobs:
           grep -q 'com.flowseal.tgwsandroid.WorkerNoSniE2eActivity' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.WorkerTlsMatrixActivity' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.DirectFrontingE2eActivity' "$merged_manifest"
-      - name: Verify libXray packaged in private APK inputs
+
+      - name: Verify libXray packaged in private APK
         run: |
+          set -euo pipefail
           test -f app/libs/libXray.aar
+          echo "$LIBXRAY_AAR_SHA256  app/libs/libXray.aar" | sha256sum --check --strict
+
           build_config="$(find app/build/generated/source/buildConfig/privateSideload -name BuildConfig.java -print -quit)"
           test -n "$build_config"
           grep -q 'LIBXRAY_AAR_PACKAGED' "$build_config"
           grep -q 'LIBXRAY_AAR_PACKAGED = true' "$build_config"
+
+          apk="$(find app/build/outputs/apk/privateSideload -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libgojni.so'
+          if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64|armeabi-v7a)/libgojni\.so$'; then
+            echo "Unexpected non-arm64 libXray native library packaged in private sideload APK" >&2
+            exit 1
+          fi
+          echo "Verified Xray-enabled APK: $apk"
+          ls -lh "$apk"
+
       - name: Upload validation APK
         uses: actions/upload-artifact@v4
         with:
