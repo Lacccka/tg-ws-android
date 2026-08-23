@@ -38,6 +38,51 @@ class Socks5ProtocolTest {
     }
 
     @Test
+    fun connectWithCredentialsUsesRfc1929BeforeConnect() {
+        val serverReplies = byteArrayOf(
+            0x05, 0x02, // SOCKS greeting selects username/password
+            0x01, 0x00, // RFC 1929 auth success
+            0x05, 0x00, 0x00, 0x01, // CONNECT success
+            127, 0, 0, 1,
+            0x00, 0x00,
+        )
+        val output = ByteArrayOutputStream()
+        val credentials = Socks5Credentials("tgws", "secret")
+
+        Socks5Protocol.connect(
+            input = ByteArrayInputStream(serverReplies),
+            output = output,
+            targetHost = "149.154.167.220",
+            targetPort = 443,
+            credentials = credentials,
+        )
+
+        val expected = ByteArrayOutputStream().apply {
+            write(byteArrayOf(0x05, 0x01, 0x02))
+            write(byteArrayOf(0x01, 0x04, 't'.code.toByte(), 'g'.code.toByte(), 'w'.code.toByte(), 's'.code.toByte()))
+            write(byteArrayOf(0x06, 's'.code.toByte(), 'e'.code.toByte(), 'c'.code.toByte(), 'r'.code.toByte(), 'e'.code.toByte(), 't'.code.toByte()))
+            write(Socks5Protocol.buildConnectRequest("149.154.167.220", 443))
+        }.toByteArray()
+
+        assertArrayEquals(expected, output.toByteArray())
+    }
+
+    @Test
+    fun connectWithCredentialsRejectsFailedAuthentication() {
+        val error = captureIOException {
+            Socks5Protocol.connect(
+                input = ByteArrayInputStream(byteArrayOf(0x05, 0x02, 0x01, 0x01)),
+                output = ByteArrayOutputStream(),
+                targetHost = "example.com",
+                targetPort = 443,
+                credentials = Socks5Credentials("user", "wrong"),
+            )
+        }
+
+        assertTrue(error.message.orEmpty().contains("authentication failed"))
+    }
+
+    @Test
     fun buildConnectRequestEncodesTelegramIpv4Numerically() {
         assertArrayEquals(
             byteArrayOf(
@@ -74,7 +119,7 @@ class Socks5ProtocolTest {
             )
         }
 
-        assertTrue(error.message.orEmpty().contains("unsupported authentication method"))
+        assertTrue(error.message.orEmpty().contains("unexpected authentication method"))
         assertArrayEquals(byteArrayOf(0x05, 0x01, 0x00), output.toByteArray())
     }
 
