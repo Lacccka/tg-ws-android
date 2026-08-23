@@ -15,6 +15,25 @@ import javax.net.ssl.SSLSocket
 import javax.net.ssl.TrustManager
 import javax.net.ssl.X509TrustManager
 
+/** Credentials for an RFC 1929 SOCKS5 username/password exchange. */
+data class Socks5Credentials(
+    val username: String,
+    val password: String,
+) {
+    init {
+        validatePart("username", username)
+        validatePart("password", password)
+    }
+
+    companion object {
+        private fun validatePart(label: String, value: String) {
+            val bytes = value.toByteArray(Charsets.UTF_8)
+            require(bytes.isNotEmpty()) { "SOCKS $label must not be blank" }
+            require(bytes.size <= 255) { "SOCKS $label is too long: ${bytes.size} bytes" }
+        }
+    }
+}
+
 /**
  * RawWebSocket transport that reaches the upstream through a local SOCKS5 proxy.
  *
@@ -29,6 +48,7 @@ import javax.net.ssl.X509TrustManager
 internal class Socks5TlsTransportFactory(
     private val socksHost: String,
     private val socksPort: Int,
+    private val credentials: Socks5Credentials? = null,
 ) : RawWebSocket.TransportFactory {
     init {
         require(socksHost.isNotBlank()) { "SOCKS host must not be blank" }
@@ -48,11 +68,12 @@ internal class Socks5TlsTransportFactory(
 
         try {
             rawSocket.connect(InetSocketAddress(socksHost, socksPort), timeoutMs)
-            Socks5Protocol.connectNoAuth(
+            Socks5Protocol.connect(
                 input = rawSocket.getInputStream(),
                 output = rawSocket.getOutputStream(),
                 targetHost = host,
                 targetPort = port,
+                credentials = credentials,
             )
 
             val sslSocket = trustAllContext().socketFactory.createSocket(
@@ -113,7 +134,9 @@ internal class Socks5TlsTransportFactory(
 internal object Socks5Protocol {
     private const val VERSION = 0x05
     private const val METHOD_NO_AUTH = 0x00
+    private const val METHOD_USERNAME_PASSWORD = 0x02
     private const val METHOD_NO_ACCEPTABLE = 0xFF
+    private const val AUTH_VERSION = 0x01
     private const val COMMAND_CONNECT = 0x01
     private const val ADDRESS_IPV4 = 0x01
     private const val ADDRESS_DOMAIN = 0x03
@@ -124,11 +147,20 @@ internal object Socks5Protocol {
         output: OutputStream,
         targetHost: String,
         targetPort: Int,
+    ) = connect(input, output, targetHost, targetPort, credentials = null)
+
+    fun connect(
+        input: InputStream,
+        output: OutputStream,
+        targetHost: String,
+        targetPort: Int,
+        credentials: Socks5Credentials?,
     ) {
         require(targetHost.isNotBlank()) { "SOCKS target host must not be blank" }
         require(targetPort in 1..65535) { "SOCKS target port out of range: $targetPort" }
 
-        output.write(byteArrayOf(VERSION.toByte(), 0x01, METHOD_NO_AUTH.toByte()))
+        val requestedMethod = if (credentials == null) METHOD_NO_AUTH else METHOD_USERNAME_PASSWORD
+        output.write(byteArrayOf(VERSION.toByte(), 0x01, requestedMethod.toByte()))
         output.flush()
 
         val greetingVersion = readUnsignedByte(input)
@@ -139,9 +171,11 @@ internal object Socks5Protocol {
         if (selectedMethod == METHOD_NO_ACCEPTABLE) {
             throw IOException("SOCKS5 proxy rejected all authentication methods")
         }
-        if (selectedMethod != METHOD_NO_AUTH) {
-            throw IOException("SOCKS5 proxy requires unsupported authentication method: $selectedMethod")
+        if (selectedMethod != requestedMethod) {
+            throw IOException("SOCKS5 proxy selected unexpected authentication method: $selectedMethod")
         }
+
+        if (credentials != null) authenticateUsernamePassword(input, output, credentials)
 
         output.write(buildConnectRequest(targetHost, targetPort))
         output.flush()
@@ -160,6 +194,33 @@ internal object Socks5Protocol {
 
         if (responseCode != 0x00) {
             throw Socks5ConnectException(responseCode, replyDescription(responseCode))
+        }
+    }
+
+    private fun authenticateUsernamePassword(
+        input: InputStream,
+        output: OutputStream,
+        credentials: Socks5Credentials,
+    ) {
+        val username = credentials.username.toByteArray(Charsets.UTF_8)
+        val password = credentials.password.toByteArray(Charsets.UTF_8)
+        val request = ByteArray(3 + username.size + password.size)
+        request[0] = AUTH_VERSION.toByte()
+        request[1] = username.size.toByte()
+        username.copyInto(request, destinationOffset = 2)
+        val passwordLengthIndex = 2 + username.size
+        request[passwordLengthIndex] = password.size.toByte()
+        password.copyInto(request, destinationOffset = passwordLengthIndex + 1)
+        output.write(request)
+        output.flush()
+
+        val version = readUnsignedByte(input)
+        val status = readUnsignedByte(input)
+        if (version != AUTH_VERSION) {
+            throw IOException("SOCKS5 username/password auth returned unexpected version: $version")
+        }
+        if (status != 0x00) {
+            throw IOException("SOCKS5 username/password authentication failed")
         }
     }
 
