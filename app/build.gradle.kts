@@ -12,7 +12,22 @@ fun gitCommitSha(): String = runCatching {
     if (process.waitFor() == 0 && output.isNotBlank()) output else "unknown"
 }.getOrElse { "unknown" }
 
+fun sha256(file: File): String {
+    val digest = java.security.MessageDigest.getInstance("SHA-256")
+    file.inputStream().buffered().use { input ->
+        val buffer = ByteArray(128 * 1024)
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            if (read > 0) digest.update(buffer, 0, read)
+        }
+    }
+    return digest.digest().joinToString(separator = "") { byte -> "%02x".format(byte) }
+}
+
 val privateLibXrayAar = file("libs/libXray.aar")
+val pinnedLibXrayTag = "v26.7.28"
+val pinnedLibXrayAarSha256 = "4708a361a74f7e955635dbe3661cefb459bdc867423c3b1826a2c5a6ea4ac77d"
 
 android {
     namespace = "com.flowseal.tgwsandroid"
@@ -96,6 +111,25 @@ android {
     }
 }
 
+val verifyPrivateLibXrayAar by tasks.registering {
+    group = "verification"
+    description = "Verify the pinned official libXray AAR required by privateSideload."
+
+    doLast {
+        check(privateLibXrayAar.isFile) {
+            "Missing app/libs/libXray.aar for privateSideload. Run .\\tools\\build-libxray.ps1 first (pinned $pinnedLibXrayTag)."
+        }
+        val actual = sha256(privateLibXrayAar)
+        check(actual.equals(pinnedLibXrayAarSha256, ignoreCase = true)) {
+            "Unexpected libXray.aar SHA-256 for $pinnedLibXrayTag. Expected $pinnedLibXrayAarSha256, got $actual. Delete app/libs/libXray.aar and rerun .\\tools\\build-libxray.ps1 -Force."
+        }
+    }
+}
+
+tasks.matching { it.name == "prePrivateSideloadBuild" }.configureEach {
+    dependsOn(verifyPrivateLibXrayAar)
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("com.google.android.material:material:1.12.0")
@@ -107,8 +141,8 @@ dependencies {
 
     // libXray is deliberately local and pinned by tools/build-libxray.ps1 instead
     // of being fetched implicitly during Gradle configuration. This keeps normal
-    // builds reproducible and allows privateSideload to compile even before the
-    // native proof-of-concept artifact has been prepared.
+    // builds reproducible and lets us verify the exact official release AAR before
+    // the private APK is assembled.
     if (privateLibXrayAar.exists()) {
         add("privateSideloadImplementation", files(privateLibXrayAar))
     }
