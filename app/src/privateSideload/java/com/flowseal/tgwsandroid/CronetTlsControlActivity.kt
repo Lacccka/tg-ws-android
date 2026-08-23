@@ -13,6 +13,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.flowseal.tgwsandroid.proxy.TracedTlsDiagnosticTimeoutException
+import com.flowseal.tgwsandroid.proxy.TracedTrustAllTlsTransportFactory
 import org.chromium.net.CronetEngine
 import org.chromium.net.CronetException
 import org.chromium.net.CronetProvider
@@ -31,9 +33,13 @@ import kotlin.system.measureTimeMillis
  * Private-sideload control that compares the app's failing Android SSLSocket
  * path with a native app-packaged Chromium/Cronet network stack.
  *
- * QUIC and HTTP/2 are disabled deliberately: a successful response here proves
- * that Chromium can complete a conventional TCP -> TLS -> HTTP/1.1 path on the
- * same mobile network. This activity does not alter production proxy routing.
+ * The SSLSocket baseline resolves cloudflare.com normally instead of pinning a
+ * Cloudflare IP that was obtained for another zone. This removes cross-zone IP
+ * pinning as a confounder before comparing TLS/network-stack behavior.
+ *
+ * QUIC and HTTP/2 are disabled deliberately: a successful Cronet response here
+ * proves that Chromium can complete a conventional TCP -> TLS -> HTTP/1.1 path.
+ * This activity does not alter production proxy routing.
  */
 class CronetTlsControlActivity : Activity() {
     private lateinit var networkText: TextView
@@ -48,7 +54,7 @@ class CronetTlsControlActivity : Activity() {
         resultText = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             setTextIsSelectable(true)
-            text = "Сравнивает native Chromium/Cronet с текущим Android SSLSocket path.\n\n" +
+            text = "Сравнивает normal-DNS Android SSLSocket baseline с native Chromium/Cronet.\n\n" +
                 "QUIC выключен, HTTP/2 выключен, production routing не меняется."
         }
         runButton = Button(this).apply {
@@ -74,7 +80,7 @@ class CronetTlsControlActivity : Activity() {
                 typeface = Typeface.DEFAULT_BOLD
             }, matchWrap())
             addView(TextView(this@CronetTlsControlActivity).apply {
-                text = "Если cloudflare.com отвечает через native Cronet, а SSLSocket на этой же сети зависает в TLS, различие находится в TLS/network stack, а не в TCP-доступности Cloudflare."
+                text = "Сначала проверяет cloudflare.com через обычный Android SSLSocket и собственный DNS домена, затем те же классы hostname через native Cronet."
             }, matchWrap(gap))
             addView(networkText, matchWrap(gap))
             addView(runButton, matchWrap(gap))
@@ -100,13 +106,14 @@ class CronetTlsControlActivity : Activity() {
             val lines = mutableListOf(
                 "SE Chromium/Cronet TLS control diagnostics",
                 "Network: $network",
-                "Transport: app-packaged native Cronet/Chromium",
-                "QUIC: disabled",
-                "HTTP/2: disabled",
-                "HTTP cache: disabled",
-                "Certificate verification: Chromium default validation",
-                "Request watchdog: ${REQUEST_WATCHDOG_MS}ms",
-                "Goal: compare Chromium TCP/TLS/HTTP stack with failing Android SSLSocket TLS path",
+                "Android baseline: production/upstream trust-all SSLSocket with normal hostname DNS",
+                "Cronet transport: app-packaged native Cronet/Chromium",
+                "Cronet QUIC: disabled",
+                "Cronet HTTP/2: disabled",
+                "Cronet HTTP cache: disabled",
+                "Cronet certificate verification: Chromium default validation",
+                "TLS/request timeout: ${TLS_TIMEOUT_MS}ms / ${REQUEST_WATCHDOG_MS}ms watchdog",
+                "Goal: separate cross-zone IP pinning, SNI/hostname effects, and TLS/network-stack differences",
                 "",
             )
 
@@ -116,8 +123,12 @@ class CronetTlsControlActivity : Activity() {
             }
 
             try {
+                val rawCloudflareOk = runRawCloudflareBaseline(lines)
+                publish(lines)
+
                 val providers = CronetProvider.getAllProviders(applicationContext)
-                lines += "=== Providers ==="
+                lines += ""
+                lines += "=== Cronet providers ==="
                 providers.forEach { provider ->
                     val version = runCatching { provider.version }.getOrElse { "<error:${it::class.java.simpleName}>" }
                     val enabled = runCatching { provider.isEnabled }.getOrDefault(false)
@@ -147,6 +158,8 @@ class CronetTlsControlActivity : Activity() {
                 var headersReached = 0
                 var failures = 0
                 var watchdogTimeouts = 0
+                var cronetCloudflareOk = false
+                var cronetProxyHostOk = false
 
                 for (target in TARGETS) {
                     lines += ""
@@ -158,6 +171,8 @@ class CronetTlsControlActivity : Activity() {
                     when (outcome.kind) {
                         OutcomeKind.HTTP_HEADERS -> {
                             headersReached += 1
+                            if (target.kind == TargetKind.BENIGN_CLOUDFLARE) cronetCloudflareOk = true
+                            if (target.kind == TargetKind.PROXY_HOST) cronetProxyHostOk = true
                             lines += "OK   Chromium reached HTTP headers (${outcome.elapsedMs}ms)"
                             lines += "status=${outcome.statusCode} protocol=${outcome.protocol.ifBlank { "unknown" }} proxy=${outcome.proxy.ifBlank { "none" }}"
                             outcome.detail.takeIf { it.isNotBlank() }?.let { lines += it }
@@ -178,13 +193,18 @@ class CronetTlsControlActivity : Activity() {
 
                 lines += ""
                 lines += "RESULT: CHROMIUM/CRONET TLS CONTROL COMPLETE"
-                lines += "HTTP headers reached: $headersReached/${TARGETS.size}"
+                lines += "Android SSLSocket cloudflare.com normal-DNS TLS: ${if (rawCloudflareOk) "OK" else "FAIL"}"
+                lines += "Cronet cloudflare.com HTTP headers: ${if (cronetCloudflareOk) "OK" else "FAIL"}"
+                lines += "Cronet proxy-host HTTP headers: ${if (cronetProxyHostOk) "OK" else "FAIL"}"
+                lines += "Cronet HTTP headers reached: $headersReached/${TARGETS.size}"
                 lines += "Cronet failures: $failures"
-                lines += "Watchdog timeouts: $watchdogTimeouts"
+                lines += "Cronet watchdog timeouts: $watchdogTimeouts"
                 lines += when {
-                    headersReached > 0 -> "VERDICT: native Chromium/Cronet can complete at least one TCP/TLS/HTTP path on this network while the Android SSLSocket Cloudflare controls time out. Investigate Chromium TLS/ECH/fingerprint behavior as a transport candidate instead of rotating SNI domains."
-                    failures > 0 -> "VERDICT: native Chromium/Cronet also fails before HTTP headers. Inspect Cronet error/internal codes; changing only the Java TLS implementation is unlikely to be sufficient."
-                    else -> "VERDICT: native Chromium/Cronet produced no HTTP headers within the watchdog window."
+                    !rawCloudflareOk && cronetCloudflareOk -> "VERDICT: clean normal-DNS control isolates a network-stack difference: Android SSLSocket cannot complete benign Cloudflare TLS while native Chromium/Cronet can. Chromium TLS behavior is a concrete transport candidate; do not rotate SNI domains again."
+                    rawCloudflareOk && !cronetProxyHostOk -> "VERDICT: Android SSLSocket itself can complete benign Cloudflare TLS when cloudflare.com uses its own DNS. The earlier same-edge benign control was confounded by cross-zone IP pinning; proxy/Worker hostname behavior remains the differentiator."
+                    rawCloudflareOk && cronetProxyHostOk -> "VERDICT: both benign Android TLS and the proxy hostname work through the clean/native controls. Investigate how to reuse the successful Chromium request path for WebSocket/MTProto instead of changing Cloudflare domains."
+                    !rawCloudflareOk && !cronetCloudflareOk -> "VERDICT: both Android SSLSocket and native Chromium fail to reach benign Cloudflare over conventional TCP/TLS on this network. A simple TLS-library swap is unlikely to solve the mobile path."
+                    else -> "VERDICT: mixed result; use the per-target Cronet error/internal codes before choosing a production transport."
                 }
             } catch (error: Throwable) {
                 lines += ""
@@ -194,6 +214,38 @@ class CronetTlsControlActivity : Activity() {
                 executor.shutdownNow()
                 finish(lines)
             }
+        }
+    }
+
+    private fun runRawCloudflareBaseline(lines: MutableList<String>): Boolean {
+        lines += "=== Android SSLSocket benign normal-DNS baseline ==="
+        lines += "host=cloudflare.com:443 sni=cloudflare.com (no edge-IP pinning)"
+        val trace = mutableListOf<String>()
+        val factory = TracedTrustAllTlsTransportFactory.traced { event ->
+            synchronized(trace) { trace += event }
+        }
+
+        return try {
+            val elapsed = measureTimeMillis {
+                val transport = factory.connect(
+                    "cloudflare.com",
+                    443,
+                    "cloudflare.com",
+                    TLS_TIMEOUT_MS,
+                )
+                transport.close()
+            }
+            synchronized(trace) { trace.forEach { lines += "TRACE $it" } }
+            lines += "OK   Android SSLSocket TLS completed (${elapsed}ms)"
+            true
+        } catch (error: TracedTlsDiagnosticTimeoutException) {
+            synchronized(trace) { trace.forEach { lines += "TRACE $it" } }
+            lines += "FAIL Android SSLSocket [${error.stage}]: ${errorSummary(error)}"
+            false
+        } catch (error: Throwable) {
+            synchronized(trace) { trace.forEach { lines += "TRACE $it" } }
+            lines += "FAIL Android SSLSocket: ${errorSummary(error)}"
+            false
         }
     }
 
@@ -369,7 +421,14 @@ class CronetTlsControlActivity : Activity() {
     private data class Target(
         val label: String,
         val url: String,
+        val kind: TargetKind,
     )
+
+    private enum class TargetKind {
+        BENIGN_CLOUDFLARE,
+        ZONE_ROOT,
+        PROXY_HOST,
+    }
 
     private data class Outcome(
         val kind: OutcomeKind,
@@ -387,11 +446,12 @@ class CronetTlsControlActivity : Activity() {
     }
 
     companion object {
+        private const val TLS_TIMEOUT_MS = 10_000
         private const val REQUEST_WATCHDOG_MS = 12_000L
         private val TARGETS = listOf(
-            Target("benign Cloudflare", "https://cloudflare.com/"),
-            Target("CF proxy zone root", "https://pclead.co.uk/"),
-            Target("CF proxy Telegram hostname", "https://kws2.pclead.co.uk/apiws"),
+            Target("benign Cloudflare", "https://cloudflare.com/", TargetKind.BENIGN_CLOUDFLARE),
+            Target("CF proxy zone root", "https://pclead.co.uk/", TargetKind.ZONE_ROOT),
+            Target("CF proxy Telegram hostname", "https://kws2.pclead.co.uk/apiws", TargetKind.PROXY_HOST),
         )
     }
 }
