@@ -3,6 +3,8 @@ package com.flowseal.tgwsandroid.proxy
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.net.IDN
+import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.security.SecureRandom
@@ -16,10 +18,10 @@ import javax.net.ssl.X509TrustManager
 /**
  * RawWebSocket transport that reaches the upstream through a local SOCKS5 proxy.
  *
- * The SOCKS request always uses ATYP=DOMAIN, even for hostname targets that could
- * be resolved locally. This deliberately keeps upstream DNS resolution inside the
- * tunnel (for example an embedded Xray VLESS/REALITY outbound) instead of leaking
- * or depending on the mobile network's resolver.
+ * Hostname targets are encoded as ATYP=DOMAIN so upstream DNS resolution happens
+ * inside the tunnel (for example an embedded Xray VLESS/REALITY outbound), not on
+ * the mobile network. Literal IPv4/IPv6 targets are encoded as numeric SOCKS
+ * addresses and therefore need no DNS at all.
  *
  * TLS is established only after SOCKS CONNECT succeeds and mirrors the existing
  * upstream-parity trust-all behavior used by [TrustAllTlsTransportFactory].
@@ -113,7 +115,9 @@ internal object Socks5Protocol {
     private const val METHOD_NO_AUTH = 0x00
     private const val METHOD_NO_ACCEPTABLE = 0xFF
     private const val COMMAND_CONNECT = 0x01
+    private const val ADDRESS_IPV4 = 0x01
     private const val ADDRESS_DOMAIN = 0x03
+    private const val ADDRESS_IPV6 = 0x04
 
     fun connectNoAuth(
         input: InputStream,
@@ -121,9 +125,7 @@ internal object Socks5Protocol {
         targetHost: String,
         targetPort: Int,
     ) {
-        val hostBytes = targetHost.toByteArray(Charsets.UTF_8)
-        require(hostBytes.isNotEmpty()) { "SOCKS target host must not be blank" }
-        require(hostBytes.size <= 255) { "SOCKS target host is too long: ${hostBytes.size} bytes" }
+        require(targetHost.isNotBlank()) { "SOCKS target host must not be blank" }
         require(targetPort in 1..65535) { "SOCKS target port out of range: $targetPort" }
 
         output.write(byteArrayOf(VERSION.toByte(), 0x01, METHOD_NO_AUTH.toByte()))
@@ -141,16 +143,7 @@ internal object Socks5Protocol {
             throw IOException("SOCKS5 proxy requires unsupported authentication method: $selectedMethod")
         }
 
-        val request = ByteArray(7 + hostBytes.size)
-        request[0] = VERSION.toByte()
-        request[1] = COMMAND_CONNECT.toByte()
-        request[2] = 0x00
-        request[3] = ADDRESS_DOMAIN.toByte()
-        request[4] = hostBytes.size.toByte()
-        hostBytes.copyInto(request, destinationOffset = 5)
-        request[5 + hostBytes.size] = ((targetPort ushr 8) and 0xFF).toByte()
-        request[6 + hostBytes.size] = (targetPort and 0xFF).toByte()
-        output.write(request)
+        output.write(buildConnectRequest(targetHost, targetPort))
         output.flush()
 
         val responseVersion = readUnsignedByte(input)
@@ -170,11 +163,61 @@ internal object Socks5Protocol {
         }
     }
 
+    internal fun buildConnectRequest(targetHost: String, targetPort: Int): ByteArray {
+        require(targetHost.isNotBlank()) { "SOCKS target host must not be blank" }
+        require(targetPort in 1..65535) { "SOCKS target port out of range: $targetPort" }
+
+        val address = encodeTargetAddress(targetHost)
+        val request = ByteArray(4 + address.payload.size + 2)
+        request[0] = VERSION.toByte()
+        request[1] = COMMAND_CONNECT.toByte()
+        request[2] = 0x00
+        request[3] = address.type.toByte()
+        address.payload.copyInto(request, destinationOffset = 4)
+        request[request.lastIndex - 1] = ((targetPort ushr 8) and 0xFF).toByte()
+        request[request.lastIndex] = (targetPort and 0xFF).toByte()
+        return request
+    }
+
+    private fun encodeTargetAddress(host: String): EncodedAddress {
+        parseIpv4(host)?.let { return EncodedAddress(ADDRESS_IPV4, it) }
+
+        if (host.contains(':')) {
+            val ipv6 = runCatching { InetAddress.getByName(host).address }
+                .getOrNull()
+                ?.takeIf { it.size == 16 }
+            if (ipv6 != null) return EncodedAddress(ADDRESS_IPV6, ipv6)
+        }
+
+        val asciiHost = runCatching { IDN.toASCII(host) }
+            .getOrElse { throw IllegalArgumentException("Invalid SOCKS target hostname: $host", it) }
+        val hostBytes = asciiHost.toByteArray(Charsets.US_ASCII)
+        require(hostBytes.isNotEmpty()) { "SOCKS target host must not be blank" }
+        require(hostBytes.size <= 255) { "SOCKS target host is too long: ${hostBytes.size} bytes" }
+        return EncodedAddress(
+            ADDRESS_DOMAIN,
+            byteArrayOf(hostBytes.size.toByte()) + hostBytes,
+        )
+    }
+
+    private fun parseIpv4(host: String): ByteArray? {
+        val parts = host.split('.')
+        if (parts.size != 4) return null
+        val bytes = ByteArray(4)
+        for ((index, part) in parts.withIndex()) {
+            if (part.isEmpty() || part.any { !it.isDigit() }) return null
+            val value = part.toIntOrNull() ?: return null
+            if (value !in 0..255) return null
+            bytes[index] = value.toByte()
+        }
+        return bytes
+    }
+
     private fun consumeBoundAddress(input: InputStream, addressType: Int) {
         when (addressType) {
-            0x01 -> readExact(input, 4)
-            0x03 -> readExact(input, readUnsignedByte(input))
-            0x04 -> readExact(input, 16)
+            ADDRESS_IPV4 -> readExact(input, 4)
+            ADDRESS_DOMAIN -> readExact(input, readUnsignedByte(input))
+            ADDRESS_IPV6 -> readExact(input, 16)
             else -> throw IOException("SOCKS5 CONNECT returned unsupported address type: $addressType")
         }
     }
@@ -207,6 +250,11 @@ internal object Socks5Protocol {
         0x08 -> "address type not supported"
         else -> "unknown SOCKS5 error"
     }
+
+    private data class EncodedAddress(
+        val type: Int,
+        val payload: ByteArray,
+    )
 }
 
 internal class Socks5ConnectException(
