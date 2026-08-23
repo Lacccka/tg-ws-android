@@ -38,24 +38,24 @@ class DiagnosticsHubActivity : Activity() {
             }, matchWrap())
 
             addView(TextView(this@DiagnosticsHubActivity).apply {
-                text = "Один вход для private-sideload сетевых экспериментов. Старые probes сохранены, но больше не создают отдельные иконки приложения."
+                text = "Один вход для private-sideload сетевых экспериментов. Активный transport prototype не требует собственного сервера или VPN."
             }, matchWrap(gap))
 
             addSection("Актуальные", gap)
             addProbeButton(
-                label = "VLESS/REALITY tunnel E2E",
-                description = "Новый основной prototype: libXray → local SOCKS5 → существующий RawWebSocket → Telegram. Без Android VPN и без изменения production routing.",
-                target = XrayTunnelE2eActivity::class.java,
-                gap = gap,
-            )
-            addProbeButton(
-                label = "Chromium/Cronet transport control",
-                description = "Закрывающий Cloudflare control: сравнивает обычный TCP/TLS и QUIC/HTTP3 через native Chromium/Cronet.",
-                target = CronetTlsControlActivity::class.java,
+                label = "Snowflake/Tor tunnel E2E",
+                description = "Zero-config prototype: публичный Snowflake → embedded Tor SOCKS → SocksRawWebSocketConnector → Telegram. Без VPS, VLESS, пользовательского bridge и Android VPN.",
+                target = SnowflakeTorE2eActivity::class.java,
                 gap = gap,
             )
 
             addSection("Архивные / точечные", gap)
+            addProbeButton(
+                label = "Chromium/Cronet transport control",
+                description = "Закрытый Cloudflare control: обычный TCP/TLS и QUIC/HTTP3 через native Chromium/Cronet. На исследованной мобильной сети оба пути не дали HTTP headers.",
+                target = CronetTlsControlActivity::class.java,
+                gap = gap,
+            )
             addProbeButton(
                 label = "CF proxy matrix",
                 description = "Проверяет CF-proxy IPv4/IPv6, TLS stage и same-edge SNI controls.",
