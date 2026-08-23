@@ -244,6 +244,9 @@ class ProxyForegroundService : Service() {
                     // Best-effort cleanup after a partial start failure.
                 }
                 proxyServer = null
+                torFallbackRuntime = null
+                runCatching { runtime?.stop() }
+                    .onFailure { State.addLog("Tor/Snowflake cleanup after start failure failed: ${it.javaClass.simpleName}: ${it.message.orEmpty()}", LogSeverity.WARN, "service") }
                 State.setLiveStatsProvider(null)
                 State.updateStats(null)
                 State.setRunning(false, "proxy start failed with exception: ${error.message ?: error::class.java.simpleName}")
@@ -280,7 +283,6 @@ class ProxyForegroundService : Service() {
         val torRuntime = synchronized(lock) {
             torFallbackRuntime.also { torFallbackRuntime = null }
         }
-        torRuntime?.stop()
         if (server != null) {
             try {
                 server.stop()
@@ -289,6 +291,8 @@ class ProxyForegroundService : Service() {
                 State.addLog("Proxy stop failed: ${error.message ?: error::class.java.simpleName}", LogSeverity.WARN, "service")
             }
         }
+        runCatching { torRuntime?.stop() }
+            .onFailure { State.addLog("Tor/Snowflake stop failed: ${it.javaClass.simpleName}: ${it.message.orEmpty()}", LogSeverity.WARN, "service") }
         telemetryAggregator.flushOnStop()
         sendQueuedTelemetrySnapshots()
         releaseWakeLock()
@@ -602,6 +606,8 @@ class ProxyForegroundService : Service() {
             "cfPoolRefillAttempts=${stats.cfPoolRefillAttempts} cfPoolRefillSuccesses=${stats.cfPoolRefillSuccesses} " +
             "cfPoolRefillErrors=${stats.cfPoolRefillErrors} cfPoolStale=${stats.cfPoolStale} " +
             "cfPoolLastDomainByKey=${compactMap(stats.cfPoolLastDomainByKey)} " +
+            "torSnowflake=${stats.torSnowflakeSuccesses}/${stats.torSnowflakeAttempts}/${stats.torSnowflakeFailures} " +
+            "torUnavailable=${stats.torSnowflakeUnavailable} " +
             "directHealth=${stats.directHealthState} route=${stats.effectiveRouteMode} lastRoute=${stats.lastRouteUsed ?: "none"}"
     }
 
