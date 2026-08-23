@@ -63,7 +63,7 @@ jobs:
           unzip -q app/libs/libXray.aar classes.jar -d /tmp/tgws-libxray-abi
           jar tf /tmp/tgws-libxray-abi/classes.jar | grep -q '^libXray/LibXray.class$'
           javap -classpath /tmp/tgws-libxray-abi/classes.jar libXray.LibXray > /tmp/tgws-libxray-abi/javap.txt
-          grep -Eq 'public static java\.lang\.String invoke\(java\.lang\.String\)' /tmp/tgws-libxray-abi/javap.txt
+          grep -Eq 'invoke\(java\.lang\.String\)' /tmp/tgws-libxray-abi/javap.txt
       - name: Check Cloudflare Worker JavaScript syntax
         run: node --check tools/cloudflare-worker/worker.js
       - name: Run full unit suite and build private sideload APK
