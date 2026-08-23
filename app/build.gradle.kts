@@ -1,5 +1,3 @@
-import java.security.MessageDigest
-
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,23 +11,6 @@ fun gitCommitSha(): String = runCatching {
     val output = process.inputStream.bufferedReader().readText().trim()
     if (process.waitFor() == 0 && output.isNotBlank()) output else "unknown"
 }.getOrElse { "unknown" }
-
-fun sha256(file: File): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-    file.inputStream().buffered().use { input ->
-        val buffer = ByteArray(128 * 1024)
-        while (true) {
-            val read = input.read(buffer)
-            if (read < 0) break
-            if (read > 0) digest.update(buffer, 0, read)
-        }
-    }
-    return digest.digest().joinToString(separator = "") { byte: Byte -> "%02x".format(byte) }
-}
-
-val privateLibXrayAar = file("libs/libXray.aar")
-val pinnedLibXrayTag = "v26.7.28"
-val pinnedLibXrayAarSha256 = "4708a361a74f7e955635dbe3661cefb459bdc867423c3b1826a2c5a6ea4ac77d"
 
 android {
     namespace = "com.flowseal.tgwsandroid"
@@ -52,6 +33,7 @@ android {
         buildConfigField("String", "TELEMETRY_TOKEN", "\"${providers.gradleProperty("TELEMETRY_TOKEN").orNull ?: ""}\"")
         buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
         buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
+        buildConfigField("Boolean", "SNOWFLAKE_TOR_PACKAGED", "false")
     }
 
     buildTypes {
@@ -60,6 +42,7 @@ android {
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
             buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
+            buildConfigField("Boolean", "SNOWFLAKE_TOR_PACKAGED", "false")
         }
 
         getByName("release") {
@@ -67,6 +50,7 @@ android {
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
             buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
+            buildConfigField("Boolean", "SNOWFLAKE_TOR_PACKAGED", "false")
         }
 
         create("sideload") {
@@ -76,6 +60,7 @@ android {
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"specialUse\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
             buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
+            buildConfigField("Boolean", "SNOWFLAKE_TOR_PACKAGED", "false")
         }
 
         create("privateSideload") {
@@ -85,13 +70,12 @@ android {
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"specialUse\"")
             buildConfigField("String", "BUILD_FLAVOR_NAME", "\"privateSideload\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "true")
-            buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", privateLibXrayAar.exists().toString())
+            buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
+            buildConfigField("Boolean", "SNOWFLAKE_TOR_PACKAGED", "true")
 
-            // This build type is an on-device diagnostic for the current physical
-            // ARM64 test phone. Keeping only arm64-v8a prevents the large native
-            // Cronet + libXray payload from packaging unused x86/x86_64/32-bit
-            // binaries into a single APK. Normal debug/release/sideload builds
-            // remain ABI-unrestricted.
+            // The private diagnostic APK targets the physical ARM64 test phone.
+            // Restricting ABI keeps native Cronet, tor-android and IPtProxy from
+            // multiplying APK size with unused emulator/32-bit binaries.
             ndk {
                 abiFilters.clear()
                 abiFilters += "arm64-v8a"
@@ -113,41 +97,21 @@ android {
     }
 }
 
-val verifyPrivateLibXrayAar by tasks.registering {
-    group = "verification"
-    description = "Verify the pinned official libXray AAR required by privateSideload."
-
-    doLast {
-        check(privateLibXrayAar.isFile) {
-            "Missing app/libs/libXray.aar for privateSideload. Run .\\tools\\build-libxray.ps1 first (pinned $pinnedLibXrayTag)."
-        }
-        val actual = sha256(privateLibXrayAar)
-        check(actual.equals(pinnedLibXrayAarSha256, ignoreCase = true)) {
-            "Unexpected libXray.aar SHA-256 for $pinnedLibXrayTag. Expected $pinnedLibXrayAarSha256, got $actual. Delete app/libs/libXray.aar and rerun .\\tools\\build-libxray.ps1 -Force."
-        }
-    }
-}
-
-tasks.matching { it.name == "prePrivateSideloadBuild" }.configureEach {
-    dependsOn(verifyPrivateLibXrayAar)
-}
-
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("com.google.android.material:material:1.12.0")
 
-    // Private diagnostic only: package the native Chromium network stack so the
-    // Huawei/mobile-network control does not depend on Google Play Services and
-    // does not increase normal debug/release/sideload APKs.
+    // Private diagnostic only: native Chromium remains available for the closed
+    // Cloudflare control, but is not included in normal builds.
     add("privateSideloadImplementation", "org.chromium.net:cronet-bundled:500.0.1")
 
-    // libXray is deliberately local and pinned by tools/build-libxray.ps1 instead
-    // of being fetched implicitly during Gradle configuration. This keeps normal
-    // builds reproducible and lets us verify the exact official release AAR before
-    // the private APK is assembled.
-    if (privateLibXrayAar.exists()) {
-        add("privateSideloadImplementation", files(privateLibXrayAar))
-    }
+    // Zero-config censorship-circumvention PoC. tor-android exposes an embedded
+    // TorService + local Tor SOCKS port. IPtProxy supplies Snowflake 2.14.1 as a
+    // pluggable transport. Unlike the archived libXray experiment, these do not
+    // require a user-owned VPS, VLESS profile, or local native build artifact.
+    add("privateSideloadImplementation", "info.guardianproject:tor-android:0.4.9.11")
+    add("privateSideloadImplementation", "info.guardianproject:jtorctl:0.4.5.7")
+    add("privateSideloadImplementation", "com.netzarchitekten:IPtProxy:5.5.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
