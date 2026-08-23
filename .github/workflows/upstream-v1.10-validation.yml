@@ -37,6 +37,7 @@ jobs:
           grep -q 'android:foregroundServiceType="specialUse"' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.DiagnosticsHubActivity' "$merged_manifest"
           grep -q 'SE Diagnostics' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.CronetTlsControlActivity' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.CfProxyMatrixActivity' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.WorkerDiagnosticsActivity' "$merged_manifest"
           grep -q 'com.flowseal.tgwsandroid.WorkerPreferredEdgeActivity' "$merged_manifest"
