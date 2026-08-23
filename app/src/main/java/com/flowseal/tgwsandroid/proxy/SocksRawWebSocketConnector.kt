@@ -11,8 +11,9 @@ package com.flowseal.tgwsandroid.proxy
 class SocksRawWebSocketConnector(
     socksHost: String,
     socksPort: Int,
+    credentials: Socks5Credentials? = null,
 ) : RawWebSocketConnector {
-    private val transportFactory = Socks5TlsTransportFactory(socksHost, socksPort)
+    private val transportFactory = Socks5TlsTransportFactory(socksHost, socksPort, credentials)
 
     override fun connect(
         targetHost: String,
