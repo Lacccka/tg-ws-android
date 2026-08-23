@@ -50,7 +50,7 @@ android {
 
         getByName("release") {
             manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
-            buildConfigField("String", "DECLARED_FOREROUND_SERVICE_STRATEGY", "\"dataSync\"")
+            buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
             buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
             buildConfigField("Boolean", "SNOWFLAKE_TOR_PACKAGED", "false")
