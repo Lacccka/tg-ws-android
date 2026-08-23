@@ -43,8 +43,14 @@ class DiagnosticsHubActivity : Activity() {
 
             addSection("Актуальные", gap)
             addProbeButton(
+                label = "Chromium/Cronet TLS control",
+                description = "Сравнивает native Chromium TLS stack с Android SSLSocket на той же мобильной сети. QUIC и HTTP/2 отключены.",
+                target = CronetTlsControlActivity::class.java,
+                gap = gap,
+            )
+            addProbeButton(
                 label = "CF proxy matrix",
-                description = "Проверяет промежуточные CF-proxy домены без прямого TCP к Telegram IP и без workers.dev.",
+                description = "Проверяет CF-proxy IPv4/IPv6, TLS stage и same-edge SNI controls.",
                 target = CfProxyMatrixActivity::class.java,
                 gap = gap,
             )
