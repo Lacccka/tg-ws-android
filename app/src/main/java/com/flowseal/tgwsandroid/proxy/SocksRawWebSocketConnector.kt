@@ -8,12 +8,14 @@ package com.flowseal.tgwsandroid.proxy
  * crypto and BridgeSession stay unchanged while only the upstream dial path is
  * replaced.
  */
-class SocksRawWebSocketConnector(
-    socksHost: String,
-    socksPort: Int,
-    credentials: Socks5Credentials? = null,
+class SocksRawWebSocketConnector internal constructor(
+    private val transportFactory: RawWebSocket.TransportFactory,
 ) : RawWebSocketConnector {
-    private val transportFactory = Socks5TlsTransportFactory(socksHost, socksPort, credentials)
+    constructor(
+        socksHost: String,
+        socksPort: Int,
+        credentials: Socks5Credentials? = null,
+    ) : this(Socks5TlsTransportFactory(socksHost, socksPort, credentials))
 
     override fun connect(
         targetHost: String,
