@@ -29,9 +29,12 @@ import kotlin.concurrent.thread
 import kotlin.system.measureTimeMillis
 
 /**
- * Private-sideload control comparing Android SSLSocket with app-packaged native
- * Chromium/Cronet on the same mobile network. QUIC and HTTP/2 are disabled so a
- * successful Cronet response proves a conventional TCP -> TLS -> HTTP/1.1 path.
+ * Private-sideload transport control comparing:
+ *  1. Android SSLSocket over conventional TCP/TLS,
+ *  2. native Chromium/Cronet over conventional TCP/TLS/HTTP/1.1,
+ *  3. native Chromium/Cronet with QUIC enabled and explicit QUIC hints.
+ *
+ * Production proxy routing is not modified by this activity.
  */
 class CronetTlsControlActivity : Activity() {
     private lateinit var networkText: TextView
@@ -40,17 +43,17 @@ class CronetTlsControlActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        title = "SE Cronet TLS Control"
+        title = "SE Cronet Transport Control"
 
         networkText = TextView(this).apply { text = "Сеть: ${currentNetworkLabel()}" }
         resultText = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             setTextIsSelectable(true)
-            text = "Сравнивает normal-DNS Android SSLSocket baseline с native Chromium/Cronet.\n\n" +
-                "QUIC выключен, HTTP/2 выключен, production routing не меняется."
+            text = "Сравнивает Android SSLSocket, Chromium TCP/TLS и Chromium QUIC/HTTP3.\n\n" +
+                "Production routing не меняется."
         }
         runButton = Button(this).apply {
-            text = "Проверить Chromium/Cronet TLS"
+            text = "Проверить TLS и QUIC"
             isAllCaps = false
             setOnClickListener { runProbe() }
         }
@@ -67,12 +70,12 @@ class CronetTlsControlActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, padding)
             addView(TextView(this@CronetTlsControlActivity).apply {
-                text = "Chromium/Cronet TLS control"
+                text = "Chromium/Cronet transport control"
                 textSize = 24f
                 typeface = Typeface.DEFAULT_BOLD
             }, matchWrap())
             addView(TextView(this@CronetTlsControlActivity).apply {
-                text = "Сначала проверяет cloudflare.com через обычный Android SSLSocket и собственный DNS домена, затем те же классы hostname через native Cronet."
+                text = "Сначала повторяет conventional TCP/TLS control, затем отдельно ищет настоящий HTTP/3 (h3) через QUIC/UDP:443."
             }, matchWrap(gap))
             addView(networkText, matchWrap(gap))
             addView(runButton, matchWrap(gap))
@@ -94,24 +97,24 @@ class CronetTlsControlActivity : Activity() {
         networkText.text = "Сеть: $network"
         runButton.isEnabled = false
 
-        thread(name = "CronetTlsControl") {
+        thread(name = "CronetTransportControl") {
             val lines = mutableListOf(
-                "SE Chromium/Cronet TLS control diagnostics",
+                "SE Chromium/Cronet TLS + QUIC control diagnostics",
                 "Network: $network",
                 "Android baseline: production/upstream trust-all SSLSocket with normal hostname DNS",
                 "Cronet transport: app-packaged native Cronet/Chromium",
-                "Cronet QUIC: disabled",
-                "Cronet HTTP/2: disabled",
-                "Cronet HTTP cache: disabled",
+                "Conventional Cronet: QUIC disabled, HTTP/2 disabled, HTTP cache disabled",
+                "QUIC Cronet: QUIC enabled, HTTP/2 disabled, explicit :443 QUIC hints",
                 "Cronet certificate verification: Chromium default validation",
                 "TLS/request timeout: ${TLS_TIMEOUT_MS}ms / ${REQUEST_WATCHDOG_MS}ms watchdog",
-                "Goal: separate cross-zone IP pinning, SNI/hostname effects, and TLS/network-stack differences",
+                "QUIC success criterion: HTTP headers with negotiated protocol h3*/quic*; HTTP/1.1 is counted only as TCP fallback",
+                "Goal: determine whether UDP/443 + QUIC remains usable when conventional Cloudflare TCP/TLS stalls",
                 "",
             )
 
             var engine: CronetEngine? = null
             val executor = Executors.newSingleThreadExecutor { runnable ->
-                Thread(runnable, "CronetTlsCallback")
+                Thread(runnable, "CronetTransportCallback")
             }
 
             try {
@@ -133,7 +136,7 @@ class CronetTlsControlActivity : Activity() {
                 if (packaged == null) {
                     lines += ""
                     lines += "RESULT: APP-PACKAGED NATIVE CRONET PROVIDER NOT AVAILABLE"
-                    lines += "VERDICT: diagnostic cannot compare Chromium native TLS; do not treat Java fallback as a Chromium-stack result."
+                    lines += "VERDICT: diagnostic cannot compare native Chromium transports."
                     return@thread
                 }
 
@@ -146,56 +149,59 @@ class CronetTlsControlActivity : Activity() {
                     .enableHttpCache(CronetEngine.Builder.HTTP_CACHE_DISABLED, 0)
                     .build()
 
-                var headersReached = 0
-                var failures = 0
-                var watchdogTimeouts = 0
-                var cronetCloudflareOk = false
-                var cronetProxyHostOk = false
+                val conventional = runTargets(
+                    lines = lines,
+                    engine = engine,
+                    executor = executor,
+                    sectionTitle = "CONVENTIONAL TCP/TLS/HTTP1",
+                    targets = CONVENTIONAL_TARGETS,
+                )
 
-                for (target in TARGETS) {
-                    lines += ""
-                    lines += "=== ${target.label} ==="
-                    lines += "URL: ${target.url}"
-                    publish(lines)
-
-                    val outcome = executeRequest(engine, executor, target.url)
-                    when (outcome.kind) {
-                        OutcomeKind.HTTP_HEADERS -> {
-                            headersReached += 1
-                            if (target.kind == TargetKind.BENIGN_CLOUDFLARE) cronetCloudflareOk = true
-                            if (target.kind == TargetKind.PROXY_HOST) cronetProxyHostOk = true
-                            lines += "OK   Chromium reached HTTP headers (${outcome.elapsedMs}ms)"
-                            lines += "status=${outcome.statusCode} protocol=${outcome.protocol.ifBlank { "unknown" }} proxy=${outcome.proxy.ifBlank { "none" }}"
-                            outcome.detail.takeIf { it.isNotBlank() }?.let { lines += it }
-                        }
-
-                        OutcomeKind.FAILURE -> {
-                            failures += 1
-                            lines += "FAIL Chromium request (${outcome.elapsedMs}ms): ${outcome.detail}"
-                        }
-
-                        OutcomeKind.WATCHDOG_TIMEOUT -> {
-                            watchdogTimeouts += 1
-                            lines += "FAIL Chromium watchdog timeout after ${outcome.elapsedMs}ms before HTTP headers"
-                        }
-                    }
-                    publish(lines)
-                }
+                runCatching { engine.shutdown() }
+                engine = null
 
                 lines += ""
-                lines += "RESULT: CHROMIUM/CRONET TLS CONTROL COMPLETE"
+                lines += "=== QUIC / HTTP3 CONTROL ==="
+                lines += "QUIC hints force an immediate QUIC attempt; only negotiated h3*/quic* is accepted as proof that UDP/443 works."
+                publish(lines)
+
+                engine = packaged.createBuilder()
+                    .enableQuic(true)
+                    .enableHttp2(false)
+                    .enableHttpCache(CronetEngine.Builder.HTTP_CACHE_DISABLED, 0)
+                    .addQuicHint("cloudflare-quic.com", 443, 443)
+                    .addQuicHint("cloudflare.com", 443, 443)
+                    .addQuicHint("kws2.pclead.co.uk", 443, 443)
+                    .build()
+
+                val quic = runTargets(
+                    lines = lines,
+                    engine = engine,
+                    executor = executor,
+                    sectionTitle = "QUIC ENABLED",
+                    targets = QUIC_TARGETS,
+                )
+
+                val quicProof = quic.h3HeadersReached > 0
+                val benignQuicProof = quic.h3Labels.any { it == TargetKind.QUIC_REFERENCE || it == TargetKind.BENIGN_CLOUDFLARE }
+                val proxyQuicProof = quic.h3Labels.any { it == TargetKind.PROXY_HOST }
+
+                lines += ""
+                lines += "RESULT: CHROMIUM/CRONET TRANSPORT CONTROL COMPLETE"
                 lines += "Android SSLSocket cloudflare.com normal-DNS TLS: ${if (rawCloudflareOk) "OK" else "FAIL"}"
-                lines += "Cronet cloudflare.com HTTP headers: ${if (cronetCloudflareOk) "OK" else "FAIL"}"
-                lines += "Cronet proxy-host HTTP headers: ${if (cronetProxyHostOk) "OK" else "FAIL"}"
-                lines += "Cronet HTTP headers reached: $headersReached/${TARGETS.size}"
-                lines += "Cronet failures: $failures"
-                lines += "Cronet watchdog timeouts: $watchdogTimeouts"
+                lines += "Conventional Cronet HTTP headers: ${conventional.headersReached}/${CONVENTIONAL_TARGETS.size}"
+                lines += "Conventional Cronet watchdog timeouts: ${conventional.watchdogTimeouts}"
+                lines += "QUIC-enabled HTTP headers: ${quic.headersReached}/${QUIC_TARGETS.size}"
+                lines += "Confirmed h3/quic responses: ${quic.h3HeadersReached}/${QUIC_TARGETS.size}"
+                lines += "QUIC TCP-fallback responses: ${quic.tcpFallbackHeadersReached}"
+                lines += "QUIC failures: ${quic.failures}; watchdog timeouts: ${quic.watchdogTimeouts}"
+                lines += "Benign/reference QUIC proof: ${if (benignQuicProof) "YES" else "NO"}"
+                lines += "Proxy-host QUIC proof: ${if (proxyQuicProof) "YES" else "NO"}"
                 lines += when {
-                    !rawCloudflareOk && cronetCloudflareOk -> "VERDICT: clean normal-DNS control isolates a network-stack difference: Android SSLSocket cannot complete benign Cloudflare TLS while native Chromium/Cronet can. Chromium TLS behavior is a concrete transport candidate; do not rotate SNI domains again."
-                    rawCloudflareOk && !cronetProxyHostOk -> "VERDICT: Android SSLSocket can complete benign Cloudflare TLS with cloudflare.com's own DNS. Proxy/Worker hostname behavior remains the differentiator."
-                    rawCloudflareOk && cronetProxyHostOk -> "VERDICT: both benign Android TLS and the proxy hostname work through the clean/native controls. Investigate reusing the successful Chromium path for WebSocket/MTProto."
-                    !rawCloudflareOk && !cronetCloudflareOk -> "VERDICT: both Android SSLSocket and native Chromium fail to reach benign Cloudflare over conventional TCP/TLS on this network. A simple TLS-library swap is unlikely to solve the mobile path."
-                    else -> "VERDICT: mixed result; use the per-target Cronet error/internal codes before choosing a production transport."
+                    !rawCloudflareOk && quicProof -> "VERDICT: conventional TCP/TLS is unusable on this mobile path, but QUIC/UDP:443 works. Stop TLS/SNI rotation; investigate a QUIC-capable tunnel transport. This does NOT make the existing WebSocket route work by itself."
+                    rawCloudflareOk && quicProof -> "VERDICT: both conventional TLS and QUIC are usable in at least one clean control; failures are hostname/service-specific rather than a blanket Cloudflare transport failure."
+                    !quicProof && !rawCloudflareOk -> "VERDICT: neither conventional Cloudflare TCP/TLS nor a confirmed QUIC/HTTP3 path was obtained. Further Cloudflare TLS-stack/domain rotation has low value; move to a different tunnel architecture such as a known-working VLESS/REALITY path."
+                    else -> "VERDICT: no confirmed HTTP/3 transport was obtained. Use per-target protocol/error results before changing production routing."
                 }
             } catch (error: Throwable) {
                 lines += ""
@@ -206,6 +212,69 @@ class CronetTlsControlActivity : Activity() {
                 finish(lines)
             }
         }
+    }
+
+    private fun runTargets(
+        lines: MutableList<String>,
+        engine: CronetEngine,
+        executor: java.util.concurrent.Executor,
+        sectionTitle: String,
+        targets: List<Target>,
+    ): SectionResult {
+        lines += ""
+        lines += "=== $sectionTitle ==="
+        publish(lines)
+
+        var headersReached = 0
+        var failures = 0
+        var watchdogTimeouts = 0
+        var h3HeadersReached = 0
+        var tcpFallbackHeadersReached = 0
+        val h3Labels = mutableSetOf<TargetKind>()
+
+        for (target in targets) {
+            lines += ""
+            lines += "--- ${target.label} ---"
+            lines += "URL: ${target.url}"
+            publish(lines)
+
+            val outcome = executeRequest(engine, executor, target.url)
+            when (outcome.kind) {
+                OutcomeKind.HTTP_HEADERS -> {
+                    headersReached += 1
+                    val isQuic = isQuicProtocol(outcome.protocol)
+                    if (isQuic) {
+                        h3HeadersReached += 1
+                        h3Labels += target.kind
+                    } else if (sectionTitle == "QUIC ENABLED") {
+                        tcpFallbackHeadersReached += 1
+                    }
+                    lines += "OK   Chromium reached HTTP headers (${outcome.elapsedMs}ms)"
+                    lines += "status=${outcome.statusCode} protocol=${outcome.protocol.ifBlank { "unknown" }} transport=${if (isQuic) "QUIC_CONFIRMED" else "TCP_OR_UNKNOWN"} proxy=${outcome.proxy.ifBlank { "none" }}"
+                    outcome.detail.takeIf { it.isNotBlank() }?.let { lines += it }
+                }
+
+                OutcomeKind.FAILURE -> {
+                    failures += 1
+                    lines += "FAIL Chromium request (${outcome.elapsedMs}ms): ${outcome.detail}"
+                }
+
+                OutcomeKind.WATCHDOG_TIMEOUT -> {
+                    watchdogTimeouts += 1
+                    lines += "FAIL Chromium watchdog timeout after ${outcome.elapsedMs}ms before HTTP headers"
+                }
+            }
+            publish(lines)
+        }
+
+        return SectionResult(
+            headersReached = headersReached,
+            failures = failures,
+            watchdogTimeouts = watchdogTimeouts,
+            h3HeadersReached = h3HeadersReached,
+            tcpFallbackHeadersReached = tcpFallbackHeadersReached,
+            h3Labels = h3Labels,
+        )
     }
 
     private fun runRawCloudflareBaseline(lines: MutableList<String>): Boolean {
@@ -317,6 +386,11 @@ class CronetTlsControlActivity : Activity() {
         )
     }
 
+    private fun isQuicProtocol(protocol: String): Boolean {
+        val normalized = protocol.trim().lowercase()
+        return normalized.startsWith("h3") || normalized.contains("quic")
+    }
+
     private fun finish(lines: List<String>) {
         publish(lines)
         runOnUiThread {
@@ -332,7 +406,7 @@ class CronetTlsControlActivity : Activity() {
 
     private fun copyResult() {
         val clipboard = getSystemService(ClipboardManager::class.java)
-        clipboard.setPrimaryClip(ClipData.newPlainText("Chromium Cronet TLS control diagnostics", resultText.text))
+        clipboard.setPrimaryClip(ClipData.newPlainText("Chromium Cronet transport control diagnostics", resultText.text))
         toast("Результат скопирован")
     }
 
@@ -374,6 +448,7 @@ class CronetTlsControlActivity : Activity() {
         BENIGN_CLOUDFLARE,
         ZONE_ROOT,
         PROXY_HOST,
+        QUIC_REFERENCE,
     }
 
     private data class Outcome(
@@ -385,6 +460,15 @@ class CronetTlsControlActivity : Activity() {
         val detail: String = "",
     )
 
+    private data class SectionResult(
+        val headersReached: Int,
+        val failures: Int,
+        val watchdogTimeouts: Int,
+        val h3HeadersReached: Int,
+        val tcpFallbackHeadersReached: Int,
+        val h3Labels: Set<TargetKind>,
+    )
+
     private enum class OutcomeKind {
         HTTP_HEADERS,
         FAILURE,
@@ -394,9 +478,16 @@ class CronetTlsControlActivity : Activity() {
     companion object {
         private const val TLS_TIMEOUT_MS = 10_000
         private const val REQUEST_WATCHDOG_MS = 12_000L
-        private val TARGETS = listOf(
+
+        private val CONVENTIONAL_TARGETS = listOf(
             Target("benign Cloudflare", "https://cloudflare.com/", TargetKind.BENIGN_CLOUDFLARE),
             Target("CF proxy zone root", "https://pclead.co.uk/", TargetKind.ZONE_ROOT),
+            Target("CF proxy Telegram hostname", "https://kws2.pclead.co.uk/apiws", TargetKind.PROXY_HOST),
+        )
+
+        private val QUIC_TARGETS = listOf(
+            Target("Cloudflare QUIC reference", "https://cloudflare-quic.com/", TargetKind.QUIC_REFERENCE),
+            Target("benign Cloudflare", "https://cloudflare.com/", TargetKind.BENIGN_CLOUDFLARE),
             Target("CF proxy Telegram hostname", "https://kws2.pclead.co.uk/apiws", TargetKind.PROXY_HOST),
         )
     }
