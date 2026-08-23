@@ -29,38 +29,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Download pinned official libXray Android artifact
+      - name: Bootstrap pinned official libXray with the Windows-facing script
+        shell: pwsh
+        run: |
+          ./tools/build-libxray.ps1 -Tag $env:LIBXRAY_TAG -Mode release -Force
+
+      - name: Independently verify pinned libXray artifact and Java ABI
         run: |
           set -euo pipefail
-          archive=/tmp/libxray-android.zip
-          extracted=/tmp/libxray-android
-          url="https://github.com/XTLS/libXray/releases/download/${LIBXRAY_TAG}/libxray-android.zip"
+          test -f app/libs/libXray.aar
+          echo "$LIBXRAY_AAR_SHA256  app/libs/libXray.aar" | sha256sum --check --strict
+          unzip -Z1 app/libs/libXray.aar | grep -qx 'classes.jar'
+          unzip -Z1 app/libs/libXray.aar | grep -qx 'jni/arm64-v8a/libgojni.so'
 
-          echo "Downloading $url"
-          curl --fail --location --retry 3 --retry-all-errors "$url" --output "$archive"
-          rm -rf "$extracted"
-          mkdir -p "$extracted" app/libs
-          unzip -q "$archive" -d "$extracted"
-
-          aar="$(find "$extracted" -type f -name libXray.aar -print -quit)"
-          test -n "$aar"
-          actual_sha="$(sha256sum "$aar" | awk '{print $1}')"
-          echo "libXray.aar sha256=$actual_sha"
-          test "$actual_sha" = "$LIBXRAY_AAR_SHA256"
-
-          unzip -Z1 "$aar" | grep -qx 'classes.jar'
-          unzip -Z1 "$aar" | grep -qx 'jni/arm64-v8a/libgojni.so'
-          cp "$aar" app/libs/libXray.aar
-
-          sources="$(find "$extracted" -type f -name libXray-sources.jar -print -quit)"
-          if test -n "$sources"; then
-            cp "$sources" app/libs/libXray-sources.jar
-          fi
-          ls -lh app/libs/libXray.aar
-
-      - name: Verify pinned libXray Java ABI
-        run: |
-          set -euo pipefail
           rm -rf /tmp/tgws-libxray-abi
           mkdir -p /tmp/tgws-libxray-abi
           unzip -q app/libs/libXray.aar classes.jar -d /tmp/tgws-libxray-abi
