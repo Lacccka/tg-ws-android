@@ -5,10 +5,13 @@ on:
     branches:
       - upstream-v1.10-validation
       - fix-private-sideload-special-use
+      - worker-diagnostics-probe
+      - worker-diagnostics-probe-fronting-test
   pull_request:
     branches:
       - upstream-v1.10-fronting-pool-diagnostics
       - upstream-v1.10-validation
+      - fix-private-sideload-special-use
 
 jobs:
   full-validation:
@@ -19,21 +22,88 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Run full unit suite and build private sideload APK
+
+      - name: Check Cloudflare Worker JavaScript syntax
+        run: node --check tools/cloudflare-worker/worker.js
+
+      - name: Run debug unit suite
         run: |
           chmod +x ./gradlew
-          ./gradlew testDebugUnitTest assemblePrivateSideload
-      - name: Verify private sideload special-use manifest
+          ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Compile private Snowflake Tor diagnostics
+        if: always()
+        run: ./gradlew compilePrivateSideloadKotlin --stacktrace
+
+      - name: Run private sideload unit suite
+        run: ./gradlew testPrivateSideloadUnitTest --stacktrace
+
+      - name: Build private sideload APK with package diagnostics
         run: |
+          df -h .
+          ./gradlew assemblePrivateSideload --stacktrace --info
+
+      - name: Inspect packaging intermediates on failure
+        if: failure()
+        run: |
+          echo "Disk:"
+          df -h . || true
+          echo "Largest app build files:"
+          find app/build -type f -printf '%s %p\n' 2>/dev/null | sort -nr | head -40 || true
+          echo "Native libraries:"
+          find app/build -type f -name '*.so' -printf '%s %p\n' 2>/dev/null | sort -nr || true
+
+      - name: Verify private sideload special-use and Tor manifest
+        run: |
+          set -euo pipefail
           merged_manifest="$(find app/build/intermediates/merged_manifest/privateSideload -name AndroidManifest.xml -print -quit)"
           test -n "$merged_manifest"
           grep -q 'android.permission.FOREGROUND_SERVICE_SPECIAL_USE' "$merged_manifest"
           grep -q 'android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE' "$merged_manifest"
           grep -q 'android:foregroundServiceType="specialUse"' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.DiagnosticsHubActivity' "$merged_manifest"
+          grep -q 'SE Diagnostics' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.SnowflakeTorE2eActivity' "$merged_manifest"
+          grep -q 'org.torproject.jni.TorService' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.CronetTlsControlActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.CfProxyMatrixActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.WorkerDiagnosticsActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.WorkerPreferredEdgeActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.WorkerTlsFragmentActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.WorkerFragmentedE2eActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.WorkerNoSniE2eActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.WorkerTlsMatrixActivity' "$merged_manifest"
+          grep -q 'com.flowseal.tgwsandroid.DirectFrontingE2eActivity' "$merged_manifest"
+
+      - name: Verify Snowflake Tor packaged in private APK
+        run: |
+          set -euo pipefail
+
+          build_config="$(find app/build/generated/source/buildConfig/privateSideload -name BuildConfig.java -print -quit)"
+          test -n "$build_config"
+          grep -q 'SNOWFLAKE_TOR_PACKAGED' "$build_config"
+          grep -q 'SNOWFLAKE_TOR_PACKAGED = true' "$build_config"
+          grep -q 'LIBXRAY_AAR_PACKAGED = false' "$build_config"
+
+          apk="$(find app/build/outputs/apk/privateSideload -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libtor.so'
+          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libgojni.so'
+
+          if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64|armeabi-v7a)/(libtor|libgojni)\.so$'; then
+            echo "Unexpected non-arm64 Tor/IPtProxy native library packaged in private sideload APK" >&2
+            exit 1
+          fi
+
+          echo "Verified Snowflake/Tor-enabled APK: $apk"
+          echo "Native transport payload:"
+          unzip -Z1 "$apk" | grep -E '^lib/arm64-v8a/(libtor|libgojni)\.so$'
+          ls -lh "$apk"
+
       - name: Upload validation APK
         uses: actions/upload-artifact@v4
         with:
-          name: tg-ws-android-v1.10-private-sideload-apk
+          name: tg-ws-android-snowflake-tor-private-sideload-apk
           path: app/build/outputs/apk/privateSideload/*.apk
           if-no-files-found: error
           retention-days: 7

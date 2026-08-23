@@ -7,5 +7,26 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Local user-started Telegram proxy that maintains a visible foreground notification and relays Telegram traffic through a local loopback proxy while the user keeps the proxy enabled" />
         </service>
+
+        <activity
+            android:name=".DiagnosticsHubActivity"
+            android:exported="true"
+            android:label="SE Diagnostics">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".SnowflakeTorE2eActivity" android:exported="false" />
+        <activity android:name=".CronetTlsControlActivity" android:exported="false" />
+        <activity android:name=".CfProxyMatrixActivity" android:exported="false" />
+        <activity android:name=".WorkerDiagnosticsActivity" android:exported="false" />
+        <activity android:name=".WorkerPreferredEdgeActivity" android:exported="false" />
+        <activity android:name=".WorkerTlsFragmentActivity" android:exported="false" />
+        <activity android:name=".WorkerFragmentedE2eActivity" android:exported="false" />
+        <activity android:name=".WorkerNoSniE2eActivity" android:exported="false" />
+        <activity android:name=".WorkerTlsMatrixActivity" android:exported="false" />
+        <activity android:name=".DirectFrontingE2eActivity" android:exported="false" />
     </application>
 </manifest>
