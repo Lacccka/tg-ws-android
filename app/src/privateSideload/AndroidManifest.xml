@@ -9,73 +9,21 @@
         </service>
 
         <activity
-            android:name=".WorkerDiagnosticsActivity"
+            android:name=".DiagnosticsHubActivity"
             android:exported="true"
-            android:label="SE Worker Test">
+            android:label="SE Diagnostics">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".WorkerPreferredEdgeActivity"
-            android:exported="true"
-            android:label="SE Edge Test">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".WorkerTlsFragmentActivity"
-            android:exported="true"
-            android:label="SE TLS Frag Test">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".WorkerFragmentedE2eActivity"
-            android:exported="true"
-            android:label="SE Worker Frag E2E">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".WorkerNoSniE2eActivity"
-            android:exported="true"
-            android:label="SE Worker No-SNI E2E">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".WorkerTlsMatrixActivity"
-            android:exported="true"
-            android:label="SE Worker TLS Matrix">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <activity
-            android:name=".DirectFrontingE2eActivity"
-            android:exported="true"
-            android:label="SE Direct Fronting E2E">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+        <activity android:name=".WorkerDiagnosticsActivity" android:exported="false" />
+        <activity android:name=".WorkerPreferredEdgeActivity" android:exported="false" />
+        <activity android:name=".WorkerTlsFragmentActivity" android:exported="false" />
+        <activity android:name=".WorkerFragmentedE2eActivity" android:exported="false" />
+        <activity android:name=".WorkerNoSniE2eActivity" android:exported="false" />
+        <activity android:name=".WorkerTlsMatrixActivity" android:exported="false" />
+        <activity android:name=".DirectFrontingE2eActivity" android:exported="false" />
     </application>
 </manifest>
