@@ -22,6 +22,8 @@ jobs:
           java-version: '17'
       - name: Apply deterministic integration patch
         run: python3 tools/apply_tor_auto_fallback_patch.py
+      - name: Preserve legacy test helper call order
+        run: python3 tools/fix_tor_patch_test_helper.py
       - name: Enable Gradle wrapper
         run: chmod +x ./gradlew
       - name: Run debug unit suite
