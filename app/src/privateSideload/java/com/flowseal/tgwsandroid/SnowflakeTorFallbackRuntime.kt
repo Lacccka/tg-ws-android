@@ -24,8 +24,11 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * Private-sideload production prototype for a warm mobile-only Tor/Snowflake fallback.
  *
- * It never replaces direct/CF route health. The ProxyServer gets a dedicated connector
- * which is usable only after Tor reaches bootstrap 100%.
+ * Important lifecycle rule: once C Tor has been started in this Android process,
+ * it is never intentionally destroyed and started again. libtor keeps process-global
+ * native state and repeated in-process start/stop cycles are unsafe. Logical proxy
+ * restart/stop/network changes only change whether the route is desired; the warm
+ * Tor/Snowflake engine stays alive until Android terminates the app process.
  */
 class SnowflakeTorFallbackRuntime(
     context: Context,
@@ -36,17 +39,18 @@ class SnowflakeTorFallbackRuntime(
         Thread(runnable, "TorSnowflakeFallback").also { it.isDaemon = true }
     }
     private val wanted = AtomicBoolean(false)
-    private val stopped = AtomicBoolean(false)
-    private val restartScheduled = AtomicBoolean(false)
+    private val processRestartRequired = AtomicBoolean(false)
     private val progress = AtomicInteger(0)
     private val phase = AtomicReference("idle")
     private val lastError = AtomicReference<String?>(null)
     private val readyConnector = AtomicReference<RawWebSocketConnector?>(null)
     private val lifecycleLock = Any()
+    private val snowflakeTransportOwned = AtomicBoolean(false)
+    private val torStartedInProcess = AtomicBoolean(false)
 
     @Volatile private var task: Future<*>? = null
-    private val snowflakeTransportOwned = AtomicBoolean(false)
     @Volatile private var torConnection: ServiceConnection? = null
+    @Volatile private var boundTorService: TorService? = null
 
     override val connector: RawWebSocketConnector = object : RawWebSocketConnector {
         override fun connect(targetHost: String, domain: String, path: String, timeoutMs: Int) =
@@ -60,80 +64,94 @@ class SnowflakeTorFallbackRuntime(
             sniHost: String,
         ) = currentConnector().connectWithSni(targetHost, domain, path, timeoutMs, sniHost)
 
-        private fun currentConnector(): RawWebSocketConnector = readyConnector.get()
-            ?: throw TorSnowflakeUnavailableException(
-                "Tor/Snowflake not ready: phase=${phase.get()} bootstrap=${progress.get()}%",
-            )
+        private fun currentConnector(): RawWebSocketConnector {
+            if (processRestartRequired.get()) {
+                throw TorSnowflakeUnavailableException(
+                    "Tor/Snowflake requires app process restart: ${lastError.get().orEmpty()}",
+                )
+            }
+            return readyConnector.get()
+                ?: throw TorSnowflakeUnavailableException(
+                    "Tor/Snowflake not ready: phase=${phase.get()} bootstrap=${progress.get()}%",
+                )
+        }
     }
 
     override fun onNetworkChanged(networkStatus: String) {
-        if (stopped.get()) return
         val shouldRun = isMobile(networkStatus)
-        wanted.set(shouldRun)
-        if (shouldRun) ensureStarted() else stopTransport("network=$networkStatus")
+        val changed = wanted.getAndSet(shouldRun) != shouldRun
+        if (shouldRun) {
+            ensureStarted()
+        } else if (changed && hasStartedProcessEngine()) {
+            logger.log(
+                "Tor/Snowflake route not desired on network=$networkStatus; keeping native Tor warm for process lifetime",
+            )
+        }
     }
 
     override fun snapshot(): TorFallbackRuntimeSnapshot = TorFallbackRuntimeSnapshot(
         desired = wanted.get(),
-        running = wanted.get() && (readyConnector.get() != null || task?.isDone == false || snowflakeTransportOwned.get() || torConnection != null),
-        ready = readyConnector.get() != null,
+        running = hasStartedProcessEngine(),
+        ready = readyConnector.get() != null && !processRestartRequired.get(),
         bootstrapProgress = progress.get(),
         phase = phase.get(),
         lastError = lastError.get(),
     )
 
+    /**
+     * Logical release only. Do not unbind/stop TorService here.
+     *
+     * tor-android embeds libtor in-process and repeated stop/start can leave native
+     * static state pointing at destroyed mutexes. The process itself is the safe
+     * lifetime boundary for this prototype.
+     */
     override fun stop() {
-        if (!stopped.compareAndSet(false, true)) return
         wanted.set(false)
-        restartScheduled.set(false)
-        task?.cancel(true)
-        task = null
-        cleanup()
-        executor.shutdownNow()
-        phase.set("stopped")
+        if (hasStartedProcessEngine()) {
+            logger.log("Tor/Snowflake runtime released logically; native engine retained until process exit")
+        }
     }
 
     private fun ensureStarted() {
         synchronized(lifecycleLock) {
-            if (!wanted.get() || stopped.get() || readyConnector.get() != null || task?.isDone == false) return
+            if (!wanted.get() || processRestartRequired.get() || readyConnector.get() != null || task?.isDone == false) return
+            if (torStartedInProcess.get()) {
+                markProcessRestartRequired("Tor was already started in this process but is no longer ready")
+                return
+            }
             task = executor.submit { bootstrapLoop() }
         }
     }
 
-    private fun stopTransport(reason: String) {
-        restartScheduled.set(false)
-        task?.cancel(true)
-        task = null
-        cleanup()
-        progress.set(0)
-        phase.set("idle")
-        lastError.set(null)
-        logger.log("Tor/Snowflake fallback stopped because $reason")
-    }
-
     private fun bootstrapLoop() {
         var retry = 0
-        while (wanted.get() && !stopped.get()) {
+        while (!processRestartRequired.get() && readyConnector.get() == null) {
             try {
                 bootstrapOnce()
                 return
             } catch (error: InterruptedException) {
                 Thread.currentThread().interrupt()
-                cleanup()
                 return
             } catch (error: Throwable) {
-                cleanup()
-                lastError.set("${error.javaClass.simpleName}: ${sanitize(error.message)}")
+                val summary = "${error.javaClass.simpleName}: ${sanitize(error.message)}"
+                if (torStartedInProcess.get()) {
+                    markProcessRestartRequired(summary)
+                    return
+                }
+
+                releaseSnowflakeBeforeTorStart()
+                lastError.set(summary)
                 phase.set("backoff")
                 retry += 1
                 val delayMs = retryBackoffMs(retry)
-                logger.log("Tor/Snowflake bootstrap failed: ${lastError.get()}; retry in ${delayMs}ms")
-                sleepWhileWanted(delayMs)
+                logger.log("Tor/Snowflake pre-Tor bootstrap failed: $summary; retry in ${delayMs}ms")
+                sleepBackoff(delayMs)
             }
         }
     }
 
     private fun bootstrapOnce() {
+        check(!torStartedInProcess.get()) { "Refusing to start libtor twice in one app process" }
         readyConnector.set(null)
         progress.set(0)
         lastError.set(null)
@@ -174,50 +192,52 @@ class SnowflakeTorFallbackRuntime(
         torrc.writeText(buildTorrc(ptPort))
 
         val serviceLatch = CountDownLatch(1)
-        var boundTor: TorService? = null
         val connection = object : ServiceConnection {
             override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
-                boundTor = (service as? TorService.LocalBinder)?.service
+                boundTorService = (service as? TorService.LocalBinder)?.service
                 serviceLatch.countDown()
             }
 
             override fun onServiceDisconnected(name: ComponentName?) {
-                boundTor = null
+                boundTorService = null
                 handleTorServiceLost("service disconnected")
             }
 
             override fun onBindingDied(name: ComponentName?) {
-                boundTor = null
+                boundTorService = null
                 handleTorServiceLost("binding died")
             }
 
             override fun onNullBinding(name: ComponentName?) {
-                boundTor = null
+                boundTorService = null
                 serviceLatch.countDown()
                 handleTorServiceLost("null binding")
             }
         }
         torConnection = connection
         phase.set("tor_service")
-        check(appContext.bindService(Intent(appContext, TorService::class.java), connection, Context.BIND_AUTO_CREATE)) {
-            "bindService(TorService) returned false"
-        }
+        val bound = appContext.bindService(Intent(appContext, TorService::class.java), connection, Context.BIND_AUTO_CREATE)
+        check(bound) { "bindService(TorService) returned false" }
+        // bindService(BIND_AUTO_CREATE) has now created TorService and started its native tor thread.
+        // From this point onward we must never intentionally destroy/restart libtor in this process.
+        torStartedInProcess.set(true)
+
         check(serviceLatch.await(TOR_SERVICE_BIND_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             "TorService did not bind within ${TOR_SERVICE_BIND_TIMEOUT_SECONDS}s"
         }
-        checkWanted()
-        val tor = checkNotNull(boundTor) { "TorService binder returned no service" }
+        checkEngineUsable()
+        val tor = checkNotNull(boundTorService) { "TorService binder returned no service" }
 
         val controlDeadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(TOR_CONTROL_TIMEOUT_MS)
         while (tor.torControlConnection == null && System.nanoTime() < controlDeadline) {
-            checkWanted()
+            checkEngineUsable()
             Thread.sleep(100)
         }
         check(tor.torControlConnection != null) { "Tor control connection unavailable" }
 
         phase.set("bootstrap")
         waitForBootstrap(tor)
-        checkWanted()
+        checkEngineUsable()
         val socksPort = tor.socksPort
         check(socksPort in 1..65535) { "Tor SOCKS returned invalid port: $socksPort" }
         readyConnector.set(SocksRawWebSocketConnector("127.0.0.1", socksPort))
@@ -228,30 +248,34 @@ class SnowflakeTorFallbackRuntime(
 
     private fun handleTorServiceLost(reason: String) {
         readyConnector.set(null)
-        if (!wanted.get() || stopped.get()) return
-        phase.set("tor_disconnected")
-        lastError.set(reason)
-        logger.log("Tor/Snowflake $reason; scheduling transport restart")
-        if (!restartScheduled.compareAndSet(false, true)) return
-        executor.execute {
-            try {
-                if (!wanted.get() || stopped.get()) return@execute
-                cleanup()
-                synchronized(lifecycleLock) { task = null }
-                ensureStarted()
-            } finally {
-                restartScheduled.set(false)
-            }
-        }
+        if (!torStartedInProcess.get()) return
+        markProcessRestartRequired(reason)
     }
 
+    private fun markProcessRestartRequired(reason: String) {
+        if (!processRestartRequired.compareAndSet(false, true)) return
+        readyConnector.set(null)
+        val message = "$reason; refusing unsafe in-process libtor restart — restart app process"
+        lastError.set(message)
+        phase.set("process_restart_required")
+        logger.log("Tor/Snowflake $message")
+    }
+
+    /**
+     * Once native Tor exists, bootstrap timeouts are diagnostic only. Restarting
+     * Tor in this process is less safe than letting a slow Snowflake/Tor bootstrap
+     * continue. Progress clears the warning automatically.
+     */
     private fun waitForBootstrap(tor: TorService) {
         val startedNs = System.nanoTime()
         var lastProgress = -1
         var lastProgressNs = startedNs
         var lastPhase = ""
+        var stallReportedForProgress = -1
+        var hardTimeoutReported = false
+
         while (true) {
-            checkWanted()
+            checkEngineUsable()
             val now = System.nanoTime()
             val phaseInfo = tor.getInfo("status/bootstrap-phase").orEmpty()
             val current = BOOTSTRAP_PROGRESS_REGEX.find(phaseInfo)?.groupValues?.getOrNull(1)?.toIntOrNull()
@@ -259,49 +283,68 @@ class SnowflakeTorFallbackRuntime(
                 lastProgress = current
                 lastProgressNs = now
                 lastPhase = sanitize(phaseInfo)
+                stallReportedForProgress = -1
                 progress.set(current.coerceIn(0, 100))
+                phase.set("bootstrap")
+                lastError.set(null)
                 logger.log("Tor/Snowflake bootstrap $current%")
             }
             if (current != null && current >= 100) return
-            if (now - startedNs >= TimeUnit.MILLISECONDS.toNanos(TOR_BOOTSTRAP_HARD_TIMEOUT_MS)) {
-                error("Tor bootstrap hard timeout; progress=$lastProgress phase=$lastPhase")
+
+            if (
+                lastProgress >= 0 &&
+                stallReportedForProgress != lastProgress &&
+                now - lastProgressNs >= TimeUnit.MILLISECONDS.toNanos(TOR_BOOTSTRAP_STALL_TIMEOUT_MS)
+            ) {
+                stallReportedForProgress = lastProgress
+                val message = "Tor bootstrap stalled; progress=$lastProgress phase=$lastPhase; waiting without unsafe Tor restart"
+                phase.set("bootstrap_stalled")
+                lastError.set(message)
+                logger.log(message)
             }
-            if (lastProgress >= 0 && now - lastProgressNs >= TimeUnit.MILLISECONDS.toNanos(TOR_BOOTSTRAP_STALL_TIMEOUT_MS)) {
-                error("Tor bootstrap stalled; progress=$lastProgress phase=$lastPhase")
+
+            if (!hardTimeoutReported && now - startedNs >= TimeUnit.MILLISECONDS.toNanos(TOR_BOOTSTRAP_HARD_TIMEOUT_MS)) {
+                hardTimeoutReported = true
+                val message = "Tor bootstrap exceeded ${TOR_BOOTSTRAP_HARD_TIMEOUT_MS / 1000}s; progress=$lastProgress phase=$lastPhase; continuing in-process"
+                phase.set("bootstrap_slow")
+                lastError.set(message)
+                logger.log(message)
             }
             Thread.sleep(500)
         }
     }
 
-    private fun cleanup() {
-        readyConnector.set(null)
-        val connection = torConnection
-        torConnection = null
-        if (connection != null) runCatching { appContext.unbindService(connection) }
-        runCatching { appContext.stopService(Intent(appContext, TorService::class.java)) }
+    private fun checkEngineUsable() {
+        if (processRestartRequired.get()) {
+            error(lastError.get() ?: "Tor process restart required")
+        }
+        if (Thread.currentThread().isInterrupted) throw InterruptedException("Tor fallback worker interrupted")
+    }
+
+    private fun releaseSnowflakeBeforeTorStart() {
+        if (torStartedInProcess.get()) return
         if (snowflakeTransportOwned.getAndSet(false)) {
             runCatching { SharedSnowflakeController.stop(SNOWFLAKE_OWNER) }
-                .onFailure { logger.log("Tor/Snowflake shared controller stop failed: ${it.javaClass.simpleName}: ${sanitize(it.message)}") }
+                .onFailure { logger.log("Tor/Snowflake pre-Tor PT cleanup failed: ${it.javaClass.simpleName}: ${sanitize(it.message)}") }
         }
     }
+
+    private fun sleepBackoff(delayMs: Long) {
+        var remaining = delayMs
+        while (remaining > 0 && !processRestartRequired.get()) {
+            val step = remaining.coerceAtMost(500L)
+            Thread.sleep(step)
+            remaining -= step
+        }
+    }
+
+    private fun hasStartedProcessEngine(): Boolean =
+        readyConnector.get() != null || task?.isDone == false || snowflakeTransportOwned.get() || torConnection != null || torStartedInProcess.get()
 
     private fun buildTorrc(ptPort: Int): String = buildString {
         appendLine("UseBridges 1")
         appendLine("ClientTransportPlugin snowflake socks5 127.0.0.1:$ptPort")
         SNOWFLAKE_BRIDGES.forEach { appendLine("Bridge $it") }
-    }
-
-    private fun checkWanted() {
-        if (!wanted.get() || stopped.get() || Thread.currentThread().isInterrupted) throw InterruptedException("Tor fallback no longer desired")
-    }
-
-    private fun sleepWhileWanted(delayMs: Long) {
-        var remaining = delayMs
-        while (remaining > 0 && wanted.get() && !stopped.get()) {
-            val step = remaining.coerceAtMost(500L)
-            Thread.sleep(step)
-            remaining -= step
-        }
     }
 
     private fun retryBackoffMs(retry: Int): Long = when (retry) {
