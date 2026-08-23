@@ -12,6 +12,8 @@ fun gitCommitSha(): String = runCatching {
     if (process.waitFor() == 0 && output.isNotBlank()) output else "unknown"
 }.getOrElse { "unknown" }
 
+val privateLibXrayAar = file("libs/libXray.aar")
+
 android {
     namespace = "com.flowseal.tgwsandroid"
     compileSdk = 35
@@ -32,6 +34,7 @@ android {
         buildConfigField("String", "TELEMETRY_ENDPOINT", "\"https://d5dqfsreu76tk91ifakc.xxg4zr82.apigw.yandexcloud.net/telemetry\"")
         buildConfigField("String", "TELEMETRY_TOKEN", "\"${providers.gradleProperty("TELEMETRY_TOKEN").orNull ?: ""}\"")
         buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
+        buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
     }
 
     buildTypes {
@@ -39,12 +42,14 @@ android {
             manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
+            buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
         }
 
         getByName("release") {
             manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
+            buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
         }
 
         create("sideload") {
@@ -53,6 +58,7 @@ android {
             manifestPlaceholders["proxyForegroundServiceType"] = "specialUse"
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"specialUse\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
+            buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
         }
 
         create("privateSideload") {
@@ -62,6 +68,7 @@ android {
             buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"specialUse\"")
             buildConfigField("String", "BUILD_FLAVOR_NAME", "\"privateSideload\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "true")
+            buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", privateLibXrayAar.exists().toString())
         }
     }
 
@@ -87,6 +94,14 @@ dependencies {
     // Huawei/mobile-network control does not depend on Google Play Services and
     // does not increase normal debug/release/sideload APKs.
     add("privateSideloadImplementation", "org.chromium.net:cronet-bundled:500.0.1")
+
+    // libXray is deliberately local and pinned by tools/build-libxray.ps1 instead
+    // of being fetched implicitly during Gradle configuration. This keeps normal
+    // builds reproducible and allows privateSideload to compile even before the
+    // native proof-of-concept artifact has been prepared.
+    if (privateLibXrayAar.exists()) {
+        add("privateSideloadImplementation", files(privateLibXrayAar))
+    }
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
