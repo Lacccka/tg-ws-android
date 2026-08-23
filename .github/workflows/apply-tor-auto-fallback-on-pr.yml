@@ -22,6 +22,8 @@ jobs:
           java-version: '17'
       - name: Apply deterministic integration patch
         run: python3 tools/apply_tor_auto_fallback_patch.py
+      - name: Enable Gradle wrapper
+        run: chmod +x ./gradlew
       - name: Run debug unit suite
         run: ./gradlew testDebugUnitTest --stacktrace
       - name: Compile private Tor fallback
