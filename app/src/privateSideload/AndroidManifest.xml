@@ -8,6 +8,15 @@
                 android:value="Local user-started Telegram proxy that maintains a visible foreground notification and relays Telegram traffic through a local loopback proxy while the user keeps the proxy enabled" />
         </service>
 
+        <service
+            android:name=".SnowflakeTorProxyService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Private user-started diagnostic Telegram proxy that keeps Snowflake, embedded Tor and a local loopback ProxyServer active while the user tests Telegram connectivity" />
+        </service>
+
         <activity
             android:name=".DiagnosticsHubActivity"
             android:exported="true"
@@ -18,6 +27,7 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".SnowflakeTorProxyActivity" android:exported="false" />
         <activity android:name=".SnowflakeTorE2eActivity" android:exported="false" />
         <activity android:name=".CronetTlsControlActivity" android:exported="false" />
         <activity android:name=".CfProxyMatrixActivity" android:exported="false" />
