@@ -27,6 +27,7 @@
             </intent-filter>
         </activity>
 
+        <activity android:name=".TorProductionFallbackTestActivity" android:exported="false" />
         <activity android:name=".SnowflakeTorProxyActivity" android:exported="false" />
         <activity android:name=".SnowflakeTorE2eActivity" android:exported="false" />
         <activity android:name=".CronetTlsControlActivity" android:exported="false" />

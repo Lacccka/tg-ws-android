@@ -11,6 +11,7 @@ class TorFallbackDiagnosticReportTest {
             endpoint = "127.0.0.1:1443",
             secret = "00112233445566778899aabbccddeeff",
             dcSummary = "2,4",
+            torFallbackTestOverrideActive = true,
             torFallbackRuntime = TorFallbackRuntimeSnapshot(
                 desired = true,
                 running = true,
@@ -26,6 +27,7 @@ class TorFallbackDiagnosticReportTest {
 
         assertTrue(report.contains("Tor/Snowflake runtime:"))
         assertTrue(report.contains("  available: true"))
+        assertTrue(report.contains("  productionFallbackTestOverrideActive: true"))
         assertTrue(report.contains("  desired: true"))
         assertTrue(report.contains("  running: true"))
         assertTrue(report.contains("  ready: true"))

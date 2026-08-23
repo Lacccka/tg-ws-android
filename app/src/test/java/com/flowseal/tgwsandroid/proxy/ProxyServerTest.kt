@@ -3326,6 +3326,46 @@ class ProxyServerTest {
     }
 
     @Test
+    fun autoMobileForcedOrdinaryConnectorFailuresReachTorThroughProductionRouting() {
+        val server = FakeTcpServerTransport()
+        val ordinaryDomains = CopyOnWriteArrayList<String>()
+        val ordinary = RawWebSocketConnector { _, domain, _, _ ->
+            ordinaryDomains.add(domain)
+            throw IOException("private test ordinary route unavailable for $domain")
+        }
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = ordinary,
+            torSnowflakeConnector = tor,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = true,
+                cfPoolEnabled = false,
+                cfProxyDomains = listOf("cf.example"),
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil("forced ordinary route failure should reach Tor/Snowflake") {
+            proxy.stats().lastRouteUsed == TOR_SNOWFLAKE_ROUTE_TYPE
+        }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertTrue("production CF path should be attempted before Tor", ordinaryDomains.contains("kws2.cf.example"))
+        assertEquals(1L, stats.cfProxyErrors)
+        assertEquals(1L, stats.torSnowflakeAttempts)
+        assertEquals(1L, stats.torSnowflakeSuccesses)
+        assertEquals(0L, stats.torSnowflakeFailures)
+        assertEquals(TOR_SNOWFLAKE_ROUTE_TYPE, stats.lastRouteUsed)
+        assertEquals(listOf("kws2.web.telegram.org"), tor.domains)
+    }
+
+    @Test
     fun autoMobileUsesTorSnowflakeAfterOrdinaryRoutesAreUnavailable() {
         val server = FakeTcpServerTransport()
         val direct = RecordingConnector(FakeWebSocketBinaryStream())
