@@ -19,23 +19,25 @@ import android.widget.Toast
 import com.flowseal.tgwsandroid.config.AppConfig
 import com.flowseal.tgwsandroid.config.AppConfigStore
 import com.flowseal.tgwsandroid.proxy.RawWebSocket
+import com.flowseal.tgwsandroid.proxy.Socks5Credentials
 import com.flowseal.tgwsandroid.proxy.Socks5TlsTransportFactory
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.security.SecureRandom
 import kotlin.concurrent.thread
 import kotlin.system.measureTimeMillis
 
 /**
  * Private-sideload proof of concept for:
- * VLESS/REALITY (libXray) -> local SOCKS5 -> existing RawWebSocket -> Telegram.
+ * VLESS/REALITY (libXray) -> authenticated local SOCKS5 -> existing RawWebSocket -> Telegram.
  *
  * This does not start VpnService and does not alter production ProxyServer routing.
- * The VLESS link is held only in this Activity instance and is never copied into
- * diagnostic output, logs or SharedPreferences. Error text is sanitized before
- * it can be copied from the diagnostic screen.
+ * The VLESS link and random SOCKS credentials are held only for this run and are
+ * never copied into diagnostic output, logs or SharedPreferences. Error text is
+ * sanitized before it can be copied from the diagnostic screen.
  */
 class XrayTunnelE2eActivity : Activity() {
     private lateinit var networkText: TextView
@@ -90,7 +92,7 @@ class XrayTunnelE2eActivity : Activity() {
                 typeface = Typeface.DEFAULT_BOLD
             }, matchWrap())
             addView(TextView(this@XrayTunnelE2eActivity).apply {
-                text = "Private diagnostic only. Поднимает локальный SOCKS через libXray без Android VPN и проверяет наш обычный WebSocket к Telegram через этот туннель. VLESS-ссылка и адрес сервера не сохраняются и не попадают в результат."
+                text = "Private diagnostic only. Поднимает защищённый локальный SOCKS через libXray без Android VPN и проверяет наш обычный WebSocket к Telegram через этот туннель. VLESS-ссылка, адрес сервера и SOCKS credentials не сохраняются и не попадают в результат."
             }, matchWrap(gap))
             addView(networkText, matchWrap(gap))
             addView(linkInput, matchWrap(gap))
@@ -123,6 +125,7 @@ class XrayTunnelE2eActivity : Activity() {
         }
         val sensitiveValues = sensitiveValues(link)
         val telegramTargets = currentTelegramTargets()
+        val socksCredentials = randomSocksCredentials()
 
         runButton.isEnabled = false
         val network = currentNetworkLabel()
@@ -131,13 +134,14 @@ class XrayTunnelE2eActivity : Activity() {
 
         thread(name = "XrayTunnelE2E") {
             val lines = mutableListOf(
-                "SE Xray VLESS/REALITY -> SOCKS5 -> Telegram WebSocket E2E",
+                "SE Xray VLESS/REALITY -> authenticated SOCKS5 -> Telegram WebSocket E2E",
                 "Network: $network",
                 "libXray pinned tag: ${LibXrayCompat.PINNED_TAG}",
                 "libXray AAR packaged by Gradle: ${BuildConfig.LIBXRAY_AAR_PACKAGED}",
                 "Android VpnService: not used",
                 "VLESS link: REDACTED",
                 "VLESS endpoint: REDACTED",
+                "Local SOCKS authentication: RFC1929 random per-run credentials (REDACTED)",
                 "Telegram targets: current AppConfig.dcIp (${telegramTargets.size})",
                 "Upstream DNS mode: hostname=SOCKS5 ATYP=DOMAIN behind tunnel; numeric Telegram IP=no DNS",
                 "WebSocket implementation: existing RawWebSocket",
@@ -162,13 +166,13 @@ class XrayTunnelE2eActivity : Activity() {
                 publish(lines)
 
                 val converted = LibXrayCompat.convertShareLink(link)
-                val config = buildTunnelConfig(converted, socksPort)
+                val config = buildTunnelConfig(converted, socksPort, socksCredentials)
                 lines += "OK   libXray parsed VLESS and produced a buildable outbound"
                 lines += "outbounds=${config.getJSONArray("outbounds").length()} inbounds=${config.getJSONArray("inbounds").length()}"
 
                 LibXrayCompat.stopBestEffort()
                 lines += ""
-                lines += "=== Start Xray local SOCKS ==="
+                lines += "=== Start Xray authenticated local SOCKS ==="
                 publish(lines)
                 val startElapsed = measureTimeMillis {
                     LibXrayCompat.runFromJson(config)
@@ -184,7 +188,11 @@ class XrayTunnelE2eActivity : Activity() {
                 }
                 lines += "OK   local SOCKS accepts TCP connections"
 
-                val transportFactory = Socks5TlsTransportFactory("127.0.0.1", socksPort)
+                val transportFactory = Socks5TlsTransportFactory(
+                    socksHost = "127.0.0.1",
+                    socksPort = socksPort,
+                    credentials = socksCredentials,
+                )
                 var successes = 0
                 var failures = 0
 
@@ -221,7 +229,7 @@ class XrayTunnelE2eActivity : Activity() {
                 lines += "Telegram WebSocket successes: $successes/${telegramTargets.size}"
                 lines += "Failures: $failures"
                 lines += if (successes > 0) {
-                    "VERDICT: VLESS/REALITY + local SOCKS can carry the existing Telegram WebSocket transport on this network. Next step is injecting SocksRawWebSocketConnector into ProxyServer as the mobile fallback and testing a real Telegram session."
+                    "VERDICT: VLESS/REALITY + authenticated local SOCKS can carry the existing Telegram WebSocket transport on this network. Next step is injecting SocksRawWebSocketConnector into ProxyServer as the mobile fallback and testing a real Telegram session."
                 } else {
                     "VERDICT: the VLESS core started, but no Telegram WebSocket reached HTTP 101 through the tunnel. Inspect the supplied VLESS endpoint/server reachability before production routing changes."
                 }
@@ -241,7 +249,11 @@ class XrayTunnelE2eActivity : Activity() {
         }
     }
 
-    private fun buildTunnelConfig(converted: JSONObject, socksPort: Int): JSONObject {
+    private fun buildTunnelConfig(
+        converted: JSONObject,
+        socksPort: Int,
+        credentials: Socks5Credentials,
+    ): JSONObject {
         val outbounds = converted.optJSONArray("outbounds")
             ?: throw IllegalStateException("libXray config has no outbounds")
         if (outbounds.length() == 0) throw IllegalStateException("libXray config has no valid outbound")
@@ -259,7 +271,15 @@ class XrayTunnelE2eActivity : Activity() {
             .put(
                 "settings",
                 JSONObject()
-                    .put("auth", "noauth")
+                    .put("auth", "password")
+                    .put(
+                        "accounts",
+                        JSONArray().put(
+                            JSONObject()
+                                .put("user", credentials.username)
+                                .put("pass", credentials.password),
+                        ),
+                    )
                     .put("udp", false),
             )
 
@@ -296,6 +316,17 @@ class XrayTunnelE2eActivity : Activity() {
         val host = parts[1].trim()
         if (host.isBlank()) return null
         return DcRedirect(dc, host)
+    }
+
+    private fun randomSocksCredentials(): Socks5Credentials = Socks5Credentials(
+        username = "tgws-${randomHex(8)}",
+        password = randomHex(24),
+    )
+
+    private fun randomHex(byteCount: Int): String {
+        val bytes = ByteArray(byteCount)
+        SECURE_RANDOM.nextBytes(bytes)
+        return bytes.joinToString(separator = "") { byte -> "%02x".format(byte) }
     }
 
     private fun stopXray() {
@@ -412,6 +443,7 @@ class XrayTunnelE2eActivity : Activity() {
     )
 
     companion object {
+        private val SECURE_RANDOM = SecureRandom()
         private val UUID_REGEX = Regex("(?i)\\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\b")
         private val VLESS_URL_REGEX = Regex("(?i)vless://\\S+")
         private val VLESS_SECRET_QUERY_REGEX = Regex("(?i)(pbk|password|sid|pqv|spx)=([^&\\s]+)")
