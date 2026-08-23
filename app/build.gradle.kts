@@ -14,9 +14,9 @@ fun gitCommitSha(): String = runCatching {
 
 android {
     namespace = "com.flowseal.tgwsandroid"
-    // Keep the product toolchain unchanged. tor-android 0.4.8.17.2 is pinned
-    // before Guardian Project's newer Gradle/API-37 publication transition and
-    // does not pull a foreign Kotlin stdlib into this Kotlin 2.0.21 app.
+    // Keep the product toolchain unchanged. tor-android 0.4.8.19 is the latest
+    // release we verified from source as compileSdk/targetSdk 35 before the
+    // newer Guardian Project publication moved to the API-37 toolchain.
     compileSdk = 35
 
     defaultConfig {
@@ -50,7 +50,7 @@ android {
 
         getByName("release") {
             manifestPlaceholders["proxyForegroundServiceType"] = "dataSync"
-            buildConfigField("String", "DECLARED_FOREGROUND_SERVICE_STRATEGY", "\"dataSync\"")
+            buildConfigField("String", "DECLARED_FOREROUND_SERVICE_STRATEGY", "\"dataSync\"")
             buildConfigField("Boolean", "ENABLE_TEST_TELEMETRY_BUTTON", "false")
             buildConfigField("Boolean", "LIBXRAY_AAR_PACKAGED", "false")
             buildConfigField("Boolean", "SNOWFLAKE_TOR_PACKAGED", "false")
@@ -108,12 +108,11 @@ dependencies {
     // Cloudflare control, but is not included in normal builds.
     add("privateSideloadImplementation", "org.chromium.net:cronet-bundled:500.0.1")
 
-    // Zero-config censorship-circumvention PoC. The Tor binary is intentionally
-    // pinned to 0.4.8.17.2: this publication predates the API-37 build migration,
-    // exposes the same TorService/SOCKS control surface, and keeps our existing
-    // compileSdk/Kotlin toolchain untouched. Snowflake itself stays current via
-    // IPtProxy 5.5.1 (Snowflake 2.14.1).
-    add("privateSideloadImplementation", "info.guardianproject:tor-android:0.4.8.17.2")
+    // Zero-config censorship-circumvention PoC. tor-android 0.4.8.19 is pinned
+    // to the latest source-verified API-35 publication. It exposes the same
+    // TorService/SOCKS control surface while keeping the app toolchain unchanged.
+    // Snowflake itself stays current through IPtProxy 5.5.1 (Snowflake 2.14.1).
+    add("privateSideloadImplementation", "info.guardianproject:tor-android:0.4.8.19")
     add("privateSideloadImplementation", "info.guardianproject:jtorctl:0.4.5.7")
     add("privateSideloadImplementation", "com.netzarchitekten:IPtProxy:5.5.1")
 
