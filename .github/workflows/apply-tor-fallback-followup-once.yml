@@ -1,17 +1,15 @@
 name: Apply Tor fallback follow-up once
 
 on:
-  push:
-    branches:
-      - snowflake-tor-auto-fallback
-    paths:
-      - .github/workflows/apply-tor-fallback-followup-once.yml
+  pull_request:
+    types: [synchronize]
 
 permissions:
   contents: write
 
 jobs:
   apply-and-verify:
+    if: github.head_ref == 'snowflake-tor-auto-fallback'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout branch
