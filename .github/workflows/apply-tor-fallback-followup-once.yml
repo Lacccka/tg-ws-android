@@ -26,6 +26,9 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Enable Gradle wrapper
+        run: chmod +x gradlew
+
       - name: Apply follow-up patch
         run: python3 .github/scripts/apply_tor_fallback_followup.py
 
