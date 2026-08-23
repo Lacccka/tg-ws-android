@@ -18,7 +18,7 @@
             </intent-filter>
         </activity>
 
-        <activity android:name=".XrayTunnelE2eActivity" android:exported="false" />
+        <activity android:name=".SnowflakeTorE2eActivity" android:exported="false" />
         <activity android:name=".CronetTlsControlActivity" android:exported="false" />
         <activity android:name=".CfProxyMatrixActivity" android:exported="false" />
         <activity android:name=".WorkerDiagnosticsActivity" android:exported="false" />
