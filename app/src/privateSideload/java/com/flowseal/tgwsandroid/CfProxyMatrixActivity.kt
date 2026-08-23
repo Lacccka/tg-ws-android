@@ -16,19 +16,21 @@ import android.widget.Toast
 import com.flowseal.tgwsandroid.config.AppConfigStore
 import com.flowseal.tgwsandroid.proxy.CfProxyDomains
 import com.flowseal.tgwsandroid.proxy.RawWebSocket
+import com.flowseal.tgwsandroid.proxy.TracedTlsDiagnosticTimeoutException
+import com.flowseal.tgwsandroid.proxy.TracedTrustAllTlsTransportFactory
 import java.net.Inet4Address
+import java.net.Inet6Address
 import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.Socket
+import java.net.SocketTimeoutException
 import kotlin.concurrent.thread
 import kotlin.system.measureTimeMillis
 
 /**
  * Private-sideload reachability matrix for the bundled/upstream CF proxy pool.
  *
- * Unlike direct fronting, these routes do not connect to the configured Telegram
- * IP first. A successful HTTP 101 therefore proves that the mobile network can
- * reach an intermediary WebSocket route even when direct Telegram TCP is blocked.
+ * This version deliberately pins one IPv4 and one IPv6 address instead of
+ * letting Android choose a family implicitly. It also traces TCP and TLS so a
+ * generic SocketTimeoutException can be classified as TLS or HTTP-upgrade wait.
  */
 class CfProxyMatrixActivity : Activity() {
     private lateinit var networkText: TextView
@@ -43,11 +45,11 @@ class CfProxyMatrixActivity : Activity() {
         resultText = TextView(this).apply {
             typeface = Typeface.MONOSPACE
             setTextIsSelectable(true)
-            text = "Проверяет DNS → TCP:443 → WebSocket HTTP 101 для текущего CF-proxy domain pool.\n\n" +
+            text = "Проверяет IPv4/IPv6 отдельно и различает TCP → TLS → HTTP Upgrade.\n\n" +
                 "Production routing не меняется."
         }
         runButton = Button(this).apply {
-            text = "Проверить CF proxy pool"
+            text = "Проверить CF proxy IPv4/IPv6"
             isAllCaps = false
             setOnClickListener { runProbe() }
         }
@@ -64,12 +66,12 @@ class CfProxyMatrixActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(padding, padding, padding, padding)
             addView(TextView(this@CfProxyMatrixActivity).apply {
-                text = "CF proxy matrix"
+                text = "CF proxy family/stage matrix"
                 textSize = 24f
                 typeface = Typeface.DEFAULT_BOLD
             }, matchWrap())
             addView(TextView(this@CfProxyMatrixActivity).apply {
-                text = "Ищет рабочий промежуточный WebSocket-маршрут без прямого TCP к Telegram IP и без workers.dev."
+                text = "После предыдущего прогона проверяет, одинаково ли ведут себя IPv4 и IPv6 и где именно останавливается WebSocket handshake."
             }, matchWrap(gap))
             addView(networkText, matchWrap(gap))
             addView(runButton, matchWrap(gap))
@@ -97,108 +99,150 @@ class CfProxyMatrixActivity : Activity() {
         networkText.text = "Сеть: $network"
         runButton.isEnabled = false
 
-        thread(name = "CfProxyMatrix") {
+        thread(name = "CfProxyFamilyStageMatrix") {
             val lines = mutableListOf(
-                "SE CF proxy matrix diagnostics",
+                "SE CF proxy family/stage matrix diagnostics",
                 "Network: $network",
                 "Pool source: ${if (configured.isNotEmpty()) "user-configured" else "bundled upstream defaults"}",
                 "Base domains tested: ${domains.size}",
+                "DC tested: $TEST_DC",
                 "WebSocket path: /apiws",
-                "Goal: find an intermediary route that does not require direct TCP to Telegram IP or workers.dev",
+                "Per-attempt timeout: ${WS_TIMEOUT_MS}ms (upstream CF fallback parity)",
+                "TLS verification: production/upstream trust-all parity transport",
+                "Goal: force IPv4 and IPv6 separately and identify TCP/TLS/HTTP failure stage",
                 "",
             )
 
-            var dnsOk = 0
-            var tcpOk = 0
-            var wsOk = 0
+            var dnsHosts = 0
+            var attempts = 0
+            var tcpReached = 0
+            var tlsReached = 0
             var httpResponses = 0
+            var wsOk = 0
+            var ipv4WsOk = 0
+            var ipv6WsOk = 0
+            var httpTimeouts = 0
+            var tlsTimeouts = 0
 
             try {
-                for (dc in TEST_DCS) {
-                    lines += "=== DC$dc ==="
+                for (base in domains) {
+                    val logicalHost = "kws$TEST_DC.$base"
+                    lines += "=== $logicalHost ==="
                     publish(lines)
 
-                    for (base in domains) {
-                        val host = "kws$dc.$base"
-                        lines += "--- $host ---"
+                    val resolved = try {
+                        InetAddress.getAllByName(logicalHost).toList()
+                    } catch (error: Throwable) {
+                        lines += "FAIL DNS: ${errorSummary(error)}"
+                        lines += ""
+                        publish(lines)
+                        continue
+                    }
+
+                    val v4 = resolved.filterIsInstance<Inet4Address>().distinctBy { it.hostAddress }
+                    val v6 = resolved.filterIsInstance<Inet6Address>().distinctBy { it.hostAddress }
+                    if (v4.isEmpty() && v6.isEmpty()) {
+                        lines += "FAIL DNS: no IPv4/IPv6 addresses"
+                        lines += ""
+                        publish(lines)
+                        continue
+                    }
+                    dnsHosts += 1
+                    lines += "DNS IPv4: ${v4.joinToString(", ") { it.hostAddress ?: "?" }.ifEmpty { "none" }}"
+                    lines += "DNS IPv6: ${v6.joinToString(", ") { it.hostAddress ?: "?" }.ifEmpty { "none" }}"
+                    publish(lines)
+
+                    val candidates = buildList {
+                        v4.firstOrNull()?.let { add(AddressCandidate("IPv4", it.hostAddress)) }
+                        v6.firstOrNull()?.let { add(AddressCandidate("IPv6", it.hostAddress)) }
+                    }
+
+                    for (candidate in candidates) {
+                        attempts += 1
+                        lines += "--- ${candidate.family} ${candidate.address} ---"
                         publish(lines)
 
-                        val ipv4 = try {
-                            InetAddress.getAllByName(host)
-                                .filterIsInstance<Inet4Address>()
-                                .mapNotNull { it.hostAddress }
-                                .distinct()
-                        } catch (error: Throwable) {
-                            lines += "FAIL DNS: ${errorSummary(error)}"
-                            publish(lines)
-                            continue
-                        }
-
-                        if (ipv4.isEmpty()) {
-                            lines += "FAIL DNS: no IPv4 addresses"
-                            publish(lines)
-                            continue
-                        }
-                        dnsOk += 1
-                        lines += "OK   DNS: ${ipv4.joinToString(", ")}"
-                        publish(lines)
-
-                        val tcp = try {
-                            var detail = ""
-                            val elapsed = measureTimeMillis {
-                                Socket().use { socket ->
-                                    socket.connect(InetSocketAddress(host, 443), TCP_TIMEOUT_MS)
-                                    detail = "remote=${socket.inetAddress.hostAddress}:443 local=${socket.localAddress.hostAddress}:${socket.localPort}"
-                                }
+                        var sawTcpFinished = false
+                        var sawTlsFinished = false
+                        val trace = mutableListOf<String>()
+                        val transport = TracedTrustAllTlsTransportFactory.traced { event ->
+                            synchronized(trace) {
+                                trace += event
+                                if (event.contains("TCP_CONNECT finished")) sawTcpFinished = true
+                                if (event.contains("TLS_HANDSHAKE finished")) sawTlsFinished = true
                             }
-                            tcpOk += 1
-                            lines += "OK   TCP (${elapsed}ms): $detail"
-                            publish(lines)
-                            true
-                        } catch (error: Throwable) {
-                            lines += "FAIL TCP: ${errorSummary(error)}"
-                            publish(lines)
-                            false
                         }
-                        if (!tcp) continue
 
                         try {
                             var ws: RawWebSocket? = null
                             val elapsed = measureTimeMillis {
                                 ws = RawWebSocket.connect(
-                                    host = host,
-                                    domain = host,
+                                    host = candidate.address,
+                                    domain = logicalHost,
                                     timeoutMs = WS_TIMEOUT_MS,
                                     path = "/apiws",
+                                    transportFactory = transport,
                                 )
                             }
+                            if (sawTcpFinished) tcpReached += 1
+                            if (sawTlsFinished) tlsReached += 1
                             wsOk += 1
+                            if (candidate.family == "IPv4") ipv4WsOk += 1 else ipv6WsOk += 1
+                            appendTrace(lines, trace)
                             lines += "OK   WebSocket (${elapsed}ms): HTTP 101"
                             publish(lines)
                             runCatching { ws?.close() }
                         } catch (error: RawWebSocket.WsHandshakeException) {
+                            if (sawTcpFinished) tcpReached += 1
+                            if (sawTlsFinished) tlsReached += 1
                             httpResponses += 1
+                            appendTrace(lines, trace)
                             lines += "RESP HTTP ${error.statusCode}: ${error.statusLine}" +
                                 (error.location?.let { " location=$it" } ?: "")
                             publish(lines)
+                        } catch (error: TracedTlsDiagnosticTimeoutException) {
+                            if (sawTcpFinished) tcpReached += 1
+                            tlsTimeouts += 1
+                            appendTrace(lines, trace)
+                            lines += "FAIL [${error.stage}]: ${errorSummary(error)}"
+                            publish(lines)
+                        } catch (error: SocketTimeoutException) {
+                            if (sawTcpFinished) tcpReached += 1
+                            if (sawTlsFinished) {
+                                tlsReached += 1
+                                httpTimeouts += 1
+                            }
+                            appendTrace(lines, trace)
+                            val stage = if (sawTlsFinished) "timeout_waiting_http_upgrade_response" else "socket_timeout_before_tls_finished"
+                            lines += "FAIL [$stage]: ${errorSummary(error)}"
+                            publish(lines)
                         } catch (error: Throwable) {
-                            lines += "FAIL WebSocket: ${errorSummary(error)}"
+                            if (sawTcpFinished) tcpReached += 1
+                            if (sawTlsFinished) tlsReached += 1
+                            appendTrace(lines, trace)
+                            lines += "FAIL [${failureStage(sawTcpFinished, sawTlsFinished)}]: ${errorSummary(error)}"
                             publish(lines)
                         }
                     }
                     lines += ""
                 }
 
-                lines += "RESULT: CF PROXY MATRIX COMPLETE"
-                lines += "DNS reachable routes: $dnsOk"
-                lines += "TCP reachable routes: $tcpOk"
+                lines += "RESULT: CF PROXY FAMILY/STAGE MATRIX COMPLETE"
+                lines += "DNS hosts: $dnsHosts"
+                lines += "Address-family attempts: $attempts"
+                lines += "TCP reached: $tcpReached"
+                lines += "TLS completed: $tlsReached"
+                lines += "TLS timeouts: $tlsTimeouts"
+                lines += "HTTP upgrade timeouts after TLS: $httpTimeouts"
                 lines += "HTTP responses without 101: $httpResponses"
-                lines += "WebSocket HTTP 101 routes: $wsOk"
+                lines += "WebSocket HTTP 101: $wsOk (IPv4=$ipv4WsOk, IPv6=$ipv6WsOk)"
                 lines += when {
-                    wsOk > 0 -> "VERDICT: at least one CF-proxy intermediary is reachable on this network; prioritize CF pool freshness/selection and runtime fallback diagnostics."
-                    tcpOk > 0 -> "VERDICT: intermediary domains are TCP-reachable, but none completed WebSocket upgrade; inspect HTTP statuses and pool freshness."
-                    dnsOk > 0 -> "VERDICT: domains resolve but TCP:443 is blocked/unreachable for all tested routes."
-                    else -> "VERDICT: current tested CF-proxy pool is not DNS-usable on this network."
+                    ipv4WsOk > 0 && ipv6WsOk == 0 -> "VERDICT: CF proxy works over forced IPv4 but not IPv6; Android routing should prefer IPv4 for this fallback on this network."
+                    ipv6WsOk > 0 && ipv4WsOk == 0 -> "VERDICT: CF proxy works over IPv6 but not IPv4; keep family selection network-specific."
+                    wsOk > 0 -> "VERDICT: at least one CF proxy route works; use successful family/domain as runtime fallback evidence."
+                    tlsReached > 0 && httpTimeouts > 0 -> "VERDICT: TLS succeeds but CF proxy hosts do not answer the WebSocket Upgrade within the upstream 10s window; this points past TCP/TLS and toward intermediary/service behavior or HTTP-path filtering."
+                    tcpReached > 0 && tlsReached == 0 -> "VERDICT: TCP reaches CF addresses but TLS never completes; compare the failing family/SNI traces with Worker TLS behavior."
+                    else -> "VERDICT: no tested family produced a usable CF proxy route."
                 }
             } catch (error: Throwable) {
                 lines += ""
@@ -207,6 +251,18 @@ class CfProxyMatrixActivity : Activity() {
                 finish(lines)
             }
         }
+    }
+
+    private fun appendTrace(lines: MutableList<String>, trace: List<String>) {
+        synchronized(trace) {
+            trace.forEach { lines += "TRACE $it" }
+        }
+    }
+
+    private fun failureStage(tcpFinished: Boolean, tlsFinished: Boolean): String = when {
+        tlsFinished -> "after_tls_before_http101"
+        tcpFinished -> "during_tls"
+        else -> "during_tcp_connect"
     }
 
     private fun finish(lines: List<String>) {
@@ -224,7 +280,7 @@ class CfProxyMatrixActivity : Activity() {
 
     private fun copyResult() {
         val clipboard = getSystemService(ClipboardManager::class.java)
-        clipboard.setPrimaryClip(ClipData.newPlainText("CF proxy matrix diagnostics", resultText.text))
+        clipboard.setPrimaryClip(ClipData.newPlainText("CF proxy family/stage matrix diagnostics", resultText.text))
         toast("Результат скопирован")
     }
 
@@ -256,10 +312,14 @@ class CfProxyMatrixActivity : Activity() {
 
     private fun toast(message: String) = Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
 
+    private data class AddressCandidate(
+        val family: String,
+        val address: String,
+    )
+
     companion object {
-        private val TEST_DCS = listOf(2, 4)
-        private const val MAX_BASE_DOMAINS = 6
-        private const val TCP_TIMEOUT_MS = 3_000
-        private const val WS_TIMEOUT_MS = 5_000
+        private const val TEST_DC = 2
+        private const val MAX_BASE_DOMAINS = 3
+        private const val WS_TIMEOUT_MS = 10_000
     }
 }
