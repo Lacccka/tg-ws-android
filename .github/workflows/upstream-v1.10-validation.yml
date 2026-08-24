@@ -8,6 +8,7 @@ on:
       - worker-diagnostics-probe
       - worker-diagnostics-probe-fronting-test
       - snowflake-tor-proxy-test
+      - snowflake-tor-auto-fallback
   pull_request:
     branches:
       - upstream-v1.10-fronting-pool-diagnostics

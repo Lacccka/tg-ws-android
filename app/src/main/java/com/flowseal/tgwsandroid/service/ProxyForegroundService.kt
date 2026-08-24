@@ -22,6 +22,8 @@ import android.os.PowerManager
 import com.flowseal.tgwsandroid.BuildConfig
 import com.flowseal.tgwsandroid.MainActivity
 import com.flowseal.tgwsandroid.proxy.ProxyLogger
+import com.flowseal.tgwsandroid.proxy.DefaultRawWebSocketConnector
+import com.flowseal.tgwsandroid.proxy.RawWebSocketConnector
 import com.flowseal.tgwsandroid.proxy.ProxyServer
 import com.flowseal.tgwsandroid.proxy.NetworkRouteMode
 import com.flowseal.tgwsandroid.proxy.ProxyServerStats
@@ -29,6 +31,7 @@ import com.flowseal.tgwsandroid.telemetry.Telemetry
 import com.flowseal.tgwsandroid.telemetry.TelemetryAggregator
 import com.flowseal.tgwsandroid.telemetry.BatteryRestrictionDiagnostics
 import java.io.File
+import java.net.ConnectException
 import java.time.Instant
 import java.time.LocalDateTime
 import java.util.Locale
@@ -51,6 +54,10 @@ class ProxyForegroundService : Service() {
         executor.execute { applyRouteForNetwork(status) }
     }
     private var proxyServer: ProxyServer? = null
+    private var torFallbackRuntime: TorFallbackRuntime? = null
+    private val torFallbackWarmupPolicy = TorFallbackWarmupPolicy()
+    @Volatile
+    private var forceOrdinaryRouteFailureForTorTest: Boolean = false
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var watchdogFuture: ScheduledFuture<*>? = null
     private var wakeLock: PowerManager.WakeLock? = null
@@ -74,6 +81,7 @@ class ProxyForegroundService : Service() {
         State.markServiceEvent("service_on_start_command")
         when (intent?.action) {
             ACTION_STOP_FROM_UI, ACTION_STOP_FROM_NOTIFICATION, ACTION_STOP_FROM_TILE, ACTION_STOP_LEGACY -> {
+                setTorFallbackTestOverride(false)
                 val stopSource = stopSourceForAction(intent.action)
                 State.markServiceEvent("explicit_stop_${stopSource.markerReason}")
                 State.addLog("=== Proxy stop ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, stopSource.logSource)
@@ -81,6 +89,7 @@ class ProxyForegroundService : Service() {
                 stopProxyAsync(stopSource.markerReason)
             }
             ACTION_RESTART_FROM_UI -> {
+                setTorFallbackTestOverride(torFallbackTestRequested(intent))
                 State.markServiceEvent("restart_begin")
                 State.addLog("=== Proxy restart ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, "ui")
                 State.addLog("restart command received from UI", LogSeverity.INFO, "service")
@@ -88,6 +97,7 @@ class ProxyForegroundService : Service() {
                 restartProxyAsync()
             }
             ACTION_START, null -> {
+                setTorFallbackTestOverride(torFallbackTestRequested(intent))
                 State.addLog("=== Proxy start ${LocalDateTime.now().format(RuntimeLogStore.TIME_FORMATTER)} ===", LogSeverity.INFO, "ui")
                 State.addLog("start command received", LogSeverity.INFO, "service")
                 State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
@@ -143,6 +153,53 @@ class ProxyForegroundService : Service() {
         watchdogExecutor.shutdownNow()
         super.onDestroy()
     }
+
+    private fun torFallbackTestRequested(intent: Intent?): Boolean =
+        BuildConfig.SNOWFLAKE_TOR_PACKAGED &&
+            intent?.getBooleanExtra(EXTRA_FORCE_ORDINARY_ROUTE_FAILURE_FOR_TOR_TEST, false) == true
+
+    private fun setTorFallbackTestOverride(enabled: Boolean) {
+        forceOrdinaryRouteFailureForTorTest = enabled && BuildConfig.SNOWFLAKE_TOR_PACKAGED
+        State.setTorFallbackTestOverrideActive(forceOrdinaryRouteFailureForTorTest)
+        if (forceOrdinaryRouteFailureForTorTest) {
+            State.addLog(
+                "PRIVATE TEST: ordinary direct/CF outbound is forced unavailable on mobile so production AUTO must reach Tor/Snowflake",
+                LogSeverity.WARN,
+                "service",
+            )
+        } else {
+            State.addLog("PRIVATE TEST: Tor fallback ordinary-route override disabled", LogSeverity.INFO, "service")
+        }
+    }
+
+    private fun ordinaryWebSocketConnectorForCurrentRun(): RawWebSocketConnector {
+        if (!forceOrdinaryRouteFailureForTorTest) return DefaultRawWebSocketConnector
+        return object : RawWebSocketConnector {
+            override fun connect(targetHost: String, domain: String, path: String, timeoutMs: Int) =
+                if (shouldForceOrdinaryRouteFailureForTorTest()) {
+                    throw ConnectException("privateSideload test forced ordinary route unavailable for $domain")
+                } else {
+                    DefaultRawWebSocketConnector.connect(targetHost, domain, path, timeoutMs)
+                }
+
+            override fun connectWithSni(
+                targetHost: String,
+                domain: String,
+                path: String,
+                timeoutMs: Int,
+                sniHost: String,
+            ) = if (shouldForceOrdinaryRouteFailureForTorTest()) {
+                throw ConnectException("privateSideload test forced ordinary route unavailable for $domain (SNI=$sniHost)")
+            } else {
+                DefaultRawWebSocketConnector.connectWithSni(targetHost, domain, path, timeoutMs, sniHost)
+            }
+        }
+    }
+
+    private fun shouldForceOrdinaryRouteFailureForTorTest(): Boolean =
+        forceOrdinaryRouteFailureForTorTest &&
+            BuildConfig.SNOWFLAKE_TOR_PACKAGED &&
+            (State.networkStatus.equals("mobile", ignoreCase = true) || State.networkStatus.equals("cellular", ignoreCase = true))
 
     private fun startProxyAsync() {
         if (!startOrRefreshForegroundNotification(stopServiceOnFailure = true)) return
@@ -212,7 +269,34 @@ class ProxyForegroundService : Service() {
             State.markServiceEvent("proxy_start_requested")
             registerNetworkCallback()
             val logger = ProxyLogger { message -> State.addProxyLog(message) }
-            val server = ProxyServer(ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus), logger = logger)
+            val runtime = TorFallbackRuntimeLoader.create(applicationContext, logger)
+            torFallbackRuntime = runtime
+            torFallbackWarmupPolicy.onNetworkChanged(State.networkStatus)
+            runtime?.onNetworkChanged(State.networkStatus)
+            if (forceOrdinaryRouteFailureForTorTest) {
+                runtime?.requestWarmup("private production fallback test")
+            }
+            State.updateTorFallbackRuntimeSnapshot(runCatching { runtime?.snapshot() }.getOrNull())
+            val serverConfig = ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus).copy(
+                torSnowflakeFallbackEnabled = runtime != null,
+            )
+            val server = ProxyServer(
+                config = serverConfig,
+                webSocketConnector = ordinaryWebSocketConnectorForCurrentRun(),
+                torSnowflakeConnector = runtime?.connector,
+                onOrdinaryRoutesExhausted = { dcId, isMedia, reason ->
+                    val decision = torFallbackWarmupPolicy.recordOrdinaryRouteExhausted(reason)
+                    if (decision.newlyTriggered) {
+                        val warmupReason = "${decision.reason}; DC$dcId media=$isMedia failures=${decision.recentFailureCount}"
+                        State.addLog("Tor/Snowflake lazy warmup triggered: $warmupReason", LogSeverity.WARN, "network")
+                        runtime?.requestWarmup(warmupReason)
+                        State.updateTorFallbackRuntimeSnapshot(runCatching { runtime?.snapshot() }.getOrNull())
+                    }
+                },
+                torSnowflakeReadyProvider = { runCatching { runtime?.snapshot()?.ready == true }.getOrDefault(false) },
+                torSnowflakeWaitUntilReady = { timeoutMs -> runCatching { runtime?.awaitReady(timeoutMs) == true }.getOrDefault(false) },
+                logger = logger,
+            )
             proxyServer = server
             State.setLiveStatsProvider { synchronized(lock) { proxyServer }?.stats() }
             try {
@@ -233,6 +317,10 @@ class ProxyForegroundService : Service() {
                     // Best-effort cleanup after a partial start failure.
                 }
                 proxyServer = null
+                torFallbackRuntime = null
+                runCatching { runtime?.stop() }
+                    .onFailure { State.addLog("Tor/Snowflake cleanup after start failure failed: ${it.javaClass.simpleName}: ${it.message.orEmpty()}", LogSeverity.WARN, "service") }
+                State.updateTorFallbackRuntimeSnapshot(null)
                 State.setLiveStatsProvider(null)
                 State.updateStats(null)
                 State.setRunning(false, "proxy start failed with exception: ${error.message ?: error::class.java.simpleName}")
@@ -266,6 +354,9 @@ class ProxyForegroundService : Service() {
             proxyServer.also { proxyServer = null }
         }
         State.setLiveStatsProvider(null)
+        val torRuntime = synchronized(lock) {
+            torFallbackRuntime.also { torFallbackRuntime = null }
+        }
         if (server != null) {
             try {
                 server.stop()
@@ -274,6 +365,9 @@ class ProxyForegroundService : Service() {
                 State.addLog("Proxy stop failed: ${error.message ?: error::class.java.simpleName}", LogSeverity.WARN, "service")
             }
         }
+        runCatching { torRuntime?.stop() }
+            .onFailure { State.addLog("Tor/Snowflake stop failed: ${it.javaClass.simpleName}: ${it.message.orEmpty()}", LogSeverity.WARN, "service") }
+        State.updateTorFallbackRuntimeSnapshot(null)
         telemetryAggregator.flushOnStop()
         sendQueuedTelemetrySnapshots()
         releaseWakeLock()
@@ -484,6 +578,9 @@ class ProxyForegroundService : Service() {
     }
 
     private fun applyRouteForNetwork(networkStatus: String, immediate: Boolean = false) {
+        torFallbackWarmupPolicy.onNetworkChanged(networkStatus)
+        torFallbackRuntime?.onNetworkChanged(networkStatus)
+        State.updateTorFallbackRuntimeSnapshot(runCatching { torFallbackRuntime?.snapshot() }.getOrNull())
         val server = synchronized(lock) { proxyServer }
         if (server?.isRunning != true) {
             State.addLog("route unchanged: proxy not running for network=$networkStatus", LogSeverity.INFO, "network")
@@ -526,7 +623,9 @@ class ProxyForegroundService : Service() {
             } catch (_: Throwable) {
                 null
             }
+            val torRuntimeSnapshot = runCatching { torFallbackRuntime?.snapshot() }.getOrNull()
             State.updateStats(stats)
+            State.updateTorFallbackRuntimeSnapshot(torRuntimeSnapshot)
             State.setBatteryOptimizationStatus(detectBatteryOptimizationStatus())
             if (stats != null) {
                 telemetryAggregator.recordStats(
@@ -540,7 +639,9 @@ class ProxyForegroundService : Service() {
                 sendQueuedTelemetrySnapshots()
             }
             State.markWatchdogHeartbeat()
-            val line = "watchdog: running=${server?.isRunning == true} ${compactStats(stats)} " +
+            val line = "watchdog: running=${server?.isRunning == true} ${compactStats(stats, torRuntimeSnapshot)} " +
+                "torWarmupPolicy=${compactTorWarmupPolicy(torFallbackWarmupPolicy.snapshot())} " +
+                "torTestOverride=${State.isTorFallbackTestOverrideActive()} " +
                 "network=${State.networkStatus} route=${stats?.effectiveRouteMode ?: "unknown"} battery=${State.batteryOptimizationStatus}"
             State.addLog(line, LogSeverity.INFO, "service")
         }, WATCHDOG_INTERVAL_SECONDS, WATCHDOG_INTERVAL_SECONDS, TimeUnit.SECONDS)
@@ -565,7 +666,7 @@ class ProxyForegroundService : Service() {
         }
     }
 
-    private fun compactStats(stats: ProxyServerStats?): String = if (stats == null) {
+    private fun compactStats(stats: ProxyServerStats?, torRuntime: TorFallbackRuntimeSnapshot?): String = if (stats == null) {
         "stats=unknown"
     } else {
         "active=${stats.connectionsActive} total=${stats.connectionsTotal} wsErr=${stats.wsConnectErrors} " +
@@ -586,8 +687,23 @@ class ProxyForegroundService : Service() {
             "cfPoolRefillAttempts=${stats.cfPoolRefillAttempts} cfPoolRefillSuccesses=${stats.cfPoolRefillSuccesses} " +
             "cfPoolRefillErrors=${stats.cfPoolRefillErrors} cfPoolStale=${stats.cfPoolStale} " +
             "cfPoolLastDomainByKey=${compactMap(stats.cfPoolLastDomainByKey)} " +
+            "torSnowflake=${stats.torSnowflakeSuccesses}/${stats.torSnowflakeAttempts}/${stats.torSnowflakeFailures} " +
+            "torUnavailable=${stats.torSnowflakeUnavailable} " +
+            "torRuntime=${compactTorRuntime(torRuntime)} " +
             "directHealth=${stats.directHealthState} route=${stats.effectiveRouteMode} lastRoute=${stats.lastRouteUsed ?: "none"}"
     }
+
+    private fun compactTorRuntime(snapshot: TorFallbackRuntimeSnapshot?): String = if (snapshot == null) {
+        "unavailable"
+    } else {
+        "desired=${snapshot.desired},running=${snapshot.running},ready=${snapshot.ready}," +
+            "bootstrap=${snapshot.bootstrapProgress},phase=${snapshot.phase},lastError=${snapshot.lastError ?: "none"}," +
+            "warmupReason=${snapshot.warmupReason ?: "none"},warmupAt=${snapshot.warmupRequestedAtMs ?: 0L}"
+    }
+
+    private fun compactTorWarmupPolicy(snapshot: TorFallbackWarmupPolicySnapshot): String =
+        "network=${snapshot.networkStatus},failures=${snapshot.recentFailureCount},triggered=${snapshot.triggered}," +
+            "reason=${snapshot.reason ?: "none"},triggeredAt=${snapshot.triggeredAtMs ?: 0L}"
 
     private fun compactMap(values: Map<*, *>): String =
         if (values.isEmpty()) "none" else values.entries.joinToString(";") { "${it.key}=${it.value}" }
@@ -599,6 +715,8 @@ class ProxyForegroundService : Service() {
         const val ACTION_STOP_FROM_NOTIFICATION = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_NOTIFICATION"
         const val ACTION_STOP_FROM_TILE = "com.flowseal.tgwsandroid.action.STOP_PROXY_FROM_TILE"
         const val ACTION_RESTART_FROM_UI = "com.flowseal.tgwsandroid.action.RESTART_PROXY_FROM_UI"
+        const val EXTRA_FORCE_ORDINARY_ROUTE_FAILURE_FOR_TOR_TEST =
+            "com.flowseal.tgwsandroid.extra.FORCE_ORDINARY_ROUTE_FAILURE_FOR_TOR_TEST"
         private const val CHANNEL_ID = "proxy_foreground"
         private const val NOTIFICATION_ID = 1001
         private const val WATCHDOG_INTERVAL_SECONDS = 45L
@@ -646,6 +764,9 @@ class ProxyForegroundService : Service() {
 
         fun restartIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_RESTART_FROM_UI)
 
+        fun torFallbackProductionTestRestartIntent(context: Context, enabled: Boolean): Intent =
+            restartIntent(context).putExtra(EXTRA_FORCE_ORDINARY_ROUTE_FAILURE_FOR_TOR_TEST, enabled)
+
         fun stopFromTileIntent(context: Context): Intent = Intent(context, ProxyForegroundService::class.java).setAction(ACTION_STOP_FROM_TILE)
 
         data class StopSource(val logSource: String, val markerReason: String, val logMessage: String)
@@ -681,6 +802,10 @@ class ProxyForegroundService : Service() {
             private set
         @Volatile
         private var statsSnapshot: ProxyServerStats? = null
+        @Volatile
+        private var torFallbackRuntimeSnapshot: TorFallbackRuntimeSnapshot? = null
+        @Volatile
+        private var torFallbackTestOverrideActive: Boolean = false
         @Volatile
         private var liveStatsProvider: (() -> ProxyServerStats?)? = null
         @Volatile
@@ -864,6 +989,18 @@ class ProxyForegroundService : Service() {
             statsSnapshot = stats
         }
 
+        fun updateTorFallbackRuntimeSnapshot(snapshot: TorFallbackRuntimeSnapshot?) {
+            torFallbackRuntimeSnapshot = snapshot
+        }
+
+        fun currentTorFallbackRuntimeSnapshot(): TorFallbackRuntimeSnapshot? = torFallbackRuntimeSnapshot
+
+        fun setTorFallbackTestOverrideActive(active: Boolean) {
+            torFallbackTestOverrideActive = active
+        }
+
+        fun isTorFallbackTestOverrideActive(): Boolean = torFallbackTestOverrideActive
+
         fun setLiveStatsProvider(provider: (() -> ProxyServerStats?)?) {
             liveStatsProvider = provider
         }
@@ -950,6 +1087,8 @@ class ProxyForegroundService : Service() {
                     lastRouteChangeTimeMs = stats?.lastRouteChangeTimeMs,
                     networkAtLastRouteChange = stats?.networkAtLastRouteChange ?: "unknown",
                     stats = stats,
+                    torFallbackRuntime = torFallbackRuntimeSnapshot,
+                    torFallbackTestOverrideActive = torFallbackTestOverrideActive,
                     statsSnapshotTimeMs = stats?.statsSnapshotTimeMs?.takeIf { it > 0L },
                     runtimeLogTailUntilMs = runtimeLogTailUntilMs,
                     lastEffectiveRouteModeUpdateTimeMs = stats?.lastEffectiveRouteModeUpdateTimeMs,

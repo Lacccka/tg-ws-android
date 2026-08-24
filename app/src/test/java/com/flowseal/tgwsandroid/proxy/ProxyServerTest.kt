@@ -2018,6 +2018,32 @@ class ProxyServerTest {
     }
 
     @Test
+    fun staleWifiHealthPromotionCallbackCannotRepromoteAfterMobileTransition() {
+        val server = FakeTcpServerTransport()
+        val logs = CopyOnWriteArrayList<String>()
+        val proxy = newProxy(
+            server = server,
+            config = baseConfig().copy(routeMode = NetworkRouteMode.AUTO, networkStatus = "mobile", poolSize = 0),
+            logger = ProxyLogger { logs.add(it) },
+        )
+
+        proxy.start()
+        proxy.applyEffectiveRouteMode(NetworkRouteMode.DIRECT_FIRST, "test promoted", "Wi-Fi")
+        proxy.applyNetworkRouteImmediately("mobile")
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+
+        val method = ProxyServer::class.java.getDeclaredMethod("commitAutoWifiDirectPromotionIfStillValid")
+        method.isAccessible = true
+        val staleResult = method.invoke(proxy)
+        proxy.stop()
+
+        assertNull("stale Wi-Fi health callback must be discarded on mobile", staleResult)
+        assertEquals(NetworkRouteMode.CF_FIRST.configValue, proxy.stats().effectiveRouteMode)
+        assertTrue(logs.any { it.contains("direct promotion discarded: stale Wi-Fi health probe") && it.contains("network=mobile") })
+        assertFalse(logs.dropWhile { !it.contains("network=mobile") }.any { it.contains("direct promoted:") })
+    }
+
+    @Test
     fun networkChangeWifiToMobileUpdatesEffectiveRouteToCfFirst() {
         val server = FakeTcpServerTransport()
         val logs = CopyOnWriteArrayList<String>()
@@ -3326,6 +3352,244 @@ class ProxyServerTest {
     }
 
     @Test
+    fun autoMobileForcedOrdinaryConnectorFailuresReachTorThroughProductionRouting() {
+        val server = FakeTcpServerTransport()
+        val ordinaryDomains = CopyOnWriteArrayList<String>()
+        val ordinary = RawWebSocketConnector { _, domain, _, _ ->
+            ordinaryDomains.add(domain)
+            throw IOException("private test ordinary route unavailable for $domain")
+        }
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = ordinary,
+            torSnowflakeConnector = tor,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = true,
+                cfPoolEnabled = false,
+                cfProxyDomains = listOf("cf.example"),
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil("forced ordinary route failure should reach Tor/Snowflake") {
+            proxy.stats().lastRouteUsed == TOR_SNOWFLAKE_ROUTE_TYPE
+        }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertTrue("production CF path should be attempted before Tor", ordinaryDomains.contains("kws2.cf.example"))
+        assertEquals(1L, stats.cfProxyErrors)
+        assertEquals(1L, stats.torSnowflakeAttempts)
+        assertEquals(1L, stats.torSnowflakeSuccesses)
+        assertEquals(0L, stats.torSnowflakeFailures)
+        assertEquals(TOR_SNOWFLAKE_ROUTE_TYPE, stats.lastRouteUsed)
+        assertEquals(listOf("kws2.web.telegram.org"), tor.domains)
+    }
+
+    @Test
+    fun autoMobileUsesTorSnowflakeAfterOrdinaryRoutesAreUnavailable() {
+        val server = FakeTcpServerTransport()
+        val direct = RecordingConnector(FakeWebSocketBinaryStream())
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = direct,
+            torSnowflakeConnector = tor,
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = false,
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil("Tor/Snowflake route") { proxy.stats().lastRouteUsed == TOR_SNOWFLAKE_ROUTE_TYPE }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(TOR_SNOWFLAKE_ROUTE_TYPE, stats.lastRouteUsed)
+        assertEquals(0L, stats.directAttempts)
+        assertEquals(1L, stats.torSnowflakeAttempts)
+        assertEquals(1L, stats.torSnowflakeSuccesses)
+        assertEquals(0L, stats.torSnowflakeFailures)
+        assertTrue(direct.domains.isEmpty())
+        assertEquals(listOf("kws2.web.telegram.org"), tor.domains)
+    }
+
+    @Test
+    fun unknownDirectDcFallsBackToTorUsingTunnelDnsAfterCfFailure() {
+        val server = FakeTcpServerTransport()
+        val cfAttempts = CopyOnWriteArrayList<String>()
+        val cfConnector = RawWebSocketConnector { _, domain, _, _ ->
+            cfAttempts.add(domain)
+            throw IOException("planned CF failure for $domain")
+        }
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            connector = cfConnector,
+            torSnowflakeConnector = tor,
+            config = baseConfig().copy(
+                dcRedirects = emptyMap(),
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = true,
+                cfPoolEnabled = false,
+                cfProxyDomains = listOf("cf.example"),
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(buildClientHandshake(dcIdx = -5, protoTag = RelayInit.PROTO_TAG_SECURE)))
+        waitUntil("DC5 media Tor/Snowflake route") { proxy.stats().lastRouteUsed == TOR_SNOWFLAKE_ROUTE_TYPE }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(listOf("kws5.cf.example"), cfAttempts.toList())
+        assertEquals(listOf("kws5-1.web.telegram.org"), tor.targetHosts.toList())
+        assertEquals(listOf("kws5-1.web.telegram.org"), tor.domains.toList())
+        assertEquals(TOR_SNOWFLAKE_ROUTE_TYPE, stats.lastRouteUsed)
+        assertEquals(1L, stats.torSnowflakeAttempts)
+        assertEquals(1L, stats.torSnowflakeSuccesses)
+        assertEquals(0L, stats.torSnowflakeFailures)
+        assertEquals(0L, stats.unsupportedDc)
+        assertEquals(0L, stats.connectionsBad)
+    }
+
+    @Test
+    fun cfOnlyUnknownDirectDcDoesNotUseTorFallback() {
+        val server = FakeTcpServerTransport()
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            torSnowflakeConnector = tor,
+            config = baseConfig().copy(
+                dcRedirects = emptyMap(),
+                routeMode = NetworkRouteMode.CF_ONLY,
+                networkStatus = "mobile",
+                cfproxyEnabled = false,
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        val client = FakeTcpClientTransport(buildClientHandshake(dcIdx = -5, protoTag = RelayInit.PROTO_TAG_SECURE))
+        server.enqueue(client)
+        waitUntil("CF_ONLY unknown DC client closes") { client.closed }
+        proxy.stop()
+
+        assertTrue(tor.domains.isEmpty())
+        assertEquals(0L, proxy.stats().torSnowflakeAttempts)
+        assertEquals(1L, proxy.stats().unsupportedDc)
+        assertEquals(1L, proxy.stats().connectionsBad)
+    }
+
+    @Test
+    fun warmingTorFallbackDoesNotCountAsTorNetworkFailure() {
+        val server = FakeTcpServerTransport()
+        val proxy = newProxy(
+            server = server,
+            torSnowflakeConnector = RawWebSocketConnector { _, _, _, _ ->
+                throw TorSnowflakeUnavailableException("bootstrap=72%")
+            },
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = false,
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        server.enqueue(client)
+        waitUntil("client closes after warming Tor fallback") { client.closed }
+        proxy.stop()
+
+        val stats = proxy.stats()
+        assertEquals(1L, stats.torSnowflakeAttempts)
+        assertEquals(0L, stats.torSnowflakeSuccesses)
+        assertEquals(0L, stats.torSnowflakeFailures)
+        assertEquals(1L, stats.torSnowflakeUnavailable)
+        assertTrue(stats.lastTorSnowflakeError.orEmpty().contains("72%"))
+    }
+
+    @Test
+    fun serviceReadinessGateSkipsColdTorConnectorButSignalsOrdinaryExhaustion() {
+        val server = FakeTcpServerTransport()
+        val signals = CopyOnWriteArrayList<String>()
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            torSnowflakeConnector = tor,
+            onOrdinaryRoutesExhausted = { dcId, isMedia, reason -> signals.add("$dcId/$isMedia/$reason") },
+            torSnowflakeReadyProvider = { false },
+            torSnowflakeWaitUntilReady = { false },
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = false,
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        server.enqueue(client)
+        waitUntil("cold Tor client closes") { client.closed }
+        proxy.stop()
+
+        assertEquals(1, signals.size)
+        assertTrue(signals.first().contains("CF-first ordinary routes exhausted"))
+        assertTrue(tor.domains.isEmpty())
+        assertEquals(0L, proxy.stats().torSnowflakeAttempts)
+        assertEquals(1L, proxy.stats().torSnowflakeUnavailable)
+    }
+
+    @Test
+    fun serviceReadinessGateCanWaitForWarmTorWithoutTelegramReconnect() {
+        val server = FakeTcpServerTransport()
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        var ready = false
+        var waits = 0
+        val proxy = newProxy(
+            server = server,
+            torSnowflakeConnector = tor,
+            onOrdinaryRoutesExhausted = { _, _, _ -> },
+            torSnowflakeReadyProvider = { ready },
+            torSnowflakeWaitUntilReady = {
+                waits += 1
+                ready = true
+                true
+            },
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = false,
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil("warming wait should continue same client through Tor") { proxy.stats().lastRouteUsed == TOR_SNOWFLAKE_ROUTE_TYPE }
+        proxy.stop()
+
+        assertEquals(1, waits)
+        assertEquals(1L, proxy.stats().torSnowflakeAttempts)
+        assertEquals(1L, proxy.stats().torSnowflakeSuccesses)
+        assertEquals(0L, proxy.stats().torSnowflakeUnavailable)
+    }
+
+    @Test
     fun protoTagsMapToExpectedSplitterProtoInts() {
         assertEquals(MsgSplitter.PROTO_ABRIDGED_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_ABRIDGED))
         assertEquals(MsgSplitter.PROTO_INTERMEDIATE_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_INTERMEDIATE))
@@ -3354,11 +3618,19 @@ class ProxyServerTest {
         config: ProxyServerConfig = baseConfig(),
         logger: ProxyLogger = ProxyLogger {},
         cfDomainHealth: CfDomainHealth = CfDomainHealth(config.cfProxyDomains),
+        torSnowflakeConnector: RawWebSocketConnector? = null,
+        onOrdinaryRoutesExhausted: ((Int, Boolean, String) -> Unit)? = null,
+        torSnowflakeReadyProvider: (() -> Boolean)? = null,
+        torSnowflakeWaitUntilReady: ((Long) -> Boolean)? = null,
     ): ProxyServer =
         ProxyServer(
             config = config,
             serverTransport = server,
             webSocketConnector = connector,
+            torSnowflakeConnector = torSnowflakeConnector,
+            onOrdinaryRoutesExhausted = onOrdinaryRoutesExhausted,
+            torSnowflakeReadyProvider = torSnowflakeReadyProvider,
+            torSnowflakeWaitUntilReady = torSnowflakeWaitUntilReady,
             bridgeRunner = runner,
             cfDomainHealth = cfDomainHealth,
             randomBytes = DeterministicRandomBytes,

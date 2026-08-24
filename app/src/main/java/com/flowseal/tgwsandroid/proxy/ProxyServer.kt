@@ -42,6 +42,9 @@ data class ProxyServerConfig(
     val routeMode: NetworkRouteMode = NetworkRouteMode.AUTO,
     val networkStatus: String = "unknown",
     val directFallbackTimeoutMs: Int = 2_000,
+    /** Enables an independently managed Tor/Snowflake outbound after ordinary routes fail. */
+    val torSnowflakeFallbackEnabled: Boolean = false,
+    val torSnowflakeConnectTimeoutMs: Int = 15_000,
 ) {
     val effectiveRouteMode: NetworkRouteMode = RouteStrategy.resolve(routeMode, networkStatus)
     companion object {
@@ -300,6 +303,12 @@ class ProxyServerStats {
     var lastFrontingError: String? = null
     var lastFrontingTimeMs: Long = 0
     var lastCfDomain: String? = null
+    var torSnowflakeAttempts: Long = 0
+    var torSnowflakeSuccesses: Long = 0
+    var torSnowflakeFailures: Long = 0
+    var torSnowflakeUnavailable: Long = 0
+    var lastTorSnowflakeError: String? = null
+    var lastTorSnowflakeTimeMs: Long = 0
     var directAttempts: Long = 0
     var directAttemptsSkippedBecauseRoute: Long = 0
     var directTargetIpCooldownHits: Long = 0
@@ -793,6 +802,14 @@ class ProxyServer(
     private val config: ProxyServerConfig,
     private val serverTransport: TcpServerTransport = JavaTcpServerTransport(),
     private val webSocketConnector: RawWebSocketConnector = DefaultRawWebSocketConnector,
+    /** Separate connector so Tor success never contaminates direct/CF health or pooling. */
+    private val torSnowflakeConnector: RawWebSocketConnector? = null,
+    /** Called only after ordinary direct/CF/recovery paths are exhausted for a client. */
+    private val onOrdinaryRoutesExhausted: ((dcId: Int, isMedia: Boolean, reason: String) -> Unit)? = null,
+    /** Optional service-owned readiness gate; null preserves standalone/core behavior. */
+    private val torSnowflakeReadyProvider: (() -> Boolean)? = null,
+    /** Optional bounded wait so Telegram clients can survive an in-progress Tor bootstrap. */
+    private val torSnowflakeWaitUntilReady: ((timeoutMs: Long) -> Boolean)? = null,
     private val bridgeRunner: ProxyBridgeRunner = ProxyBridgeRunner { client, webSocket, cryptoContext, splitter, counters ->
         BridgeSession(
             client = client,
@@ -916,6 +933,13 @@ class ProxyServer(
     private val cfPoolRefillSuccessesByKey = ConcurrentHashMap<String, AtomicLong>()
     private val cfPoolRefillErrorsByKey = ConcurrentHashMap<String, AtomicLong>()
     private val directTimeouts = AtomicLong(0)
+    private val torSnowflakeAttempts = AtomicLong(0)
+    private val torSnowflakeSuccesses = AtomicLong(0)
+    private val torSnowflakeFailures = AtomicLong(0)
+    private val torSnowflakeUnavailable = AtomicLong(0)
+    private val lastTorSnowflakeError = AtomicReference<String?>(null)
+    private val lastTorSnowflakeTimeMs = AtomicLong(0)
+    private val lastTorSnowflakeWarmingLogAtMs = AtomicLong(0)
     private val directAttempts = AtomicLong(0)
     private val directAttemptsSkippedBecauseRoute = AtomicLong(0)
     private val directTargetIpCooldownHits = AtomicLong(0)
@@ -985,6 +1009,8 @@ class ProxyServer(
     private val networkSettlingControlledFailures = AtomicLong(0)
     private val networkSettlingStaleAttemptsIgnored = AtomicLong(0)
     private val routeGeneration = AtomicLong(0)
+    /** Serializes network-route commits with asynchronous direct-health promotions. */
+    private val routePolicyMonitor = Object()
     private val networkStateMonitor = Object()
     private val networkSettlingUntilMs = AtomicLong(0)
     private val lastNetworkLostAtMs = AtomicLong(0)
@@ -1261,6 +1287,12 @@ class ProxyServer(
         snapshot.lastFrontingError = lastFrontingError.get()
         snapshot.lastFrontingTimeMs = lastFrontingTimeMs.get()
         snapshot.lastCfDomain = lastCfDomain
+        snapshot.torSnowflakeAttempts = torSnowflakeAttempts.get()
+        snapshot.torSnowflakeSuccesses = torSnowflakeSuccesses.get()
+        snapshot.torSnowflakeFailures = torSnowflakeFailures.get()
+        snapshot.torSnowflakeUnavailable = torSnowflakeUnavailable.get()
+        snapshot.lastTorSnowflakeError = lastTorSnowflakeError.get()
+        snapshot.lastTorSnowflakeTimeMs = lastTorSnowflakeTimeMs.get()
         snapshot.directAttempts = directAttempts.get()
         snapshot.directAttemptsSkippedBecauseRoute = directAttemptsSkippedBecauseRoute.get()
         snapshot.directTargetIpCooldownHits = directTargetIpCooldownHits.get()
@@ -1428,7 +1460,7 @@ class ProxyServer(
     fun applyNetworkRouteImmediately(networkStatus: String): RouteChangeResult =
         applyNetworkRoute(networkStatus, immediate = true)
 
-    private fun applyNetworkRoute(networkStatus: String, immediate: Boolean): RouteChangeResult {
+    private fun applyNetworkRoute(networkStatus: String, immediate: Boolean): RouteChangeResult = synchronized(routePolicyMonitor) {
         val normalized = networkStatus.ifBlank { "unknown" }
         val previousNetworkStatus = currentNetworkStatus
         if (shouldIgnoreHealthyWifiCapabilityEvent(previousNetworkStatus, normalized)) {
@@ -1487,7 +1519,7 @@ class ProxyServer(
             source = if (immediate) "immediate" else "debounce",
         )
         maybeStartAutoWifiDirectProbe(normalized, previousNetworkStatus)
-        return result
+        result
     }
 
     private fun isMobileGenerationRecoveryTransition(previousNetworkStatus: String, networkStatus: String): Boolean {
@@ -1652,9 +1684,21 @@ class ProxyServer(
             if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) {
                 return true
             }
+            val torAllowedForUnknownDirectDc =
+                effectiveRouteMode() != NetworkRouteMode.CF_ONLY &&
+                    config.torSnowflakeFallbackEnabled &&
+                    isMobile(currentNetworkStatus)
+            if (torAllowedForUnknownDirectDc) {
+                notifyOrdinaryRoutesExhausted(parsed, "unknown DC ordinary routes exhausted after CF")
+                logger.log("DC${parsed.dcId} has no direct redirect; trying Tor/Snowflake with tunnel-side DNS")
+                if (tryTorSnowflakeFallback(client, parsed, null, relayInit, cryptoContext, splitter)) return true
+                recordNoRoute(parsed.dcId)
+                logger.log("DC${parsed.dcId} no route available after CF/Tor attempts; no direct redirect configured")
+                return true
+            }
             recordUnsupportedDc(parsed.dcId)
             recordNoRoute(parsed.dcId)
-            markBad("Unsupported DC ${parsed.dcId} from ${client.remoteLabel}; no direct redirect or CF proxy route available")
+            markBad("Unsupported DC ${parsed.dcId} from ${client.remoteLabel}; no direct redirect or allowed CF/Tor route available")
             return true
         }
 
@@ -1715,20 +1759,92 @@ class ProxyServer(
                 }
                 if (tryEmergencyDirectFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter, routeAttemptStartGeneration, cfFirstDirectFallbackAttempted)) return true
                 if (tryCfInflightWaitBeforeNoRoute(client, parsed, relayInit, cryptoContext, splitter)) return true
+                notifyOrdinaryRoutesExhausted(parsed, "CF-first ordinary routes exhausted")
+                if (tryTorSnowflakeFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return true
                 recordNoRoute(parsed.dcId)
-                logger.log("DC${parsed.dcId} no route available after CF-first attempts")
+                logger.log("DC${parsed.dcId} no route available after CF-first/Tor attempts")
             }
             NetworkRouteMode.DIRECT_FIRST, NetworkRouteMode.AUTO -> {
                 if (tryDirectRoute(client, parsed, targetHost, relayInit, cryptoContext, splitter, usePool = true, timeoutMs = RawWebSocket.DEFAULT_CONNECT_TIMEOUT_MS)) return true
                 if (config.cfproxyEnabled && tryCfProxyFallback(client, parsed, relayInit, cryptoContext, splitter)) return true
+                notifyOrdinaryRoutesExhausted(parsed, "direct/CF ordinary routes exhausted")
+                if (tryTorSnowflakeFallback(client, parsed, targetHost, relayInit, cryptoContext, splitter)) return true
                 recordNoRoute(parsed.dcId)
-                logger.log("DC${parsed.dcId} no route available after direct WebSocket attempts")
+                logger.log("DC${parsed.dcId} no route available after direct/CF/Tor attempts")
                 downgradeDirectRouteBecauseHealthDegraded("no route available after direct attempts")
             }
         }
         return true
     }
 
+
+    private fun notifyOrdinaryRoutesExhausted(parsed: MtprotoHandshake.Result, reason: String) {
+        val callback = onOrdinaryRoutesExhausted ?: return
+        runCatching { callback(parsed.dcId, parsed.isMedia, reason) }
+            .onFailure { logger.log("DC${parsed.dcId} Tor warmup signal callback failed: ${failureDetail(it)}") }
+    }
+
+    private fun tryTorSnowflakeFallback(
+        client: TcpClientTransport,
+        parsed: MtprotoHandshake.Result,
+        targetHost: String?,
+        relayInit: ByteArray,
+        cryptoContext: CryptoContext,
+        splitter: MsgSplitter,
+    ): Boolean {
+        if (!config.torSnowflakeFallbackEnabled || !isMobile(currentNetworkStatus)) return false
+        val connector = torSnowflakeConnector ?: return false
+        if (torSnowflakeReadyProvider?.invoke() == false) {
+            val becameReady = torSnowflakeWaitUntilReady?.invoke(TOR_SNOWFLAKE_WARMING_CLIENT_WAIT_MS) == true
+            if (!becameReady) {
+                torSnowflakeUnavailable.incrementAndGet()
+                val detail = "Tor/Snowflake warmup pending; no connector attempt"
+                lastTorSnowflakeError.set(detail)
+                val now = System.currentTimeMillis()
+                val previous = lastTorSnowflakeWarmingLogAtMs.get()
+                if (now - previous >= TOR_SNOWFLAKE_WARMING_LOG_THROTTLE_MS && lastTorSnowflakeWarmingLogAtMs.compareAndSet(previous, now)) {
+                    logger.log("DC${parsed.dcId} $detail")
+                }
+                return false
+            }
+        }
+        for (domain in wsDomains(parsed.dcId, parsed.isMedia)) {
+            val outboundTarget = targetHost ?: domain
+            lastTorSnowflakeTimeMs.set(System.currentTimeMillis())
+            logger.log("DC${parsed.dcId} media=${parsed.isMedia} -> trying Tor/Snowflake wss://$domain$DEFAULT_WS_PATH via $outboundTarget")
+            val webSocket = try {
+                torSnowflakeAttempts.incrementAndGet()
+                connector.connect(outboundTarget, domain, DEFAULT_WS_PATH, config.torSnowflakeConnectTimeoutMs)
+            } catch (error: TorSnowflakeUnavailableException) {
+                torSnowflakeUnavailable.incrementAndGet()
+                lastTorSnowflakeError.set(error.message)
+                logger.log("DC${parsed.dcId} Tor/Snowflake fallback warming/unavailable: ${error.message}")
+                return false
+            } catch (error: Throwable) {
+                torSnowflakeFailures.incrementAndGet()
+                lastTorSnowflakeError.set(websocketFailureDetail(error))
+                logger.log("DC${parsed.dcId} Tor/Snowflake WebSocket via $domain failed: ${websocketFailureDetail(error)}")
+                continue
+            }
+
+            torSnowflakeSuccesses.incrementAndGet()
+            lastTorSnowflakeError.set(null)
+            logger.log("DC${parsed.dcId} Tor/Snowflake WebSocket connected via $domain")
+            val result = runWebSocketRoute(
+                client,
+                parsed,
+                WebSocketRoute(webSocket, TOR_SNOWFLAKE_ROUTE_TYPE),
+                relayInit,
+                cryptoContext,
+                splitter,
+            )
+            if (!result.failed) return true
+            if (!result.failedBeforeBridge) return true
+            torSnowflakeFailures.incrementAndGet()
+            lastTorSnowflakeError.set("route failed before bridge")
+        }
+        return false
+    }
 
     private fun tryCfInflightWaitBeforeNoRoute(
         client: TcpClientTransport,
@@ -3152,6 +3268,41 @@ class ProxyServer(
     }
 
 
+    /**
+     * Commits an asynchronous Wi-Fi health promotion only if the route policy is
+     * still the same one for which the probe was started. The network callback
+     * path uses the same monitor, closing the canPromote -> onPromote race where
+     * a Wi-Fi probe could otherwise repromote DIRECT_FIRST after MOBILE arrived.
+     */
+    private fun commitAutoWifiDirectPromotionIfStillValid(): RouteChangeResult? = synchronized(routePolicyMonitor) {
+        val network = currentNetworkStatus
+        if (
+            !running.get() ||
+            routeState.configuredRouteMode != NetworkRouteMode.AUTO ||
+            !isWifi(network) ||
+            effectiveRouteMode() != NetworkRouteMode.CF_FIRST
+        ) {
+            logger.log(
+                "direct promotion discarded: stale Wi-Fi health probe " +
+                    "network=$network route=${effectiveRouteMode().configValue}",
+            )
+            return@synchronized null
+        }
+
+        val before = effectiveRouteMode()
+        val result = applyEffectiveRouteMode(
+            NetworkRouteMode.DIRECT_FIRST,
+            "direct health probe success",
+            network,
+            source = "direct-health",
+        )
+        if (result.changed) {
+            directRouteHealth.recordPromotion()
+            logger.log("direct promoted: ${before.configValue} -> ${NetworkRouteMode.DIRECT_FIRST.configValue}")
+        }
+        result
+    }
+
     private fun maybeStartAutoWifiDirectProbe(
         networkStatus: String,
         previousNetworkStatus: String = "unknown",
@@ -3187,17 +3338,7 @@ class ProxyServer(
                     effectiveRouteMode() == NetworkRouteMode.CF_FIRST
             },
             onPromote = {
-                val before = effectiveRouteMode()
-                val result = applyEffectiveRouteMode(
-                    NetworkRouteMode.DIRECT_FIRST,
-                    "direct health probe success",
-                    currentNetworkStatus,
-                    source = "direct-health",
-                )
-                if (result.changed) {
-                    directRouteHealth.recordPromotion()
-                    logger.log("direct promoted: ${before.configValue} -> ${NetworkRouteMode.DIRECT_FIRST.configValue}")
-                }
+                commitAutoWifiDirectPromotionIfStillValid()
             },
             throttleMs = DIRECT_PROBE_THROTTLE_MS,
         )
@@ -3333,6 +3474,8 @@ class ProxyServer(
 
     companion object {
         const val DEFAULT_WS_PATH = "/apiws"
+        internal const val TOR_SNOWFLAKE_WARMING_CLIENT_WAIT_MS = 8_000L
+        internal const val TOR_SNOWFLAKE_WARMING_LOG_THROTTLE_MS = 5_000L
         private const val CF_INFLIGHT_WAIT_BEFORE_NO_ROUTE_MS: Long = 2_000L
         const val IP_FAIL_COOLDOWN_MS: Long = 60L * 60L * 1000L
         const val CLIENT_EXPERIENCE_RECENT_WINDOW_MS: Long = 60_000L

@@ -43,6 +43,12 @@ class DiagnosticsHubActivity : Activity() {
 
             addSection("Актуальные", gap)
             addProbeButton(
+                label = "Production AUTO → Tor fallback",
+                description = "Главный production-тест: обычный ProxyForegroundService и обычный AUTO routing. В privateSideload direct/CF outbound намеренно получают ConnectException на мобильной сети, после чего штатный routing должен дойти до уже встроенного Tor/Snowflake. В экспортированной диагностике тестовый override отмечается явно.",
+                target = TorProductionFallbackTestActivity::class.java,
+                gap = gap,
+            )
+            addProbeButton(
                 label = "Snowflake/Tor — реальный Telegram",
                 description = "Следующий интеграционный тест: настоящий локальный ProxyServer → Tor SOCKS → Snowflake. Foreground service остаётся активным, пока вы открываете Telegram и проверяете реальные чаты/медиа.",
                 target = SnowflakeTorProxyActivity::class.java,

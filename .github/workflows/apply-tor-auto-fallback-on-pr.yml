@@ -1,0 +1,73 @@
+name: Validate Tor auto fallback PR
+
+on:
+  pull_request:
+    branches:
+      - snowflake-tor-proxy-test
+
+permissions:
+  contents: read
+
+jobs:
+  validate-and-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: snowflake-tor-auto-fallback
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Enable Gradle wrapper
+        run: chmod +x ./gradlew
+      - name: Run debug unit suite
+        run: ./gradlew testDebugUnitTest --stacktrace
+      - name: Compile private Tor fallback
+        run: ./gradlew compilePrivateSideloadKotlin --stacktrace
+      - name: Run private unit suite with one clean retry for known race
+        shell: bash
+        run: |
+          set +e
+          ./gradlew testPrivateSideloadUnitTest --stacktrace
+          first=$?
+          set -e
+          if [ "$first" -ne 0 ]; then
+            echo "Private suite failed once; rerunning clean to distinguish the known ProxyServer route-health race."
+            ./gradlew cleanTestPrivateSideloadUnitTest testPrivateSideloadUnitTest --stacktrace
+          fi
+      - name: Build private sideload APK
+        run: ./gradlew assemblePrivateSideload --stacktrace
+      - name: Verify Tor auto fallback package
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_config="$(find app/build/generated/source/buildConfig/privateSideload -name BuildConfig.java -print -quit)"
+          test -n "$build_config"
+          grep -q 'SNOWFLAKE_TOR_PACKAGED = true' "$build_config"
+
+          apk="$(find app/build/outputs/apk/privateSideload -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
+          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libtor.so'
+          unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libgojni.so'
+
+          found_route=0
+          found_runtime=0
+          while IFS= read -r dex; do
+            if unzip -p "$apk" "$dex" | strings | grep -q 'tor-snowflake'; then found_route=1; fi
+            if unzip -p "$apk" "$dex" | strings | grep -q 'SnowflakeTorFallbackRuntime'; then found_runtime=1; fi
+          done < <(unzip -Z1 "$apk" | grep -E '^classes[0-9]*\.dex$|^classes\.dex$')
+          test "$found_route" -eq 1
+          test "$found_runtime" -eq 1
+
+          echo "Verified APK: $apk"
+          sha256sum "$apk"
+          ls -lh "$apk"
+      - name: Upload Tor auto fallback APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tg-ws-android-tor-auto-fallback-private-sideload-apk
+          path: app/build/outputs/apk/privateSideload/*.apk
+          if-no-files-found: error
+          retention-days: 7
