@@ -19,6 +19,7 @@ import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -39,12 +40,16 @@ class SnowflakeTorFallbackRuntime(
         Thread(runnable, "TorSnowflakeFallback").also { it.isDaemon = true }
     }
     private val wanted = AtomicBoolean(false)
+    private val mobileEligible = AtomicBoolean(false)
     private val processRestartRequired = AtomicBoolean(false)
     private val progress = AtomicInteger(0)
     private val phase = AtomicReference("idle")
     private val lastError = AtomicReference<String?>(null)
+    private val warmupReason = AtomicReference<String?>(null)
+    private val warmupRequestedAtMs = AtomicLong(0)
     private val readyConnector = AtomicReference<RawWebSocketConnector?>(null)
     private val lifecycleLock = Any()
+    private val readyMonitor = Object()
     private val snowflakeTransportOwned = AtomicBoolean(false)
     private val torStartedInProcess = AtomicBoolean(false)
 
@@ -78,15 +83,51 @@ class SnowflakeTorFallbackRuntime(
     }
 
     override fun onNetworkChanged(networkStatus: String) {
-        val shouldRun = isMobile(networkStatus)
-        val changed = wanted.getAndSet(shouldRun) != shouldRun
-        if (shouldRun) {
-            ensureStarted()
-        } else if (changed && hasStartedProcessEngine()) {
-            logger.log(
-                "Tor/Snowflake route not desired on network=$networkStatus; keeping native Tor warm for process lifetime",
-            )
+        val eligible = isMobile(networkStatus)
+        val changed = mobileEligible.getAndSet(eligible) != eligible
+        if (!eligible) {
+            wanted.set(false)
+            warmupReason.set(null)
+            warmupRequestedAtMs.set(0)
+            notifyReadyWaiters()
+            if (changed && hasStartedProcessEngine()) {
+                logger.log(
+                    "Tor/Snowflake fallback not eligible on network=$networkStatus; keeping native Tor warm for process lifetime",
+                )
+            }
         }
+    }
+
+    override fun requestWarmup(reason: String) {
+        if (!mobileEligible.get()) {
+            logger.log("Tor/Snowflake lazy warmup ignored because current network is not mobile")
+            return
+        }
+        wanted.set(true)
+        warmupReason.set(reason.ifBlank { "ordinary mobile routes degraded" })
+        warmupRequestedAtMs.compareAndSet(0, System.currentTimeMillis())
+        logger.log("Tor/Snowflake lazy warmup requested: ${warmupReason.get()}")
+        ensureStarted()
+    }
+
+    override fun awaitReady(timeoutMs: Long): Boolean {
+        if (readyConnector.get() != null && !processRestartRequired.get()) return true
+        if (!wanted.get() || processRestartRequired.get() || timeoutMs <= 0L) return false
+        val deadlineNs = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        synchronized(readyMonitor) {
+            while (readyConnector.get() == null && wanted.get() && !processRestartRequired.get()) {
+                val remainingNs = deadlineNs - System.nanoTime()
+                if (remainingNs <= 0L) break
+                val waitMs = TimeUnit.NANOSECONDS.toMillis(remainingNs).coerceAtLeast(1L)
+                try {
+                    readyMonitor.wait(waitMs)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    return false
+                }
+            }
+        }
+        return readyConnector.get() != null && !processRestartRequired.get()
     }
 
     override fun snapshot(): TorFallbackRuntimeSnapshot = TorFallbackRuntimeSnapshot(
@@ -96,6 +137,8 @@ class SnowflakeTorFallbackRuntime(
         bootstrapProgress = progress.get(),
         phase = phase.get(),
         lastError = lastError.get(),
+        warmupReason = warmupReason.get(),
+        warmupRequestedAtMs = warmupRequestedAtMs.get().takeIf { it > 0L },
     )
 
     /**
@@ -107,6 +150,9 @@ class SnowflakeTorFallbackRuntime(
      */
     override fun stop() {
         wanted.set(false)
+        warmupReason.set(null)
+        warmupRequestedAtMs.set(0)
+        notifyReadyWaiters()
         if (hasStartedProcessEngine()) {
             logger.log("Tor/Snowflake runtime released logically; native engine retained until process exit")
         }
@@ -114,7 +160,7 @@ class SnowflakeTorFallbackRuntime(
 
     private fun ensureStarted() {
         synchronized(lifecycleLock) {
-            if (!wanted.get() || processRestartRequired.get() || readyConnector.get() != null || task?.isDone == false) return
+            if (!mobileEligible.get() || !wanted.get() || processRestartRequired.get() || readyConnector.get() != null || task?.isDone == false) return
             if (torStartedInProcess.get()) {
                 markProcessRestartRequired("Tor was already started in this process but is no longer ready")
                 return
@@ -125,7 +171,7 @@ class SnowflakeTorFallbackRuntime(
 
     private fun bootstrapLoop() {
         var retry = 0
-        while (!processRestartRequired.get() && readyConnector.get() == null) {
+        while (!processRestartRequired.get() && readyConnector.get() == null && (wanted.get() || torStartedInProcess.get())) {
             try {
                 bootstrapOnce()
                 return
@@ -243,6 +289,7 @@ class SnowflakeTorFallbackRuntime(
         readyConnector.set(SocksRawWebSocketConnector("127.0.0.1", socksPort))
         phase.set("ready")
         lastError.set(null)
+        notifyReadyWaiters()
         logger.log("Tor/Snowflake fallback READY on SOCKS 127.0.0.1:$socksPort")
     }
 
@@ -258,6 +305,7 @@ class SnowflakeTorFallbackRuntime(
         val message = "$reason; refusing unsafe in-process libtor restart — restart app process"
         lastError.set(message)
         phase.set("process_restart_required")
+        notifyReadyWaiters()
         logger.log("Tor/Snowflake $message")
     }
 
@@ -329,9 +377,13 @@ class SnowflakeTorFallbackRuntime(
         }
     }
 
+    private fun notifyReadyWaiters() {
+        synchronized(readyMonitor) { readyMonitor.notifyAll() }
+    }
+
     private fun sleepBackoff(delayMs: Long) {
         var remaining = delayMs
-        while (remaining > 0 && !processRestartRequired.get()) {
+        while (remaining > 0 && !processRestartRequired.get() && (wanted.get() || torStartedInProcess.get())) {
             val step = remaining.coerceAtMost(500L)
             Thread.sleep(step)
             remaining -= step

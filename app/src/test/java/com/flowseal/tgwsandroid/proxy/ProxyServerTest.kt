@@ -3523,6 +3523,73 @@ class ProxyServerTest {
     }
 
     @Test
+    fun serviceReadinessGateSkipsColdTorConnectorButSignalsOrdinaryExhaustion() {
+        val server = FakeTcpServerTransport()
+        val signals = CopyOnWriteArrayList<String>()
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        val proxy = newProxy(
+            server = server,
+            torSnowflakeConnector = tor,
+            onOrdinaryRoutesExhausted = { dcId, isMedia, reason -> signals.add("$dcId/$isMedia/$reason") },
+            torSnowflakeReadyProvider = { false },
+            torSnowflakeWaitUntilReady = { false },
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = false,
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        val client = FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes())
+        server.enqueue(client)
+        waitUntil("cold Tor client closes") { client.closed }
+        proxy.stop()
+
+        assertEquals(1, signals.size)
+        assertTrue(signals.first().contains("CF-first ordinary routes exhausted"))
+        assertTrue(tor.domains.isEmpty())
+        assertEquals(0L, proxy.stats().torSnowflakeAttempts)
+        assertEquals(1L, proxy.stats().torSnowflakeUnavailable)
+    }
+
+    @Test
+    fun serviceReadinessGateCanWaitForWarmTorWithoutTelegramReconnect() {
+        val server = FakeTcpServerTransport()
+        val tor = RecordingConnector(FakeWebSocketBinaryStream())
+        var ready = false
+        var waits = 0
+        val proxy = newProxy(
+            server = server,
+            torSnowflakeConnector = tor,
+            onOrdinaryRoutesExhausted = { _, _, _ -> },
+            torSnowflakeReadyProvider = { ready },
+            torSnowflakeWaitUntilReady = {
+                waits += 1
+                ready = true
+                true
+            },
+            config = baseConfig().copy(
+                routeMode = NetworkRouteMode.AUTO,
+                networkStatus = "mobile",
+                cfproxyEnabled = false,
+                torSnowflakeFallbackEnabled = true,
+            ),
+        )
+
+        proxy.start()
+        server.enqueue(FakeTcpClientTransport(handshakeVector("abridged_dc2").getString("handshake_hex").hexToBytes()))
+        waitUntil("warming wait should continue same client through Tor") { proxy.stats().lastRouteUsed == TOR_SNOWFLAKE_ROUTE_TYPE }
+        proxy.stop()
+
+        assertEquals(1, waits)
+        assertEquals(1L, proxy.stats().torSnowflakeAttempts)
+        assertEquals(1L, proxy.stats().torSnowflakeSuccesses)
+        assertEquals(0L, proxy.stats().torSnowflakeUnavailable)
+    }
+
+    @Test
     fun protoTagsMapToExpectedSplitterProtoInts() {
         assertEquals(MsgSplitter.PROTO_ABRIDGED_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_ABRIDGED))
         assertEquals(MsgSplitter.PROTO_INTERMEDIATE_INT, ProxyServer.protoIntForProtoTag(RelayInit.PROTO_TAG_INTERMEDIATE))
@@ -3552,12 +3619,18 @@ class ProxyServerTest {
         logger: ProxyLogger = ProxyLogger {},
         cfDomainHealth: CfDomainHealth = CfDomainHealth(config.cfProxyDomains),
         torSnowflakeConnector: RawWebSocketConnector? = null,
+        onOrdinaryRoutesExhausted: ((Int, Boolean, String) -> Unit)? = null,
+        torSnowflakeReadyProvider: (() -> Boolean)? = null,
+        torSnowflakeWaitUntilReady: ((Long) -> Boolean)? = null,
     ): ProxyServer =
         ProxyServer(
             config = config,
             serverTransport = server,
             webSocketConnector = connector,
             torSnowflakeConnector = torSnowflakeConnector,
+            onOrdinaryRoutesExhausted = onOrdinaryRoutesExhausted,
+            torSnowflakeReadyProvider = torSnowflakeReadyProvider,
+            torSnowflakeWaitUntilReady = torSnowflakeWaitUntilReady,
             bridgeRunner = runner,
             cfDomainHealth = cfDomainHealth,
             randomBytes = DeterministicRandomBytes,

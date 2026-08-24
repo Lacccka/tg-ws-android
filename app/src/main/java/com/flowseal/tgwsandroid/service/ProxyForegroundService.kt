@@ -55,6 +55,7 @@ class ProxyForegroundService : Service() {
     }
     private var proxyServer: ProxyServer? = null
     private var torFallbackRuntime: TorFallbackRuntime? = null
+    private val torFallbackWarmupPolicy = TorFallbackWarmupPolicy()
     @Volatile
     private var forceOrdinaryRouteFailureForTorTest: Boolean = false
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
@@ -270,7 +271,11 @@ class ProxyForegroundService : Service() {
             val logger = ProxyLogger { message -> State.addProxyLog(message) }
             val runtime = TorFallbackRuntimeLoader.create(applicationContext, logger)
             torFallbackRuntime = runtime
+            torFallbackWarmupPolicy.onNetworkChanged(State.networkStatus)
             runtime?.onNetworkChanged(State.networkStatus)
+            if (forceOrdinaryRouteFailureForTorTest) {
+                runtime?.requestWarmup("private production fallback test")
+            }
             State.updateTorFallbackRuntimeSnapshot(runCatching { runtime?.snapshot() }.getOrNull())
             val serverConfig = ProxyRuntimeConfig.proxyServerConfig(applicationContext, State.networkStatus).copy(
                 torSnowflakeFallbackEnabled = runtime != null,
@@ -279,6 +284,17 @@ class ProxyForegroundService : Service() {
                 config = serverConfig,
                 webSocketConnector = ordinaryWebSocketConnectorForCurrentRun(),
                 torSnowflakeConnector = runtime?.connector,
+                onOrdinaryRoutesExhausted = { dcId, isMedia, reason ->
+                    val decision = torFallbackWarmupPolicy.recordOrdinaryRouteExhausted(reason)
+                    if (decision.newlyTriggered) {
+                        val warmupReason = "${decision.reason}; DC$dcId media=$isMedia failures=${decision.recentFailureCount}"
+                        State.addLog("Tor/Snowflake lazy warmup triggered: $warmupReason", LogSeverity.WARN, "network")
+                        runtime?.requestWarmup(warmupReason)
+                        State.updateTorFallbackRuntimeSnapshot(runCatching { runtime?.snapshot() }.getOrNull())
+                    }
+                },
+                torSnowflakeReadyProvider = { runCatching { runtime?.snapshot()?.ready == true }.getOrDefault(false) },
+                torSnowflakeWaitUntilReady = { timeoutMs -> runCatching { runtime?.awaitReady(timeoutMs) == true }.getOrDefault(false) },
                 logger = logger,
             )
             proxyServer = server
@@ -562,6 +578,7 @@ class ProxyForegroundService : Service() {
     }
 
     private fun applyRouteForNetwork(networkStatus: String, immediate: Boolean = false) {
+        torFallbackWarmupPolicy.onNetworkChanged(networkStatus)
         torFallbackRuntime?.onNetworkChanged(networkStatus)
         State.updateTorFallbackRuntimeSnapshot(runCatching { torFallbackRuntime?.snapshot() }.getOrNull())
         val server = synchronized(lock) { proxyServer }
@@ -623,6 +640,7 @@ class ProxyForegroundService : Service() {
             }
             State.markWatchdogHeartbeat()
             val line = "watchdog: running=${server?.isRunning == true} ${compactStats(stats, torRuntimeSnapshot)} " +
+                "torWarmupPolicy=${compactTorWarmupPolicy(torFallbackWarmupPolicy.snapshot())} " +
                 "torTestOverride=${State.isTorFallbackTestOverrideActive()} " +
                 "network=${State.networkStatus} route=${stats?.effectiveRouteMode ?: "unknown"} battery=${State.batteryOptimizationStatus}"
             State.addLog(line, LogSeverity.INFO, "service")
@@ -679,8 +697,13 @@ class ProxyForegroundService : Service() {
         "unavailable"
     } else {
         "desired=${snapshot.desired},running=${snapshot.running},ready=${snapshot.ready}," +
-            "bootstrap=${snapshot.bootstrapProgress},phase=${snapshot.phase},lastError=${snapshot.lastError ?: "none"}"
+            "bootstrap=${snapshot.bootstrapProgress},phase=${snapshot.phase},lastError=${snapshot.lastError ?: "none"}," +
+            "warmupReason=${snapshot.warmupReason ?: "none"},warmupAt=${snapshot.warmupRequestedAtMs ?: 0L}"
     }
+
+    private fun compactTorWarmupPolicy(snapshot: TorFallbackWarmupPolicySnapshot): String =
+        "network=${snapshot.networkStatus},failures=${snapshot.recentFailureCount},triggered=${snapshot.triggered}," +
+            "reason=${snapshot.reason ?: "none"},triggeredAt=${snapshot.triggeredAtMs ?: 0L}"
 
     private fun compactMap(values: Map<*, *>): String =
         if (values.isEmpty()) "none" else values.entries.joinToString(";") { "${it.key}=${it.value}" }

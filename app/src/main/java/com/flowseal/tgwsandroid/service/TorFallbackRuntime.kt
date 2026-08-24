@@ -13,12 +13,16 @@ data class TorFallbackRuntimeSnapshot(
     val bootstrapProgress: Int = 0,
     val phase: String = "disabled",
     val lastError: String? = null,
+    val warmupReason: String? = null,
+    val warmupRequestedAtMs: Long? = null,
 )
 
 /** Private-build implementation owns Snowflake + embedded Tor lifecycle. */
 interface TorFallbackRuntime {
     val connector: RawWebSocketConnector
     fun onNetworkChanged(networkStatus: String)
+    fun requestWarmup(reason: String)
+    fun awaitReady(timeoutMs: Long): Boolean
     fun snapshot(): TorFallbackRuntimeSnapshot
     fun stop()
 }
